@@ -124,4 +124,4 @@ See **CURSEFORGE.md** in this folder for submission requirements and a checklist
 
 ## License
 
-Use and modify as you like. No warranty. If you publish a fork, credit the original and follow the license you set on CurseForge (e.g. MIT).
+MIT License. Use and modify as you like; no warranty. If you publish a fork, credit the original. See **LICENSE** in this folder for the full text.

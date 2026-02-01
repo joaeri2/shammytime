@@ -21,6 +21,10 @@ local ELEMENT_EMPTY_ICONS = {
 -- Lightning Shield: all TBC spell IDs (ranks 1–6) and icon when not active
 local LIGHTNING_SHIELD_SPELL_IDS = { 324, 325, 905, 945, 8134, 10431 }
 local LIGHTNING_SHIELD_ICON = "Interface\\Icons\\Spell_Nature_LightningShield"
+-- Water Shield: TBC spell IDs (ranks 1–2); same slot as Lightning Shield (only one elemental shield active at a time)
+local WATER_SHIELD_SPELL_IDS = { 24398, 33736 }
+local WATER_SHIELD_ICON = "Interface\\Icons\\Ability_Shaman_WaterShield"
+local WATER_SHIELD_ICON_ID = 132315  -- FileDataID for clients where SetTexture(path) doesn't display
 
 -- Weapon imbue buff spell IDs (Flametongue, Frostbrand, Rockbiter, Windfury Weapon – all ranks)
 local WEAPON_IMBUE_SPELL_IDS = {
@@ -30,6 +34,29 @@ local WEAPON_IMBUE_SPELL_IDS = {
     [8232]=true, [8235]=true, [10486]=true, [16362]=true, [25505]=true,  -- Windfury Weapon
 }
 local WEAPON_IMBUE_ICON = "Interface\\Icons\\Spell_Fire_FlameTongue"
+-- Numeric FileDataID for clients where SetTexture(path) doesn't display (e.g. TBC Anniversary); LibWeaponEnchantInfo uses 136040.
+local WEAPON_IMBUE_ICON_ID = 136040
+-- Icon when no weapon imbue is active (empty slot); Frostbrand icon = 135847 (Spell_Frost_FrostBrand).
+local WEAPON_IMBUE_EMPTY_ICON_ID = 135847
+-- GetWeaponEnchantInfo returns mainHandEnchantID (4th) and offHandEnchantID (8th). Map enchant ID -> spellId (for name/GetSpellTexture) and icon FileDataID (fallback).
+-- Sources: various clients; add more IDs from /st debug if your imbue isn't recognized.
+local WEAPON_IMBUE_ENCHANT_TO_SPELL = {
+    -- Flametongue (various ranks/sources)
+    [3]=25489, [4]=25489, [5]=25489, [124]=8024, [285]=8027, [523]=16339, [543]=8030, [1683]=16342, [2634]=25489,
+    -- Frostbrand
+    [2]=25501, [12]=25501,
+    -- Rockbiter (3031=TBC Anniversary; 503=Rockbiter 4, 683=Rockbiter 6; 1,6,29 from other clients). Spell 25479 = Rockbiter Weapon TBC.
+    [1]=25479, [6]=25479, [29]=25479, [503]=25479, [683]=25479, [3031]=25479,
+    -- Windfury Weapon (283=Windfury Rank 1 TBC Anniversary; 3787=Windfury 8; 563,564,1783 from totem/lib)
+    [15]=25505, [16]=25505, [17]=25505, [283]=25505, [563]=25505, [564]=25505, [1783]=25505, [3787]=25505,
+}
+-- Enchant ID -> icon FileDataID. Rockbiter=136086 (Spell_Nature_RockBiter), Windfury=136114 (Spell_Nature_LightningShield/Windfury).
+local WEAPON_IMBUE_ENCHANT_ICONS = {
+    [3]=136040, [4]=136040, [5]=136040, [124]=136040, [285]=136040, [523]=136040, [543]=136040, [1683]=136040, [2634]=136040,
+    [2]=135847, [12]=135847,
+    [1]=136086, [6]=136086, [29]=136086, [503]=136086, [683]=136086, [3031]=136086,
+    [15]=136114, [16]=136114, [17]=136114, [283]=136114, [563]=136114, [564]=136114, [1783]=136114, [3787]=136114,
+}
 
 -- Totems that do NOT put a buff on the player (no way to detect range). Never show out-of-range overlay for these.
 local TOTEM_NO_RANGE_BUFF = {
@@ -121,13 +148,13 @@ local function HasPlayerBuffByTotemName(totemName)
 end
 
 -- Returns true if the player has a helpful aura with the given spell ID (used for totem range).
--- TBC Anniversary: UnitAura 11 returns (spellId 11th) or 10 returns (spellId 10th in shouldConsolidate).
+-- Per warcraft.wiki.gg: 10 returns → spellId at position 10; 11 returns → spellId at position 11. Detect by type(4th)=="string".
 local function HasPlayerBuffBySpellId(spellId)
     if not spellId then return false end
     for i = 1, 40 do
-        local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellIdReturn = UnitAura("player", i, "HELPFUL")
-        if not name then break end
-        local auraSpellId = (type(count) == "string") and shouldConsolidate or spellIdReturn
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then break end
+        local auraSpellId = (type(v4) == "string") and v10 or v11
         if auraSpellId == spellId then return true end
     end
     return false
@@ -178,49 +205,82 @@ local function ApplyScale()
     end
 end
 
--- Returns Lightning Shield aura on player: icon, count (charges), duration, expirationTime; or nil if not active.
--- TBC Anniversary client: UnitAura may return 11 values (with rank) or 10 (no rank; 4th = dispelType string). Detect by type(count).
-local function GetLightningShieldAura()
+-- Returns Lightning Shield or Water Shield aura on player: icon, count (charges), duration, expirationTime, spellId; or nil if neither active.
+-- Per warcraft.wiki.gg: 10 returns = name,icon(2),count(3),dispelType(4),duration(5),expirationTime(6),...; 11 = name,rank,icon(3),count(4),...,spellId(11).
+local function GetElementalShieldAura()
     for i = 1, 40 do
-        local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = UnitAura("player", i, "HELPFUL")
-        if not name then break end
-        -- 10-return API (no rank): rank=icon, icon=count, count=dispelType, debuffType=duration, duration=expirationTime; spellId in shouldConsolidate (10th)
-        local rIcon = (type(count) == "string") and rank or icon
-        local rCount = (type(count) == "string") and icon or count
-        local rDuration = (type(count) == "string") and debuffType or duration
-        local rExpiration = (type(count) == "string") and duration or expirationTime
-        local auraSpellId = (type(count) == "string") and shouldConsolidate or spellId
-        if auraSpellId then
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then break end
+        local name = v1
+        local is10 = (type(v4) == "string")
+        local icon = is10 and v2 or v3
+        local count = is10 and v3 or v4
+        local duration = is10 and v5 or v6
+        local expTime = is10 and v6 or v7
+        local spellId = is10 and v10 or v11
+        if spellId then
             for _, sid in ipairs(LIGHTNING_SHIELD_SPELL_IDS) do
-                if auraSpellId == sid then
-                    return rIcon, (type(rCount) == "number" and rCount or 0), rDuration, (type(rExpiration) == "number" and rExpiration or 0)
+                if spellId == sid then
+                    return icon, (type(count) == "number" and count or 0), duration, (type(expTime) == "number" and expTime or 0), spellId, LIGHTNING_SHIELD_ICON
+                end
+            end
+            for _, sid in ipairs(WATER_SHIELD_SPELL_IDS) do
+                if spellId == sid then
+                    return icon, (type(count) == "number" and count or 0), duration, (type(expTime) == "number" and expTime or 0), spellId, WATER_SHIELD_ICON
                 end
             end
         end
         if name == "Lightning Shield" then
-            return rIcon, (type(rCount) == "number" and rCount or 0), rDuration, (type(rExpiration) == "number" and rExpiration or 0)
+            return icon, (type(count) == "number" and count or 0), duration, (type(expTime) == "number" and expTime or 0), spellId, LIGHTNING_SHIELD_ICON
+        end
+        if name == "Water Shield" then
+            return icon, (type(count) == "number" and count or 0), duration, (type(expTime) == "number" and expTime or 0), spellId, WATER_SHIELD_ICON
         end
     end
     return nil
 end
 
--- Returns first weapon imbue aura on player: icon, expirationTime, name; or nil if none.
--- TBC Anniversary: UnitAura 11 returns or 10 (no rank; icon=rank, expirationTime=duration, spellId=shouldConsolidate).
+-- Get weapon imbue from GetWeaponEnchantInfo (primary on Classic/TBC – direct API for temp weapon enchants).
+-- Returns: icon, expirationTime, name, spellId. Uses enchant ID (4th/8th return) to pick correct icon/name per imbue.
+local function GetWeaponImbueFromEnchantInfo()
+    if not GetWeaponEnchantInfo then return nil end
+    -- Returns: hasMH, expMH, chargesMH, enchantIdMH, hasOH, expOH, chargesOH, enchantIdOH (exp in ms on some clients)
+    local hasMH, expMH, _, enchantIdMH, hasOH, expOH, _, enchantIdOH = GetWeaponEnchantInfo()
+    local hasEnchant = (hasMH and expMH and expMH > 0) or (hasOH and expOH and expOH > 0)
+    if not hasEnchant then return nil end
+    local enchantId = (hasMH and expMH and expMH > 0) and enchantIdMH or enchantIdOH
+    local spellId = (enchantId and WEAPON_IMBUE_ENCHANT_TO_SPELL[enchantId]) or nil
+    local name = (spellId and GetSpellInfo and GetSpellInfo(spellId)) or "Weapon Imbue"
+    local icon = (enchantId and WEAPON_IMBUE_ENCHANT_ICONS[enchantId]) or WEAPON_IMBUE_ICON_ID
+    -- Expiration: API returns time remaining in milliseconds (wowwiki: thousandths of seconds).
+    local remaining = (hasMH and expMH and expMH > 0) and expMH or expOH
+    local remainingSec = (type(remaining) == "number" and remaining / 1000) or 0
+    local expirationTime = GetTime() + remainingSec
+    return icon, expirationTime, name, spellId
+end
+
+-- Returns first weapon imbue on player: icon, expirationTime, name, spellId; or nil if none.
+-- Uses UnitAura first (for name/icon/spellId), then GetWeaponEnchantInfo so imbue always shows on TBC Anniversary.
+-- Per https://warcraft.wiki.gg/wiki/API_UnitAura: 10 returns = name,icon,count,dispelType,duration,expirationTime,source,...,spellId(10th).
 local function GetWeaponImbueAura()
     for i = 1, 40 do
-        local name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellId = UnitAura("player", i, "HELPFUL")
-        if not name then break end
-        local rIcon = (type(count) == "string") and rank or icon
-        local rExpiration = (type(count) == "string") and duration or expirationTime
-        local auraSpellId = (type(count) == "string") and shouldConsolidate or spellId
-        if auraSpellId and WEAPON_IMBUE_SPELL_IDS[auraSpellId] then
-            return rIcon, rExpiration, name
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then break end
+        local name = v1
+        local is10 = (type(v4) == "string")
+        local icon = is10 and v2 or v3
+        local expTime = is10 and v6 or v7
+        local spellId = is10 and v10 or v11
+        if spellId and WEAPON_IMBUE_SPELL_IDS[spellId] then
+            return icon, expTime, name, spellId
         end
-        if name and (name:find("Flametongue") or name:find("Frostbrand") or name:find("Rockbiter") or name:find("Windfury")) then
-            return rIcon, rExpiration, name
+        local lowerName = name and name:lower() or ""
+        if lowerName:find("flametongue") or lowerName:find("frostbrand") or lowerName:find("rockbiter") or lowerName:find("windfury") then
+            return icon, expTime, name, spellId
         end
     end
-    return nil
+    -- UnitAura can miss imbue on some clients (e.g. TBC Anniversary); use GetWeaponEnchantInfo (see LibWeaponEnchantInfo).
+    return GetWeaponImbueFromEnchantInfo()
 end
 
 local function FormatTime(seconds)
@@ -299,19 +359,25 @@ end
 
 local function UpdateLightningShield()
     if not lightningShieldFrame then return end
-    local icon, count, duration, expirationTime = GetLightningShieldAura()
-    if icon then
-        lightningShieldFrame.icon:SetTexture(icon)
+    local icon, count, duration, expirationTime, spellId, defaultIcon = GetElementalShieldAura()
+    if icon or spellId then
+        -- Prefer path from GetSpellTexture; some clients don't display SetTexture(path). Fall back to string path, then numeric icon.
+        local tex = (spellId and GetSpellTexture and GetSpellTexture(spellId)) or (icon and type(icon) == "string" and icon) or (icon and type(icon) == "number" and icon) or (defaultIcon or LIGHTNING_SHIELD_ICON)
+        -- TBC Anniversary: use numeric icon when default is Water Shield and path may not display
+        if defaultIcon == WATER_SHIELD_ICON and (not tex or tex == WATER_SHIELD_ICON) then
+            tex = WATER_SHIELD_ICON_ID
+        end
+        if tex then lightningShieldFrame.icon:SetTexture(tex) end
         lightningShieldFrame.icon:SetVertexColor(1, 1, 1)
         local numCount = (type(count) == "number" and count) or 0
         local expTime = (type(expirationTime) == "number" and expirationTime) or 0
         local timeLeft = expTime > 0 and (expTime - GetTime()) or 0
-        -- Charges in the middle of the icon
+        -- Charges in the middle of the icon (Lightning Shield orbs, Water Shield globes)
         if lightningShieldFrame.charges then
             lightningShieldFrame.charges:SetText(numCount > 0 and tostring(numCount) or "")
             lightningShieldFrame.charges:Show()
         end
-        -- Timer on the bottom, no parenthesis
+        -- Timer on the bottom
         lightningShieldFrame.timer:SetText(FormatTime(timeLeft))
         lightningShieldFrame.timer:Show()
         lightningShieldFrame:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
@@ -330,10 +396,17 @@ end
 
 local function UpdateWeaponImbue()
     if not weaponImbueFrame then return end
-    local icon, expirationTime, name = GetWeaponImbueAura()
+    local icon, expirationTime, name, spellId = GetWeaponImbueAura()
     if name then
-        -- Show active imbue; use fallback icon if client didn't return one
-        weaponImbueFrame.icon:SetTexture(icon and icon ~= "" and icon or WEAPON_IMBUE_ICON)
+        -- Prefer path from GetSpellTexture; some clients don't display SetTexture(path) and need FileDataID (number).
+        local tex = (spellId and GetSpellTexture and GetSpellTexture(spellId)) or (icon and type(icon) == "string" and icon) or (icon and type(icon) == "number" and icon) or WEAPON_IMBUE_ICON
+        local texToSet = tex or WEAPON_IMBUE_ICON
+        -- When we have no spellId (GetWeaponEnchantInfo path), use numeric icon ID so TBC Anniversary displays it.
+        if not spellId and (texToSet == WEAPON_IMBUE_ICON or not texToSet) then
+            texToSet = WEAPON_IMBUE_ICON_ID
+        end
+        weaponImbueFrame.icon:SetTexture(texToSet)
+        weaponImbueFrame.icon:Show()
         weaponImbueFrame.icon:SetVertexColor(1, 1, 1)
         local expTime = (type(expirationTime) == "number" and expirationTime) or 0
         local timeLeft = expTime > 0 and (expTime - GetTime()) or 0
@@ -342,7 +415,8 @@ local function UpdateWeaponImbue()
         weaponImbueFrame.imbueName = name
         weaponImbueFrame:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
     else
-        weaponImbueFrame.icon:SetTexture(WEAPON_IMBUE_ICON)
+        weaponImbueFrame.icon:SetTexture(WEAPON_IMBUE_EMPTY_ICON_ID)
+        weaponImbueFrame.icon:Show()
         weaponImbueFrame.icon:SetVertexColor(0.35, 0.35, 0.35)
         weaponImbueFrame.timer:SetText("")
         weaponImbueFrame.timer:Hide()
@@ -378,7 +452,7 @@ local function CreateMainFrame()
     local db = GetDB()
     local f = CreateFrame("Frame", "ShammyTimeFrame", UIParent, "BackdropTemplate")
     local iconSize = 36
-    local gap = 4
+    local gap = 2
     local slotW, slotH = iconSize + 6, iconSize + 18
     local fw = 6 * slotW + 5 * gap  -- 4 totems + Lightning Shield + Weapon Imbue
     local fh = slotH
@@ -553,7 +627,7 @@ local function CreateMainFrame()
     wifIcon:SetSize(iconSize, iconSize)
     wifIcon:SetPoint("TOP", 0, -4)
     wifIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    wifIcon:SetTexture(WEAPON_IMBUE_ICON)
+    wifIcon:SetTexture(WEAPON_IMBUE_EMPTY_ICON_ID)
     wifIcon:SetVertexColor(0.35, 0.35, 0.35)
     wif.icon = wifIcon
     local wifTimer = wif:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -622,7 +696,43 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
 end)
 
--- Slash: /st lock | unlock | move | scale [0.5-2]
+-- Debug: dump UnitAura return order and weapon imbue detection (run with /st debug).
+local function DebugWeaponImbue()
+    print("=== ShammyTime weapon imbue debug ===")
+    -- 1) GetWeaponEnchantInfo (primary on Classic/TBC); 4th/8th = mainHandEnchantID, offHandEnchantID
+    if GetWeaponEnchantInfo then
+        local hasMH, expMH, _, enchantIdMH, hasOH, expOH, _, enchantIdOH = GetWeaponEnchantInfo()
+        print(("GetWeaponEnchantInfo: hasMH=%s expMH=%s enchantIdMH=%s hasOH=%s expOH=%s enchantIdOH=%s"):format(
+            tostring(hasMH), tostring(expMH), tostring(enchantIdMH), tostring(hasOH), tostring(expOH), tostring(enchantIdOH)))
+    end
+    -- 2) What GetWeaponImbueAura returns (UnitAura + GetWeaponEnchantInfo fallback)
+    local icon, expTime, name, spellId = GetWeaponImbueAura()
+    if name then
+        print(("GetWeaponImbueAura: name=%q icon=%s (type=%s) expTime=%s (type=%s) spellId=%s"):format(
+            tostring(name), tostring(icon), type(icon), tostring(expTime), type(expTime), tostring(spellId)))
+    else
+        print("GetWeaponImbueAura: returned nil (no imbue found)")
+    end
+    -- 3) First 8 buffs: raw UnitAura returns (positions 1-11) so we see API order
+    print("First 8 HELPFUL auras (raw positions 1-11 from UnitAura):")
+    for i = 1, 8 do
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then
+            print(("  [%d] (none)"):format(i))
+            break
+        end
+        local is10 = (type(v4) == "string")
+        print(("  [%d] name=%q | v2=%s v3=%s v4=%s (type=%s) v5=%s v6=%s v7=%s | v10=%s v11=%s | is10=%s"):format(
+            i, tostring(v1), tostring(v2), tostring(v3), tostring(v4), type(v4), tostring(v5), tostring(v6), tostring(v7), tostring(v10), tostring(v11), tostring(is10)))
+        -- If this looks like a weapon imbue by name, say so
+        if v1 and (tostring(v1):find("Flametongue") or tostring(v1):find("Frostbrand") or tostring(v1):find("Rockbiter") or tostring(v1):find("Windfury")) then
+            print(("       ^^^ weapon imbue by name; spellId would be v10=%s or v11=%s"):format(tostring(v10), tostring(v11)))
+        end
+    end
+    print("=== end debug ===")
+end
+
+-- Slash: /st lock | unlock | move | scale [0.5-2] | debug
 SLASH_SHAMMYTIME1 = "/shammytime"
 SLASH_SHAMMYTIME2 = "/st"
 SlashCmdList["SHAMMYTIME"] = function(msg)
@@ -651,7 +761,9 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 print("ShammyTime: scale must be a number between 0.5 and 2 (e.g. /st scale 1.2)")
             end
         end
+    elseif cmd == "debug" then
+        DebugWeaponImbue()
     else
-        print("ShammyTime: /st lock | unlock | move | scale [0.5-2]")
+        print("ShammyTime: /st lock | unlock | move | scale [0.5-2] | debug")
     end
 end

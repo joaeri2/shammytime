@@ -1,6 +1,6 @@
 -- ShammyTime: Movable totem icons with timers, "gone" animation, and out-of-range indicator.
 -- When you're too far from a totem to receive its buff, a red overlay appears on that slot.
--- TBC Anniversary Edition (Interface 20505)
+-- WoW Classic Anniversary 2026 (TBC Anniversary Edition, Interface 20505); compatible with builds 20501–20505.
 
 local addonName, addon = ...
 local SLOT_TO_ELEMENT = { [1] = "Fire", [2] = "Earth", [3] = "Water", [4] = "Air" }
@@ -39,6 +39,9 @@ local WEAPON_IMBUE_ICON = "Interface\\Icons\\Spell_Fire_FlameTongue"
 local WEAPON_IMBUE_ICON_ID = 136040
 -- Icon when no weapon imbue is active (empty slot); Frostbrand icon = 135847 (Spell_Frost_FrostBrand).
 local WEAPON_IMBUE_EMPTY_ICON_ID = 135847
+-- Shamanistic Focus proc: "Focused" buff (spell 43339) from melee crit; next Shock costs 60% less, 15 sec (TBC).
+local FOCUSED_BUFF_SPELL_ID = 43339
+local FOCUSED_ICON = "Interface\\Icons\\Spell_Arcane_FocusedPower"
 -- GetWeaponEnchantInfo returns mainHandEnchantID (4th) and offHandEnchantID (8th). Map enchant ID -> spellId (for name/GetSpellTexture) and icon FileDataID (fallback).
 -- Sources: various clients; add more IDs from /st debug if your imbue isn't recognized.
 local WEAPON_IMBUE_ENCHANT_TO_SPELL = {
@@ -51,6 +54,9 @@ local WEAPON_IMBUE_ENCHANT_TO_SPELL = {
     -- Windfury Weapon (283=Windfury Rank 1 TBC Anniversary; 3787=Windfury 8; 563,564,1783 from totem/lib)
     [15]=25505, [16]=25505, [17]=25505, [283]=25505, [563]=25505, [564]=25505, [1783]=25505, [3787]=25505,
 }
+-- Windfury Attack: spell ID for the actual proc damage in combat log (TBC: 25584).
+local WINDFURY_ATTACK_SPELL_ID = 25584
+
 -- Enchant ID -> icon FileDataID. Rockbiter=136086 (Spell_Nature_RockBiter), Windfury=136114 (Spell_Nature_LightningShield/Windfury).
 local WEAPON_IMBUE_ENCHANT_ICONS = {
     [3]=136040, [4]=136040, [5]=136040, [124]=136040, [285]=136040, [523]=136040, [543]=136040, [1683]=136040, [2634]=136040,
@@ -225,6 +231,13 @@ local DEFAULTS = {
     y = -180,
     scale = 1.0,
     locked = false,
+    -- Windfury stats frame (separate, below main bar by default)
+    wfPoint = "TOP",
+    wfRelativeTo = "ShammyTimeFrame",
+    wfRelativePoint = "BOTTOM",
+    wfX = 0,
+    wfY = -4,
+    wfLocked = false,
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -240,7 +253,14 @@ local mainFrame
 local slotFrames = {}
 local lightningShieldFrame
 local weaponImbueFrame
+local focusedFrame
 local timerTicker
+local windfuryStatsFrame
+
+-- Windfury proc stats: pull (this combat) and session (since login / last reset).
+-- count = Windfury Attack hits; swings = eligible white swings (SWING_DAMAGE from player; WF hits don't proc WF).
+local wfPull  = { total = 0, count = 0, min = nil, max = nil, crits = 0, swings = 0 }
+local wfSession = { total = 0, count = 0, min = nil, max = nil, crits = 0, swings = 0 }
 
 local function GetDB()
     ShammyTimeDB = ShammyTimeDB or {}
@@ -251,10 +271,115 @@ local function GetDB()
 end
 
 local function ApplyScale()
+    local db = GetDB()
     if mainFrame then
-        local db = GetDB()
         mainFrame:SetScale(db.scale or 1)
     end
+    if windfuryStatsFrame then
+        windfuryStatsFrame:SetScale(db.scale or 1)
+    end
+end
+
+-- Format number for compact display (1234 -> "1.2k", 1234567 -> "1.2m").
+local function FormatNumberShort(n)
+    if not n or n < 0 then return "0" end
+    if n >= 1000000 then return ("%.1fm"):format(n / 1000000) end
+    if n >= 1000 then return ("%.1fk"):format(n / 1000) end
+    return tostring(math.floor(n + 0.5))
+end
+
+-- Persist Windfury stats to SavedVariables (survives relog / reload). Defined before RecordWindfuryHit/Reset* so they can call it.
+local function SaveWindfuryDB()
+    local db = GetDB()
+    db.wfSession = {
+        total = wfSession.total,
+        count = wfSession.count,
+        min = wfSession.min,
+        max = wfSession.max,
+        crits = wfSession.crits or 0,
+        swings = wfSession.swings or 0,
+    }
+    db.wfLastPull = {
+        total = wfPull.total,
+        count = wfPull.count,
+        min = wfPull.min,
+        max = wfPull.max,
+        crits = wfPull.crits or 0,
+        swings = wfPull.swings or 0,
+    }
+end
+
+-- Restore Windfury stats from SavedVariables (on load / relog).
+local function RestoreWindfuryDB()
+    local db = GetDB()
+    if db.wfSession then
+        wfSession.total = db.wfSession.total or 0
+        wfSession.count = db.wfSession.count or 0
+        wfSession.min = db.wfSession.min
+        wfSession.max = db.wfSession.max
+        wfSession.crits = db.wfSession.crits or 0
+        wfSession.swings = db.wfSession.swings or 0
+    end
+    if db.wfLastPull then
+        wfPull.total = db.wfLastPull.total or 0
+        wfPull.count = db.wfLastPull.count or 0
+        wfPull.min = db.wfLastPull.min
+        wfPull.max = db.wfLastPull.max
+        wfPull.crits = db.wfLastPull.crits or 0
+        wfPull.swings = db.wfLastPull.swings or 0
+    end
+end
+
+-- Schedule Windfury stats UI refresh on next frame so it updates in combat (avoids deferred/blocked updates during CLEU).
+local function ScheduleWindfuryUpdate()
+    if not windfuryStatsFrame or not windfuryStatsFrame.UpdateText then return end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, function()
+            if windfuryStatsFrame and windfuryStatsFrame.UpdateText then
+                windfuryStatsFrame:UpdateText()
+            end
+        end)
+    else
+        windfuryStatsFrame:UpdateText()
+    end
+end
+
+-- Record one eligible white swing (SWING_DAMAGE from player). Windfury procs only on white swings, not on WF hits.
+local function RecordEligibleSwing()
+    for _, st in ipairs({ wfPull, wfSession }) do
+        st.swings = (st.swings or 0) + 1
+    end
+    ScheduleWindfuryUpdate()
+    SaveWindfuryDB()
+end
+
+-- Record one Windfury hit (amount, isCrit) into pull and session stats.
+local function RecordWindfuryHit(amount, isCrit)
+    if not amount or amount <= 0 then return end
+    for _, st in ipairs({ wfPull, wfSession }) do
+        st.total = st.total + amount
+        st.count = st.count + 1
+        if st.min == nil or amount < st.min then st.min = amount end
+        if st.max == nil or amount > st.max then st.max = amount end
+        if isCrit then st.crits = (st.crits or 0) + 1 end
+    end
+    ScheduleWindfuryUpdate()
+    SaveWindfuryDB()
+end
+
+-- Reset pull stats (call when entering combat).
+local function ResetWindfuryPull()
+    wfPull.total, wfPull.count, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, nil, nil, 0, 0
+    ScheduleWindfuryUpdate()
+    SaveWindfuryDB()
+end
+
+-- Reset session stats (and pull).
+local function ResetWindfurySession()
+    wfPull.total, wfPull.count, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, nil, nil, 0, 0
+    wfSession.total, wfSession.count, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, nil, nil, 0, 0
+    ScheduleWindfuryUpdate()
+    SaveWindfuryDB()
 end
 
 -- Returns Lightning Shield or Water Shield aura on player: icon, count (charges), duration, expirationTime, spellId; or nil if neither active.
@@ -333,6 +458,27 @@ local function GetWeaponImbueAura()
     end
     -- UnitAura can miss imbue on some clients (e.g. TBC Anniversary); use GetWeaponEnchantInfo (see LibWeaponEnchantInfo).
     return GetWeaponImbueFromEnchantInfo()
+end
+
+-- Returns Focused buff aura (Shamanistic Focus proc): icon, duration, expirationTime, spellId; or nil if not present.
+-- TBC: spell 43339 "Focused" — next Shock costs 60% less, lasts 15 sec.
+local function GetFocusedAura()
+    for i = 1, 40 do
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then break end
+        local is10 = (type(v4) == "string")
+        local icon = is10 and v2 or v3
+        local duration = is10 and v5 or v6
+        local expTime = is10 and v6 or v7
+        local spellId = is10 and v10 or v11
+        if spellId == FOCUSED_BUFF_SPELL_ID then
+            return icon, duration, expTime, spellId
+        end
+        if v1 == "Focused" then
+            return icon, duration, expTime, spellId
+        end
+    end
+    return nil
 end
 
 -- When >= 60 sec: show minutes rounded up with " min" (e.g. 1:40 → "2 min", 1:00 → "1 min"). When < 60 sec: show seconds with " sec".
@@ -517,6 +663,27 @@ local function UpdateWeaponImbue()
     end
 end
 
+local function UpdateFocused()
+    if not focusedFrame then return end
+    local icon, duration, expirationTime, spellId = GetFocusedAura()
+    if icon or spellId then
+        local tex = (spellId and GetSpellTexture and GetSpellTexture(spellId)) or (icon and type(icon) == "string" and icon) or (icon and type(icon) == "number" and icon) or FOCUSED_ICON
+        focusedFrame.icon:SetTexture(tex or FOCUSED_ICON)
+        focusedFrame.icon:SetVertexColor(1, 1, 1)
+        local expTime = (type(expirationTime) == "number" and expirationTime) or 0
+        local timeLeft = expTime > 0 and (expTime - GetTime()) or 0
+        focusedFrame.timer:SetText(FormatTime(timeLeft))
+        focusedFrame.timer:Show()
+        focusedFrame:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
+    else
+        focusedFrame.icon:SetTexture(FOCUSED_ICON)
+        focusedFrame.icon:SetVertexColor(0.35, 0.35, 0.35)
+        focusedFrame.timer:SetText("")
+        focusedFrame.timer:Hide()
+        focusedFrame:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.8)
+    end
+end
+
 local function RefreshTimers()
     if not mainFrame or not mainFrame:IsShown() then return end
     for slot = 1, 4 do
@@ -550,6 +717,7 @@ local function RefreshTimers()
     end
     UpdateLightningShield()
     UpdateWeaponImbue()
+    UpdateFocused()
 end
 
 local function CreateMainFrame()
@@ -558,7 +726,7 @@ local function CreateMainFrame()
     local iconSize = 36
     local gap = 2
     local slotW, slotH = iconSize + 6, iconSize + 18
-    local fw = 6 * slotW + 5 * gap  -- 4 totems + Lightning Shield + Weapon Imbue
+    local fw = 7 * slotW + 6 * gap  -- 4 totems + Lightning Shield + Weapon Imbue + Focused
     local fh = slotH
     f:SetSize(fw, fh)
     f:SetScale(db.scale or 1)
@@ -752,8 +920,194 @@ local function CreateMainFrame()
     wif.timer = wifTimer
     weaponImbueFrame = wif
 
+    -- Focused slot (Shamanistic Focus proc: next Shock costs 60% less, 15 sec)
+    local ff = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    ff:SetSize(slotW, slotH)
+    ff:SetPoint("LEFT", weaponImbueFrame, "RIGHT", gap, 0)
+    ff:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
+    ff:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 10,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    ff:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
+    ff:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.8)
+    local ffTimerBar = CreateFrame("Frame", nil, ff)
+    ffTimerBar:SetPoint("BOTTOMLEFT", 2, 2)
+    ffTimerBar:SetPoint("BOTTOMRIGHT", -2, 2)
+    ffTimerBar:SetHeight(14)
+    ffTimerBar:SetFrameLevel(ff:GetFrameLevel())
+    local ffTimerBarTex = ffTimerBar:CreateTexture(nil, "BACKGROUND")
+    ffTimerBarTex:SetAllPoints(ffTimerBar)
+    ffTimerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
+    ffTimerBarTex:SetTexCoord(0, 1, 0, 0.5)
+    ffTimerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
+    local ffIcon = ff:CreateTexture(nil, "ARTWORK")
+    ffIcon:SetSize(iconSize, iconSize)
+    ffIcon:SetPoint("TOP", 0, -4)
+    ffIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    ffIcon:SetTexture(FOCUSED_ICON)
+    ffIcon:SetVertexColor(0.35, 0.35, 0.35)
+    ff.icon = ffIcon
+    local ffTimer = ff:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    ffTimer:SetPoint("BOTTOM", 0, 4)
+    ffTimer:SetTextColor(1, 1, 1)
+    ff.timer = ffTimer
+    focusedFrame = ff
+
     mainFrame = f
     return f
+end
+
+-- Windfury stats: same layout/design as totem bar — row of slots (Procs, Proc %, Crits, Min, Avg, Max, Total), each with Pull/Session values.
+-- Procs = Windfury proc hits (WF Attack damage events; parry/dodge/miss not counted).
+local WF_STAT_LABELS = { "Procs", "Proc %", "Crits", "Min", "Avg", "Max", "Total" }
+local function CreateWindfuryStatsFrame()
+    if windfuryStatsFrame then return windfuryStatsFrame end
+    if not mainFrame then return nil end
+    local db = GetDB()
+    local iconSize = 36
+    local gap = 2
+    local slotW, slotH = iconSize + 6, iconSize + 18
+    local numSlots = 7
+    local fw = numSlots * slotW + (numSlots - 1) * gap
+    local fh = slotH
+
+    local wf = CreateFrame("Frame", "ShammyTimeWindfuryFrame", UIParent, "BackdropTemplate")
+    wf:SetSize(fw, fh)
+    wf:SetScale(db.scale or 1)
+    local wfRelTo = (db.wfRelativeTo and _G[db.wfRelativeTo]) or mainFrame or UIParent
+    wf:SetPoint(db.wfPoint or "TOP", wfRelTo, db.wfRelativePoint or "BOTTOM", db.wfX or 0, db.wfY or -4)
+    wf:SetMovable(true)
+    wf:SetClampedToScreen(true)
+    wf:EnableMouse(true)
+    wf:RegisterForDrag("LeftButton")
+    wf:SetScript("OnDragStart", function(self)
+        if not (db.wfLocked) then self:StartMoving() end
+    end)
+    wf:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local pt, relTo, relPt, x, y = self:GetPoint(1)
+        db.wfPoint = pt
+        db.wfRelativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+        db.wfRelativePoint = relPt
+        db.wfX = x
+        db.wfY = y
+    end)
+    wf:SetScript("OnMouseDown", function(self, button)
+        if button == "RightButton" then
+            ResetWindfurySession()
+            print("ShammyTime: Windfury stats reset.")
+        end
+    end)
+    wf:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:SetText("Right-click to reset stats")
+        GameTooltip:Show()
+    end)
+    wf:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Same backdrop and styling as totem slots
+    local slotFrames = {}
+    for i = 1, numSlots do
+        local sf = CreateFrame("Frame", nil, wf, "BackdropTemplate")
+        sf:SetSize(slotW, slotH)
+        if i == 1 then
+            sf:SetPoint("TOPLEFT", wf, "TOPLEFT", 0, 0)
+        else
+            sf:SetPoint("LEFT", slotFrames[i - 1], "RIGHT", gap, 0)
+            sf:SetPoint("TOP", slotFrames[1], "TOP", 0, 0)
+        end
+        sf:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true,
+            tileSize = 16,
+            edgeSize = 10,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        sf:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
+        sf:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
+
+        -- Dark bar strip at bottom (same as totem timer area)
+        local timerBar = CreateFrame("Frame", nil, sf)
+        timerBar:SetPoint("BOTTOMLEFT", 2, 2)
+        timerBar:SetPoint("BOTTOMRIGHT", -2, 2)
+        timerBar:SetHeight(14)
+        timerBar:SetFrameLevel(sf:GetFrameLevel())
+        local timerBarTex = timerBar:CreateTexture(nil, "BACKGROUND")
+        timerBarTex:SetAllPoints(timerBar)
+        timerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
+        timerBarTex:SetTexCoord(0, 1, 0, 0.5)
+        timerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
+
+        -- Label at top (Procs, Min, Max, Avg, Total)
+        local label = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetPoint("TOP", 0, -6)
+        label:SetText(WF_STAT_LABELS[i])
+        label:SetTextColor(0.7, 0.68, 0.62)
+        sf.label = label
+
+        -- Values: Pull above Session, spaced so they don't overlap (same value = was drawing twice)
+        local pullVal = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        pullVal:SetPoint("BOTTOM", 0, 20)
+        pullVal:SetTextColor(0.65, 0.62, 0.58)
+        sf.pullVal = pullVal
+        local sessionVal = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        sessionVal:SetPoint("BOTTOM", 0, 4)
+        sessionVal:SetTextColor(1, 1, 1)
+        sf.sessionVal = sessionVal
+
+        slotFrames[i] = sf
+    end
+    wf.slotFrames = slotFrames
+
+    function wf:UpdateText()
+        local function val(st, kind)
+            if st.count == 0 then
+                if kind == "procs" or kind == "crits" then return "0" end
+                -- Proc %: show 0% when we have swings but no procs; otherwise "–"
+                if kind == "procrate" then
+                    local swings = st.swings or 0
+                    return (swings > 0) and "0%" or "–"
+                end
+                return "–"
+            end
+            -- Procs = Windfury proc hits (WF Attack damage events; parry/dodge/miss not counted)
+            if kind == "procs" then return tostring(st.count) end
+            -- Proc rate = WF proc hits / eligible white swings (WF hits don't proc WF)
+            if kind == "procrate" then
+                local swings = st.swings or 0
+                if swings <= 0 then return "–" end
+                local rate = st.count / swings
+                if rate >= 1 then return "100%" end
+                return ("%.1f%%"):format(rate * 100)
+            end
+            -- Min/Avg/Max = single-hit stats (not sums). Total = sum only.
+            if kind == "min" then return st.min and FormatNumberShort(st.min) or "–" end
+            if kind == "max" then return st.max and FormatNumberShort(st.max) or "–" end
+            if kind == "avg" then return FormatNumberShort(math.floor(st.total / st.count + 0.5)) end
+            if kind == "total" then return FormatNumberShort(st.total) end
+            if kind == "crits" then return tostring(st.crits or 0) end
+            return "–"
+        end
+        local kinds = { "procs", "procrate", "crits", "min", "avg", "max", "total" }
+        for i = 1, numSlots do
+            local sf = self.slotFrames[i]
+            local pullStr = val(wfPull, kinds[i])
+            local sessionStr = val(wfSession, kinds[i])
+            sf.pullVal:SetText(pullStr)
+            sf.sessionVal:SetText(sessionStr)
+            -- Show pull row whenever in a pull (count > 0) so both rows are visible in combat; hide when out of combat
+            if wfPull.count > 0 then sf.pullVal:Show() else sf.pullVal:Hide() end
+        end
+    end
+    wf:UpdateText()
+    windfuryStatsFrame = wf
+    return wf
 end
 
 local function OnEvent(_, event)
@@ -769,9 +1123,69 @@ local function OnEvent(_, event)
     end
 end
 
+-- WoW Classic Anniversary 2026 (Interface 20505) and older builds (20501–20504): payload may come from
+-- CombatLogGetCurrentEventInfo() or from event varargs; spellId can be 0 in Classic so we match by spell name too.
+local function ParseCombatLogWindfuryDamage()
+    if not CombatLogGetCurrentEventInfo then return nil end
+    local subevent = select(2, CombatLogGetCurrentEventInfo())
+    if subevent ~= "SPELL_DAMAGE" and subevent ~= "SPELL_DAMAGE_CRIT" then return nil end
+    local sourceGUID = select(4, CombatLogGetCurrentEventInfo())
+    local sourceName = select(5, CombatLogGetCurrentEventInfo())
+    local spellId = select(12, CombatLogGetCurrentEventInfo())
+    local spellName = select(13, CombatLogGetCurrentEventInfo())
+    local amount = select(15, CombatLogGetCurrentEventInfo())
+    -- Critical: subevent SPELL_DAMAGE_CRIT, or payload param 21 (1/true = crit; 0/nil = not; in Lua 0 is truthy so check explicitly)
+    local critFlag = select(21, CombatLogGetCurrentEventInfo())
+    local isCrit = (subevent == "SPELL_DAMAGE_CRIT") or (critFlag == true or critFlag == 1)
+    return sourceGUID, sourceName, spellId, spellName, amount, isCrit
+end
+
+local function OnCombatLogWindfury(...)
+    local subevent
+    if CombatLogGetCurrentEventInfo then
+        subevent = select(2, CombatLogGetCurrentEventInfo())
+    else
+        subevent = select(2, ...)
+    end
+    -- Windfury procs only on white (auto) swings; WF Attack hits cannot proc WF. Count eligible swings for proc rate.
+    -- Payload: 1=timestamp 2=subevent 3=hideCaster 4=sourceGUID (CombatLogGetCurrentEventInfo); varargs ... = (subevent, hideCaster, sourceGUID, ...) so sourceGUID = select(3, ...).
+    if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED" then
+        local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
+        if sourceGUID and sourceGUID == UnitGUID("player") then
+            RecordEligibleSwing()
+        end
+        return
+    end
+    if subevent ~= "SPELL_DAMAGE" and subevent ~= "SPELL_DAMAGE_CRIT" then return end
+
+    local sourceGUID, sourceName, spellId, spellName, amount, isCrit
+    if CombatLogGetCurrentEventInfo then
+        sourceGUID, sourceName, spellId, spellName, amount, isCrit = ParseCombatLogWindfuryDamage()
+    end
+    if not sourceGUID and select(1, ...) then
+        -- Fallback: varargs ... = (subevent, hideCaster, sourceGUID, ...) so indices are offset by 1 vs full payload.
+        -- Full: 4=sourceGUID 5=sourceName 12=spellId 13=spellName 15=amount 21=critical → ...: 3 4 11 12 14 20.
+        sourceGUID = select(3, ...)
+        sourceName = select(4, ...)
+        spellId = select(11, ...) or select(12, ...)
+        spellName = select(12, ...) or select(13, ...)
+        amount = select(14, ...)
+        local critFlag = select(20, ...)
+        isCrit = (subevent == "SPELL_DAMAGE_CRIT") or (critFlag == true or critFlag == 1)
+    end
+    if not amount or amount <= 0 then return end
+    if sourceGUID ~= UnitGUID("player") then return end
+    local isWindfury = (spellId and spellId == WINDFURY_ATTACK_SPELL_ID) or (spellName and spellName == "Windfury Attack")
+    if isWindfury then
+        RecordWindfuryHit(amount, isCrit)
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 if eventFrame.RegisterUnitEvent then
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     eventFrame:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
@@ -779,17 +1193,21 @@ else
     eventFrame:RegisterEvent("UNIT_AURA")
     eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 end
-eventFrame:SetScript("OnEvent", function(_, event, arg1)
+eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
+        RestoreWindfuryDB()
         if not mainFrame then
             CreateMainFrame()
             mainFrame:Show()
             if timerTicker then timerTicker:Cancel() end
             timerTicker = C_Timer.NewTicker(1, RefreshTimers)
         end
+        CreateWindfuryStatsFrame()
+        if windfuryStatsFrame then windfuryStatsFrame:Show() end
         UpdateAllSlots()
         UpdateLightningShield()
         UpdateWeaponImbue()
+        UpdateFocused()
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
     elseif event == "UNIT_AURA" then
@@ -797,9 +1215,15 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
             UpdateAllSlots()
             UpdateLightningShield()
             UpdateWeaponImbue()
+            UpdateFocused()
         end
     elseif event == "UNIT_INVENTORY_CHANGED" and arg1 == "player" then
         UpdateWeaponImbue()
+    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        OnCombatLogWindfury(...)
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        -- Reset pull when entering combat so new pull starts fresh; last pull persists out of combat
+        ResetWindfuryPull()
     end
 end)
 
@@ -870,7 +1294,20 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         end
     elseif cmd == "debug" then
         DebugWeaponImbue()
+    elseif cmd == "wf" then
+        if arg == "reset" then
+            ResetWindfurySession()
+            print("ShammyTime: Windfury stats reset.")
+        elseif arg == "lock" then
+            db.wfLocked = true
+            print("ShammyTime: Windfury frame locked.")
+        elseif arg == "unlock" then
+            db.wfLocked = false
+            print("ShammyTime: Windfury frame unlocked — drag to move.")
+        else
+            print("ShammyTime: /st wf reset | lock | unlock")
+        end
     else
-        print("ShammyTime: /st lock | unlock | move | scale [0.5-2] | debug")
+        print("ShammyTime: /st lock | unlock | move | scale [0.5-2] | wf reset | debug")
     end
 end

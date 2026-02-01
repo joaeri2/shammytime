@@ -1,7 +1,7 @@
 ## Interface: 20505
 ## X-Compatible-With: 20501, 20502, 20503, 20504, 20505
 ## Title: ShammyTime
-## Notes: Totem bar with timers, out-of-range indicator, Lightning Shield and weapon imbue for TBC Anniversary shaman.
+## Notes: Totem bar with timers, out-of-range indicator, Lightning Shield, weapon imbue, and Windfury stats. For WoW Classic Anniversary 2026 (TBC Anniversary Edition) and compatible builds.
 ## Author: ShammyTime
 ## Version: 1.0.0
 ## SavedVariables: ShammyTimeDB

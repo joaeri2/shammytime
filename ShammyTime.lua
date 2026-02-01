@@ -59,8 +59,10 @@ local WEAPON_IMBUE_ENCHANT_ICONS = {
 }
 
 -- Totems that do NOT put a buff on the player (no way to detect range via buffs). Never show buff-based out-of-range for these.
+-- Stoneclaw: buff 8072 only appears when the totem absorbs damage, not when in range, so we use position-only.
 local TOTEM_NO_RANGE_BUFF = {
     ["Windfury Totem"] = true,   -- weapon proc only, no persistent buff
+    ["Stoneclaw Totem"] = true, -- buff only when totem is hit; use position-based range only
     ["Earth Elemental Totem"] = true,
     ["Fire Elemental Totem"] = true,
 }
@@ -82,16 +84,17 @@ local TOTEM_POSITION_RANGE = {
     -- Water (cleansing: no buff on player)
     ["Poison Cleansing Totem"] = 30,
     ["Disease Cleansing Totem"] = 30,
+    -- Air (Windfury = weapon proc only; use position-based range)
+    ["Windfury Totem"] = 20,
 }
 
 -- Totem name (from GetTotemInfo) → buff spell ID on player. When totem is down but player
 -- doesn't have this buff, we're out of range. Match by exact name or by prefix (e.g. "Mana Spring Totem" matches "Mana Spring Totem II").
 -- Only include totems that put a *persistent* aura on the player (not procs like Windfury).
 local TOTEM_BUFF_SPELL_IDS = {
-    -- Earth
+    -- Earth (Stoneclaw excluded: buff only when totem absorbs damage; use TOTEM_POSITION_RANGE only)
     ["Strength of Earth Totem"] = 8075,
     ["Stoneskin Totem"] = 8071,
-    ["Stoneclaw Totem"] = 8072,
     -- Fire
     ["Flametongue Totem"] = 8230,  -- Flametongue Totem Effect
     ["Totem of Wrath"] = 30708,    -- TBC: party spell crit aura
@@ -112,7 +115,6 @@ local TOTEM_BUFF_SPELL_IDS = {
 local TOTEM_BUFF_NAMES = {
     ["Strength of Earth Totem"] = "Strength of Earth",
     ["Stoneskin Totem"] = "Stoneskin",
-    ["Stoneclaw Totem"] = "Stoneclaw",
     ["Flametongue Totem"] = "Flametongue Totem",
     ["Totem of Wrath"] = "Totem of Wrath",
     ["Mana Spring Totem"] = "Mana Spring",

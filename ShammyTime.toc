@@ -1,0 +1,9 @@
+## Interface: 20505
+## X-Compatible-With: 20501, 20502, 20503, 20504, 20505
+## Title: ShammyTime
+## Notes: Movable totem icons with timers and obvious "gone" animation when a totem is killed or expires.
+## Author: ShammyTime
+## Version: 1.0.0
+## SavedVariables: ShammyTimeDB
+
+ShammyTime.lua

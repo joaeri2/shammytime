@@ -4,7 +4,8 @@
 
 local addonName, addon = ...
 local SLOT_TO_ELEMENT = { [1] = "Fire", [2] = "Earth", [3] = "Water", [4] = "Air" }
-local ELEMENT_ORDER = { "Fire", "Earth", "Water", "Air" }
+-- Display order left-to-right: stone (Earth), fire, water, air. WoW API slots: 1=Fire, 2=Earth, 3=Water, 4=Air.
+local DISPLAY_ORDER = { 2, 1, 3, 4 }
 local ELEMENT_COLORS = {
     Fire  = { r = 0.9,  g = 0.3,  b = 0.2  },
     Earth = { r = 0.6,  g = 0.4,  b = 0.2  },
@@ -334,12 +335,13 @@ local function GetWeaponImbueAura()
     return GetWeaponImbueFromEnchantInfo()
 end
 
+-- When >= 60 sec: show minutes rounded up with " min" (e.g. 1:40 → "2 min", 1:00 → "1 min"). When < 60 sec: show seconds with " sec".
 local function FormatTime(seconds)
     if not seconds or seconds <= 0 then return "" end
     if seconds >= 60 then
-        return ("%d:%.0f"):format(floor(seconds / 60), seconds % 60)
+        return ("%d min"):format(math.ceil(seconds / 60))
     end
-    return ("%.0f"):format(seconds)
+    return ("%.0f sec"):format(seconds)
 end
 
 -- Use the same "cooldown finish" spiral as action buttons (native WoW UI)
@@ -572,16 +574,17 @@ local function CreateMainFrame()
     end)
     -- No bar-wide background: texture is on each button
 
-    -- Slot row: chained left-to-right, unit-frame style border per slot
-    for i, element in ipairs(ELEMENT_ORDER) do
-        local slot = i
+    -- Slot row: chained left-to-right as stone, fire, water, air (then shield, imbue)
+    for i = 1, 4 do
+        local slot = DISPLAY_ORDER[i]
+        local element = SLOT_TO_ELEMENT[slot]
         local sf = CreateFrame("Frame", nil, f, "BackdropTemplate")
         sf:SetSize(slotW, slotH)
         if i == 1 then
             sf:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
         else
-            sf:SetPoint("LEFT", slotFrames[i - 1], "RIGHT", gap, 0)
-            sf:SetPoint("TOP", slotFrames[1], "TOP", 0, 0)
+            sf:SetPoint("LEFT", slotFrames[DISPLAY_ORDER[i - 1]], "RIGHT", gap, 0)
+            sf:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
         end
         -- Slot: dark background; bar texture only in the timer (numbers) area at bottom
         sf:SetBackdrop({
@@ -670,7 +673,7 @@ local function CreateMainFrame()
     local lsf = CreateFrame("Frame", nil, f, "BackdropTemplate")
     lsf:SetSize(slotW, slotH)
     lsf:SetPoint("LEFT", slotFrames[4], "RIGHT", gap, 0)
-    lsf:SetPoint("TOP", slotFrames[1], "TOP", 0, 0)
+    lsf:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
     lsf:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -714,7 +717,7 @@ local function CreateMainFrame()
     local wif = CreateFrame("Frame", nil, f, "BackdropTemplate")
     wif:SetSize(slotW, slotH)
     wif:SetPoint("LEFT", lightningShieldFrame, "RIGHT", gap, 0)
-    wif:SetPoint("TOP", slotFrames[1], "TOP", 0, 0)
+    wif:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
     wif:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",

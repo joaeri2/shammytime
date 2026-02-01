@@ -1,95 +1,127 @@
 # ShammyTime
 
-A World of Warcraft addon for **Shaman** that shows your totems, Lightning Shield, weapon imbue, and **Windfury stats** in a compact, movable bar with timers and clear feedback.
+A **Shaman** addon for WoW that gives you a compact totem bar with timers, a red overlay when you’re too far from a totem, Lightning Shield, weapon imbue, and **Windfury** tracking—plus a big gold damage popup when Windfury procs.
 
-**Built for The Burning Crusade Anniversary 2026** (Interface 20505). Compatible with TBC Anniversary clients using Interface 20501–20505.
-
----
-
-## What It Does
-
-### Main bar (totems, shields, imbue)
-
-- **Totem bar** — Four slots (Fire, Earth, Water, Air) showing active totems with countdown timers.
-- **“Gone” feedback** — When a totem is killed or expires, that slot briefly flashes with a red “GONE” overlay and a cooldown-style sweep so you notice immediately.
-- **Out-of-range indicator** — If you’re too far from a totem to receive its buff (e.g. Mana Spring, Strength of Earth), a red **“OUT OF RANGE”** overlay appears on that slot so you know to move back in range.
-- **Lightning Shield** — Slot showing charges and time remaining (e.g. `3 (30)`).
-- **Weapon imbue** — Slot showing your current imbue (Flametongue, Frostbrand, Rockbiter, Windfury Weapon) and time until it expires; tooltip shows the imbue name.
-- **Focused** — Indicator for the Shamanistic Focus proc (TBC): when you get a melee critical strike, you gain “Focused” for 15 seconds; your next Shock costs 60% less mana. The slot lights up with a timer while the buff is active.
-- **Movable & lockable** — Drag the bar where you want it, then lock it with a slash command so it stays put.
-
-### Windfury stats bar (below the main bar)
-
-When you have **Windfury Weapon** on your weapon, a second bar appears below the main bar. It tracks your Windfury Attack damage in two rows:
-
-- **Top row (Pull)** — This fight only. Resets when you enter combat.
-- **Bottom row (Session)** — Since you logged in (or since you last reset).
-
-Each column means:
-
-| Column   | What it shows |
-|----------|----------------|
-| **Procs**   | How many Windfury Attack hits landed (actual damage only; parry/dodge/miss are not counted). |
-| **Proc %**  | Windfury hits ÷ your white (auto) swings. Only white swings can proc Windfury, so this is your real proc rate. |
-| **Crits**   | How many of those Windfury hits were critical strikes. |
-| **Min**     | Smallest single Windfury hit. |
-| **Avg**     | Average damage per Windfury hit. |
-| **Max**     | Largest single Windfury hit. |
-| **Total**   | Sum of all Windfury damage. |
-
-- **Right-click** the Windfury bar to reset session stats (and pull stats).
-- The Windfury bar is **movable** when unlocked; use `/st wf unlock` to drag it, then `/st wf lock` to lock it.
+**Built for The Burning Crusade Anniversary 2026** (Interface 20505). Works with TBC Anniversary clients (Interface 20501–20505).
 
 ---
 
-## Commands
+## What You Get
+
+| Thing | What to expect |
+|-------|----------------|
+| **Main bar** | One row: your 4 totem slots (Fire, Earth, Water, Air) + Lightning Shield + weapon imbue + Shamanistic Focus. Each slot shows a timer. Drag it where you want, lock it with `/st lock`. |
+| **Windfury stats bar** | When you have Windfury Weapon, a second bar appears below (or where you drag it). It shows Procs, Proc %, Crits, Min/Avg/Max/Total damage for the current pull and the whole session. Right-click to reset. |
+| **Windfury damage popup** | When Windfury procs, a **large gold number** (e.g. *Windfury: 2.4k*) appears on screen: it pops in at full size, bounces to 140% and back to 100% over ~0.3s, stays readable for a few seconds (you choose how long), then floats up and fades. You can move it, resize it, and turn it on/off. |
+
+You can hide the Windfury stats bar and still use the popup (or the other way around). Type **`/st`** or **`/st wf`** to see all options.
+
+---
+
+## Main Bar (Totems, Shield, Imbue, Focus)
+
+- **Totem slots** — Fire, Earth, Water, Air with countdown timers. Empty slots show a dimmed elemental icon.
+- **“Gone” feedback** — When a totem dies or expires, that slot flashes red (“GONE”) with a cooldown sweep so you notice right away.
+- **Too far from totem** — If you’re too far from a totem to benefit from it, that slot gets a **red overlay** (no text). For totems that give you a buff (e.g. Mana Spring, Strength of Earth), the addon shows the overlay when the totem is down but you don’t have that buff. For totems that don’t give a buff (e.g. Searing Totem, Windfury Totem), it estimates distance from where you were when you placed it and shows the overlay if you’re beyond the totem’s radius—**that distance check only works outdoors**, not in instances.
+- **Lightning Shield** — Shows charges and time left (e.g. `3 (30)`).
+- **Weapon imbue** — Shows your current imbue (Flametongue, Frostbrand, Rockbiter, Windfury Weapon) and time until it expires.
+- **Focused** — Shamanistic Focus proc (TBC): after a melee crit you get “Focused” for 15s; next Shock costs 60% less mana. The slot lights up with a timer while the buff is active.
+- **Move & lock** — Drag the bar to position it. Use `/st lock` so it can’t be moved, `/st unlock` to move it again.
+
+---
+
+## Windfury Stats Bar
+
+When you have **Windfury Weapon** on your weapon, a second bar appears. It tracks Windfury Attack damage in two rows:
+
+- **Pull** — This fight only (resets when you enter combat).
+- **Session** — Since login or since you last reset.
+
+Columns: **Procs** (number of WF hits), **Proc %** (WF hits ÷ white swings), **Crits**, **Min**, **Avg**, **Max**, **Total**.
+
+- **Right-click** the bar to reset session (and pull) stats.
+- **Move it** — `/st wf unlock`, drag the bar, then `/st wf lock`.
+- **Hide it** — `/st wf disable`. Stats stop updating and the bar is hidden. Use `/st wf enable` to turn it back on.
+- **Scale** — `/st wf scale 1.2` (0.5–2). This is separate from the main bar scale.
+
+---
+
+## Windfury Damage Popup
+
+When Windfury procs, you see a **big gold number** (e.g. *Windfury: 2.4k*) that:
+
+1. **Appears at full size** — No slow fade-in; the number is there immediately.
+2. **Bounces** — Scales up to 140% and back to 100% over about 0.3 seconds.
+3. **Stays visible** — Holds at 100% for a few seconds (default 2s; you set it).
+4. **Dissipates** — Floats up and fades out.
+
+The popup works even if the Windfury stats bar is hidden. You can move it (unlock, drag when it appears, then lock), change its size, and how long it stays before fading.
+
+| Command | What it does |
+|--------|----------------|
+| `/st wf popup on` | Show the damage popup when Windfury procs. |
+| `/st wf popup off` | Hide the popup. |
+| `/st wf popup unlock` | Let you drag the popup to move it (drag it the next time it appears). |
+| `/st wf popup lock` | Lock the popup position. |
+| `/st wf popup scale 1.3` | Popup text size (0.5–2). Default 1.3. |
+| `/st wf popup hold 2` | Seconds the popup stays at full size before fading (0.5–4). Default 2. |
+
+Type **`/st wf popup`** to see current popup settings and a short reminder of these commands.
+
+---
+
+## All Commands
 
 | Command | Description |
-|--------|-------------|
-| `/st lock`   | Lock the main bar so it can’t be dragged. |
-| `/st unlock` | Unlock the main bar so you can drag it. |
-| `/st move`   | Same as `unlock`. |
-| `/st scale [0.5–2]` | Set bar scale (e.g. `/st scale 1.2`). Affects both bars. |
-| `/st wf reset` | Reset Windfury stats (pull and session). Same as right-clicking the Windfury bar. |
-| `/st wf lock`   | Lock the Windfury bar so it can't be dragged. |
-| `/st wf unlock` | Unlock the Windfury bar so you can drag it. |
+|--------|----------------|
+| `/st lock` | Lock the main bar. |
+| `/st unlock` / `/st move` | Unlock so you can drag the main bar. |
+| `/st scale [0.5–2]` | Main bar size (e.g. `/st scale 1.2`). |
+| `/st wf` | Show Windfury options (tracker, popup, reset, lock, scale). |
+| `/st wf reset` | Reset Windfury stats (same as right-click on the bar). |
+| `/st wf lock` / `unlock` | Lock or unlock the Windfury bar. |
+| `/st wf scale [0.5–2]` | Windfury bar size (separate from main bar). |
+| `/st wf enable` / `disable` | Turn the Windfury tracker (stats bar) on or off. |
+| `/st wf popup on` / `off` | Turn the Windfury damage popup on or off. |
+| `/st wf popup lock` / `unlock` | Lock or unlock popup position. |
+| `/st wf popup scale [0.5–2]` | Popup text size. |
+| `/st wf popup hold [0.5–4]` | Seconds popup stays visible before fading. |
+| `/st debug` | Technical info (for troubleshooting). |
 
-You can also use `/shammytime` instead of `/st`.
+You can use **`/shammytime`** instead of **`/st`**.
 
 ---
 
 ## Installation
 
-### Via CurseForge
+### CurseForge
 
-1. Install the [CurseForge app](https://www.curseforge.com/download/app) and add your WoW TBC Anniversary installation.
-2. Search for **ShammyTime** and install it. The app will place the addon in the correct folder for your game flavor.
+1. Install the [CurseForge app](https://www.curseforge.com/download/app) and add your WoW TBC Anniversary install.
+2. Search for **ShammyTime** and install. The app puts it in the right folder.
 
 ### Manual
 
-1. Download the latest release (e.g. from CurseForge) or clone this repository.
-2. Place the **ShammyTime** folder in:
-   - **TBC Anniversary:**  
-     `World of Warcraft\_anniversary_\Interface\AddOns\`
-3. Restart WoW or run `/reload` and enable **ShammyTime** in the AddOns list at the character selection screen.
+1. Download the latest release or clone this repo.
+2. Put the **ShammyTime** folder in:
+   - **TBC Anniversary:** `World of Warcraft\_anniversary_\Interface\AddOns\`
+3. Restart WoW or `/reload`, and enable **ShammyTime** in the AddOns list at the character screen.
 
 ---
 
 ## Technical Notes
 
-- **Saved data:** Position, scale, and lock state for both bars are stored in `ShammyTimeDB` (per character). Windfury stats (session and last pull) are also saved so they persist across relog and reload.
-- **Out-of-range detection:** The addon infers “out of range” when a totem is down but you don’t have its buff (e.g. Mana Spring, Grace of Air). Totems that don't grant a trackable buff use distance via WoW's `UnitPosition` API.
-- **Out-of-range in instances:** WoW's `UnitPosition` only returns valid coordinates in the open world. Inside instances (dungeons, raids, battlegrounds), position-based range cannot work, so the "OUT OF RANGE" overlay will not show for totems that rely on it: Windfury Totem, Searing Totem, Stoneclaw Totem, Earthbind Totem, etc. Buff-based range (totems that give you a trackable buff like Mana Spring or Strength of Earth) should still work in instances.
-- **UI styling:** Uses Blizzard’s tooltip/dialog textures so the bar fits the default WoW look. See `WOW_UI_STYLING.md` in the addon folder for details.
+- **Saved data:** Bar positions, scales, and lock states (main bar, Windfury bar, and popup) are stored in `ShammyTimeDB` per character. Windfury stats (session and last pull) are saved too.
+- **Range overlay:** When you’re too far from a totem, that slot gets a red overlay (no text). **Buff-based:** For totems that put a buff on you (Mana Spring, Strength of Earth, etc.), the overlay shows when the totem is down but you don’t have the buff. **Position-based:** For totems that don’t give a buff (Searing Totem, Windfury Totem, Earthbind, etc.), the addon uses your position when you placed the totem and your current position; if you’re beyond the totem’s effect radius, the overlay shows. Position-based check uses `UnitPosition` and **only works outdoors**; in instances it doesn’t work, so those totems won’t show the red overlay from distance.
+- **UI:** Uses Blizzard tooltip/dialog textures so the bar matches the default WoW look. See `WOW_UI_STYLING.md` for details.
 
 ---
 
 ## Publishing on CurseForge
 
-If you want to publish this addon (or a fork) on CurseForge, see **CURSEFORGE.md** in this folder for submission requirements, project page guidelines, and a checklist.
+See **CURSEFORGE.md** in this folder for submission requirements and a checklist.
 
 ---
 
 ## License
 
-Use and modify as you like. No warranty. If you publish a fork, please credit the original and comply with the license you choose on CurseForge (e.g. MIT).
+Use and modify as you like. No warranty. If you publish a fork, credit the original and follow the license you set on CurseForge (e.g. MIT).

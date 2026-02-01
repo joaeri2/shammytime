@@ -3,6 +3,15 @@
 -- WoW Classic Anniversary 2026 (TBC Anniversary Edition, Interface 20505); compatible with builds 20501–20505.
 
 local addonName, addon = ...
+-- Chat colors for slash help (WoW: |cAARRGGBB text |r)
+local C = {
+    gold = "|cffffcc00",
+    white = "|cffffffff",
+    gray = "|cffb0b0b0",
+    green = "|cff00ff00",
+    red = "|cffff4040",
+    r = "|r",
+}
 local SLOT_TO_ELEMENT = { [1] = "Fire", [2] = "Earth", [3] = "Water", [4] = "Air" }
 -- Display order left-to-right: stone (Earth), fire, water, air. WoW API slots: 1=Fire, 2=Earth, 3=Water, 4=Air.
 local DISPLAY_ORDER = { 2, 1, 3, 4 }
@@ -237,7 +246,21 @@ local DEFAULTS = {
     wfRelativePoint = "BOTTOM",
     wfX = 0,
     wfY = -4,
+    wfScale = 1.0,
     wfLocked = false,
+    windfuryTrackerEnabled = true,
+    -- Windfury total popup (damage text when Windfury procs) — defaults:
+    --   wfPopupEnabled=true, wfPopupScale=1.3 (0.5–2), wfPopupHold=2s (0.5–4),
+    --   position CENTER/UIParent/0,80; lock/unlock with /st wf popup lock|unlock
+    wfPopupEnabled = true,
+    wfPopupPoint = "CENTER",
+    wfPopupRelativeTo = "UIParent",
+    wfPopupRelativePoint = "CENTER",
+    wfPopupX = 0,
+    wfPopupY = 80,
+    wfPopupScale = 1.3,   -- text size, like ingame crits (0.5–2)
+    wfPopupHold = 2.0,    -- seconds visible before fading (0.5–4)
+    wfPopupLocked = false,
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -261,6 +284,10 @@ local windfuryStatsFrame
 -- count = Windfury Attack hits; swings = eligible white swings (SWING_DAMAGE from player; WF hits don't proc WF).
 local wfPull  = { total = 0, count = 0, min = nil, max = nil, crits = 0, swings = 0 }
 local wfSession = { total = 0, count = 0, min = nil, max = nil, crits = 0, swings = 0 }
+-- Windfury popup: buffer damage for one proc (2 hits), then show total in floating text
+local wfPopupTotal = 0
+local wfPopupTimer = nil
+local wfPopupFrame = nil
 
 local function GetDB()
     ShammyTimeDB = ShammyTimeDB or {}
@@ -276,7 +303,7 @@ local function ApplyScale()
         mainFrame:SetScale(db.scale or 1)
     end
     if windfuryStatsFrame then
-        windfuryStatsFrame:SetScale(db.scale or 1)
+        windfuryStatsFrame:SetScale(db.wfScale or 1)
     end
 end
 
@@ -286,6 +313,101 @@ local function FormatNumberShort(n)
     if n >= 1000000 then return ("%.1fm"):format(n / 1000000) end
     if n >= 1000 then return ("%.1fk"):format(n / 1000) end
     return tostring(math.floor(n + 0.5))
+end
+
+-- Windfury total popup: large crit-style text, movable, small→large scale animation
+local function CreateWindfuryPopupFrame()
+    if wfPopupFrame then return wfPopupFrame end
+    local db = GetDB()
+    local f = CreateFrame("Frame", "ShammyTimeWindfuryPopup", UIParent)
+    f:SetFrameStrata("TOOLTIP")
+    f:SetFrameLevel(100)
+    f:SetSize(280, 70)
+    f:SetPoint(db.wfPopupPoint or "CENTER", db.wfPopupRelativeTo or "UIParent", db.wfPopupRelativePoint or "CENTER", db.wfPopupX or 0, db.wfPopupY or 80)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self)
+        if not GetDB().wfPopupLocked then self:StartMoving() end
+    end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local db = GetDB()
+        db.wfPopupPoint, _, db.wfPopupRelativePoint, db.wfPopupX, db.wfPopupY = self:GetPoint(1)
+        local relTo = select(2, self:GetPoint(1))
+        db.wfPopupRelativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+    end)
+    -- Large font like ingame crits
+    local fs = f:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
+    fs:SetAllPoints(f)
+    fs:SetJustifyH("CENTER")
+    fs:SetJustifyV("MIDDLE")
+    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetShadowOffset(2, -2)
+    f.text = fs
+    wfPopupFrame = f
+    return f
+end
+
+local function ShowWindfuryPopup(total)
+    if not total or total <= 0 then return end
+    local db = GetDB()
+    if not db.wfPopupEnabled then return end
+    local f = CreateWindfuryPopupFrame()
+    if f.animTicker then
+        f.animTicker:Cancel()
+        f.animTicker = nil
+    end
+    f.text:SetText(("Windfury: %s"):format(FormatNumberShort(total)))
+    f.text:SetTextColor(1, 0.85, 0.2)  -- gold/yellow
+    local popupScale = db.wfPopupScale or 1.3
+    f:ClearAllPoints()
+    f:SetPoint(db.wfPopupPoint or "CENTER", db.wfPopupRelativeTo or "UIParent", db.wfPopupRelativePoint or "CENTER", db.wfPopupX or 0, db.wfPopupY or 80)
+    f:SetAlpha(1)
+    -- Number appears at 100% right away; then visible bounce to 140% and back to 100% over ~300 ms
+    local TICK = 1 / 120   -- 120 Hz
+    local startScale = 1.0 * popupScale   -- 100% — visible immediately, no grow-in
+    local peakScale = 1.4 * popupScale     -- 140% overshoot (visible pop)
+    local endScale = 1.0 * popupScale      -- 100% settle
+    local bounceSec = 0.3   -- total bounce duration (~300 ms)
+    local popSteps = math.floor((bounceSec / 2) / TICK + 0.5)   -- first half: 100% -> 140%
+    local settleSteps = math.floor((bounceSec / 2) / TICK + 0.5) -- second half: 140% -> 100%
+    local scalePhaseSteps = popSteps + settleSteps
+    local holdSec = math.max(0.5, math.min(4, db.wfPopupHold or 2))
+    local holdSteps = math.floor(holdSec / TICK + 0.5)
+    local floatSteps = 50   -- short dissipation (~0.42s float+fade)
+    local floatPxPerStep = 1
+    -- Show at 100% immediately so the number is there before any animation
+    f:SetScale(startScale)
+    f:Show()
+    local step = 0
+    f.animTicker = C_Timer.NewTicker(TICK, function()
+        step = step + 1
+        if step <= popSteps then
+            -- 100% -> 140% over first half of bounce
+            local t = step / popSteps
+            local s = startScale + (peakScale - startScale) * t
+            f:SetScale(s)
+        elseif step <= scalePhaseSteps then
+            -- 140% -> 100% over second half of bounce (~150 ms)
+            local t = (step - popSteps) / settleSteps
+            local s = peakScale + (endScale - peakScale) * t
+            f:SetScale(s)
+        elseif step <= scalePhaseSteps + holdSteps then
+            f:SetScale(endScale)
+        else
+            f:SetScale(endScale)
+            local pt, relTo, relPt, x, y = f:GetPoint(1)
+            f:SetPoint(pt, relTo, relPt, x or 0, (y or 0) + floatPxPerStep)
+            local floatStep = step - scalePhaseSteps - holdSteps
+            f:SetAlpha(1 - floatStep / floatSteps)
+            if step >= scalePhaseSteps + holdSteps + floatSteps then
+                if f.animTicker then f.animTicker:Cancel() f.animTicker = nil end
+                f:Hide()
+            end
+        end
+    end)
 end
 
 -- Persist Windfury stats to SavedVariables (survives relog / reload). Defined before RecordWindfuryHit/Reset* so they can call it.
@@ -354,6 +476,7 @@ local function RecordEligibleSwing()
 end
 
 -- Record one Windfury hit (amount, isCrit) into pull and session stats.
+-- Buffers damage for floating popup: after 0.4s with no new hit, show total (one proc = up to 2 hits).
 local function RecordWindfuryHit(amount, isCrit)
     if not amount or amount <= 0 then return end
     for _, st in ipairs({ wfPull, wfSession }) do
@@ -365,6 +488,18 @@ local function RecordWindfuryHit(amount, isCrit)
     end
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
+    -- Floating popup: add to buffer and (re)start delay timer
+    if GetDB().wfPopupEnabled then
+        wfPopupTotal = wfPopupTotal + amount
+        if wfPopupTimer then wfPopupTimer:Cancel() end
+        wfPopupTimer = C_Timer.NewTimer(0.4, function()
+            wfPopupTimer = nil
+            if wfPopupTotal > 0 then
+                ShowWindfuryPopup(wfPopupTotal)
+                wfPopupTotal = 0
+            end
+        end)
+    end
 end
 
 -- Reset pull stats (call when entering combat).
@@ -978,7 +1113,7 @@ local function CreateWindfuryStatsFrame()
 
     local wf = CreateFrame("Frame", "ShammyTimeWindfuryFrame", UIParent, "BackdropTemplate")
     wf:SetSize(fw, fh)
-    wf:SetScale(db.scale or 1)
+    wf:SetScale(db.wfScale or 1)
     local wfRelTo = (db.wfRelativeTo and _G[db.wfRelativeTo]) or mainFrame or UIParent
     wf:SetPoint(db.wfPoint or "TOP", wfRelTo, db.wfRelativePoint or "BOTTOM", db.wfX or 0, db.wfY or -4)
     wf:SetMovable(true)
@@ -1000,7 +1135,7 @@ local function CreateWindfuryStatsFrame()
     wf:SetScript("OnMouseDown", function(self, button)
         if button == "RightButton" then
             ResetWindfurySession()
-            print("ShammyTime: Windfury stats reset.")
+            print(C.green .. "ShammyTime: Windfury stats reset." .. C.r)
         end
     end)
     wf:SetScript("OnEnter", function(self)
@@ -1141,6 +1276,9 @@ local function ParseCombatLogWindfuryDamage()
 end
 
 local function OnCombatLogWindfury(...)
+    local db = GetDB()
+    -- Process when bar and/or popup is enabled (popup can work even if bar is hidden)
+    if not db.windfuryTrackerEnabled and not db.wfPopupEnabled then return end
     local subevent
     if CombatLogGetCurrentEventInfo then
         subevent = select(2, CombatLogGetCurrentEventInfo())
@@ -1148,11 +1286,12 @@ local function OnCombatLogWindfury(...)
         subevent = select(2, ...)
     end
     -- Windfury procs only on white (auto) swings; WF Attack hits cannot proc WF. Count eligible swings for proc rate.
-    -- Payload: 1=timestamp 2=subevent 3=hideCaster 4=sourceGUID (CombatLogGetCurrentEventInfo); varargs ... = (subevent, hideCaster, sourceGUID, ...) so sourceGUID = select(3, ...).
     if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED" then
-        local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
-        if sourceGUID and sourceGUID == UnitGUID("player") then
-            RecordEligibleSwing()
+        if db.windfuryTrackerEnabled then
+            local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
+            if sourceGUID and sourceGUID == UnitGUID("player") then
+                RecordEligibleSwing()
+            end
         end
         return
     end
@@ -1203,11 +1342,14 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
             timerTicker = C_Timer.NewTicker(1, RefreshTimers)
         end
         CreateWindfuryStatsFrame()
-        if windfuryStatsFrame then windfuryStatsFrame:Show() end
+        if windfuryStatsFrame then
+            if GetDB().windfuryTrackerEnabled then windfuryStatsFrame:Show() else windfuryStatsFrame:Hide() end
+        end
         UpdateAllSlots()
         UpdateLightningShield()
         UpdateWeaponImbue()
         UpdateFocused()
+        print(C.green .. "ShammyTime is enabled." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for settings." .. C.r)
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
     elseif event == "UNIT_AURA" then
@@ -1223,7 +1365,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
         OnCombatLogWindfury(...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Reset pull when entering combat so new pull starts fresh; last pull persists out of combat
-        ResetWindfuryPull()
+        if GetDB().windfuryTrackerEnabled then ResetWindfuryPull() end
     end
 end)
 
@@ -1263,7 +1405,34 @@ local function DebugWeaponImbue()
     print("=== end debug ===")
 end
 
--- Slash: /st lock | unlock | move | scale [0.5-2] | debug
+local function PrintMainHelp()
+    print(C.gold .. "ShammyTime — Commands" .. C.r)
+    print(C.gray .. "  You can type " .. C.gold .. "/st" .. C.r .. C.gray .. " or " .. C.gold .. "/shammytime" .. C.r .. C.gray .. "." .. C.r)
+    print("")
+    print(C.gold .. "  Main bar" .. C.r .. C.gray .. " (totems, Lightning Shield, weapon imbue):" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "lock" .. C.r .. C.gray .. " — Lock the bar so it can't be moved" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "unlock" .. C.r .. C.gray .. " — Unlock so you can drag the bar (same as " .. C.gold .. "move" .. C.r .. C.gray .. ")" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "scale" .. C.r .. C.gray .. " — Make the bar bigger or smaller. Size: 0.5 to 2, default is 1." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "debug" .. C.r .. C.gray .. " — Show technical info (for troubleshooting)" .. C.r)
+    print("")
+    print(C.gold .. "  Windfury bar" .. C.r .. C.gray .. " (proc stats when you have Windfury Weapon):" .. C.r)
+    print(C.gray .. "    Type " .. C.gold .. "/st wf" .. C.r .. C.gray .. " to see all Windfury options." .. C.r)
+end
+
+local function PrintWindfuryHelp()
+    print(C.gold .. "ShammyTime — Windfury bar options" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "reset" .. C.r .. C.gray .. " — Clear all Windfury stats (same as right-clicking the bar)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "lock" .. C.r .. C.gray .. " | " .. C.gold .. "unlock" .. C.r .. C.gray .. " — Lock or unlock the Windfury bar" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "scale 1.2" .. C.r .. C.gray .. " — Windfury bar size (0.5 to 2)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "enable" .. C.r .. C.gray .. " | " .. C.gold .. "disable" .. C.r .. C.gray .. " — Turn the Windfury tracker on or off" .. C.r)
+    print("")
+    print(C.gold .. "  Windfury total popup" .. C.r .. C.gray .. " (damage text when Windfury procs):" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "popup on" .. C.r .. C.gray .. " | " .. C.gold .. "popup off" .. C.r .. C.gray .. " — Show or hide the popup" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "popup lock" .. C.r .. C.gray .. " | " .. C.gold .. "popup unlock" .. C.r .. C.gray .. " — Lock position or unlock to drag the popup" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "popup scale 1.3" .. C.r .. C.gray .. " — Popup text size, like ingame crits (0.5 to 2)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "popup hold 2" .. C.r .. C.gray .. " — Seconds the popup stays visible before fading (0.5 to 4)" .. C.r)
+end
+
 SLASH_SHAMMYTIME1 = "/shammytime"
 SLASH_SHAMMYTIME2 = "/st"
 SlashCmdList["SHAMMYTIME"] = function(msg)
@@ -1275,39 +1444,126 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
     arg = arg and arg:gsub("^%s+", ""):gsub("%s+$", "") or ""
     if cmd == "lock" then
         db.locked = true
-        print("ShammyTime: frame locked.")
+        print(C.green .. "ShammyTime: Main bar is now locked." .. C.r)
     elseif cmd == "unlock" or cmd == "move" then
         db.locked = false
-        print("ShammyTime: frame unlocked — drag to move.")
+        print(C.green .. "ShammyTime: Main bar unlocked — you can drag it to move." .. C.r)
     elseif cmd == "scale" then
         if arg == "" then
-            print(("ShammyTime: scale is %.2f. Use /st scale <0.5-2> to change."):format(db.scale or 1))
+            print(C.gray .. "ShammyTime: Main bar scale is " .. C.gold .. ("%.2f"):format(db.scale or 1) .. C.r .. C.gray .. ". Use " .. C.gold .. "/st scale" .. C.r .. C.gray .. " with a number from 0.5 to 2 (default is 1)." .. C.r)
         else
             local num = tonumber(arg)
             if num and num >= 0.5 and num <= 2 then
                 db.scale = num
                 ApplyScale()
-                print(("ShammyTime: scale set to %.2f."):format(num))
+                print(C.green .. "ShammyTime: Main bar scale set to " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print("ShammyTime: scale must be a number between 0.5 and 2 (e.g. /st scale 1.2)")
+                print(C.red .. "ShammyTime: Scale must be a number between 0.5 and 2 (default is 1)." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st scale 1.2" .. C.r)
             end
         end
     elseif cmd == "debug" then
         DebugWeaponImbue()
     elseif cmd == "wf" then
-        if arg == "reset" then
+        local subcmd, subarg = arg:match("^(%S+)%s*(.*)$")
+        subcmd = subcmd and subcmd:lower() or ""
+        subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+        if subcmd == "reset" then
             ResetWindfurySession()
-            print("ShammyTime: Windfury stats reset.")
-        elseif arg == "lock" then
+            print(C.green .. "ShammyTime: Windfury stats reset." .. C.r)
+        elseif subcmd == "lock" then
             db.wfLocked = true
-            print("ShammyTime: Windfury frame locked.")
-        elseif arg == "unlock" then
+            print(C.green .. "ShammyTime: Windfury bar is now locked." .. C.r)
+        elseif subcmd == "unlock" then
             db.wfLocked = false
-            print("ShammyTime: Windfury frame unlocked — drag to move.")
+            print(C.green .. "ShammyTime: Windfury bar unlocked — you can drag it to move." .. C.r)
+        elseif subcmd == "scale" then
+            if subarg == "" then
+                print(C.gray .. "ShammyTime: Windfury bar scale is " .. C.gold .. ("%.2f"):format(db.wfScale or 1) .. C.r .. C.gray .. ". Use " .. C.gold .. "/st wf scale" .. C.r .. C.gray .. " with a number from 0.5 to 2 (default is 1)." .. C.r)
+            else
+                local num = tonumber(subarg)
+                if num and num >= 0.5 and num <= 2 then
+                    db.wfScale = num
+                    ApplyScale()
+                    print(C.green .. "ShammyTime: Windfury bar scale set to " .. ("%.2f"):format(num) .. "." .. C.r)
+                else
+                    print(C.red .. "ShammyTime: Windfury scale must be between 0.5 and 2 (default is 1)." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf scale 1.2" .. C.r)
+                end
+            end
+        elseif subcmd == "disable" or subcmd == "off" then
+            db.windfuryTrackerEnabled = false
+            if windfuryStatsFrame then windfuryStatsFrame:Hide() end
+            print(C.green .. "ShammyTime: Windfury tracker is now off." .. C.r)
+        elseif subcmd == "enable" or subcmd == "on" then
+            db.windfuryTrackerEnabled = true
+            if windfuryStatsFrame then windfuryStatsFrame:Show() end
+            print(C.green .. "ShammyTime: Windfury tracker is now on." .. C.r)
+        elseif subcmd == "popup" then
+            local popupSub, popupArg = subarg:match("^(%S+)%s*(.*)$")
+            popupSub = popupSub and popupSub:lower() or ""
+            popupArg = popupArg and popupArg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+            if popupSub == "on" or popupSub == "enable" or popupSub == "1" then
+                db.wfPopupEnabled = true
+                print(C.green .. "ShammyTime: Windfury total popup is now on." .. C.r)
+            elseif popupSub == "off" or popupSub == "disable" or popupSub == "0" then
+                db.wfPopupEnabled = false
+                print(C.green .. "ShammyTime: Windfury total popup is now off." .. C.r)
+            elseif popupSub == "lock" then
+                db.wfPopupLocked = true
+                print(C.green .. "ShammyTime: Windfury total popup position is now locked." .. C.r)
+            elseif popupSub == "unlock" then
+                db.wfPopupLocked = false
+                print(C.green .. "ShammyTime: Windfury total popup unlocked — drag the popup when it appears to move it." .. C.r)
+            elseif popupSub == "scale" then
+                if popupArg == "" then
+                    print(C.gray .. "ShammyTime: Windfury popup scale is " .. C.gold .. ("%.2f"):format(db.wfPopupScale or 1.3) .. C.r .. C.gray .. ". Use " .. C.gold .. "/st wf popup scale 1.3" .. C.r .. C.gray .. " (0.5 to 2, larger = like ingame crits)." .. C.r)
+                else
+                    local num = tonumber(popupArg)
+                    if num and num >= 0.5 and num <= 2 then
+                        db.wfPopupScale = num
+                        print(C.green .. "ShammyTime: Windfury total popup scale set to " .. ("%.2f"):format(num) .. "." .. C.r)
+                    else
+                        print(C.red .. "ShammyTime: Popup scale must be between 0.5 and 2." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf popup scale 1.3" .. C.r)
+                    end
+                end
+            elseif popupSub == "hold" or popupSub == "time" or popupSub == "dissipation" then
+                if popupArg == "" then
+                    print(C.gray .. "ShammyTime: Windfury popup hold is " .. C.gold .. ("%.1f"):format(db.wfPopupHold or 2) .. C.r .. C.gray .. " s. Use " .. C.gold .. "/st wf popup hold 2" .. C.r .. C.gray .. " (0.5 to 4 s, how long before fading)." .. C.r)
+                else
+                    local num = tonumber(popupArg)
+                    if num and num >= 0.5 and num <= 4 then
+                        db.wfPopupHold = num
+                        print(C.green .. "ShammyTime: Windfury total popup will stay visible for " .. ("%.1f"):format(num) .. " s before fading." .. C.r)
+                    else
+                        print(C.red .. "ShammyTime: Popup hold must be between 0.5 and 4 seconds." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf popup hold 2" .. C.r)
+                    end
+                end
+            elseif popupSub == "" then
+                local popupOn = db.wfPopupEnabled
+                local popupLocked = db.wfPopupLocked
+                print(C.gold .. "ShammyTime — Windfury total popup" .. C.r)
+                print(C.gray .. "  Show: " .. C.r .. (popupOn and (C.green .. "On" .. C.r) or (C.red .. "Off" .. C.r)) .. C.gray .. "  |  Position: " .. C.r .. (popupLocked and (C.green .. "Locked" .. C.r) or (C.gray .. "Unlocked (drag to move)" .. C.r)) .. C.gray .. "  |  Scale: " .. C.gold .. ("%.2f"):format(db.wfPopupScale or 1.3) .. C.r .. C.gray .. "  |  Hold: " .. C.gold .. ("%.1f"):format(db.wfPopupHold or 2) .. " s" .. C.r)
+                print(C.gray .. "  Defaults: scale 1.3, hold 2 s, position center. Popup works even if Windfury bar is disabled." .. C.r)
+                print("")
+                print(C.gray .. "  " .. C.gold .. "/st wf popup on|off" .. C.r .. C.gray .. " — Show or hide" .. C.r)
+                print(C.gray .. "  " .. C.gold .. "/st wf popup lock|unlock" .. C.r .. C.gray .. " — Lock position or unlock to drag" .. C.r)
+                print(C.gray .. "  " .. C.gold .. "/st wf popup scale 1.3" .. C.r .. C.gray .. " — Text size (0.5 to 2)" .. C.r)
+                print(C.gray .. "  " .. C.gold .. "/st wf popup hold 2" .. C.r .. C.gray .. " — Seconds visible before fading (0.5 to 4)" .. C.r)
+            else
+                local popupOn = db.wfPopupEnabled
+                print(C.gray .. "ShammyTime: Windfury total popup is " .. C.r .. (popupOn and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". Use " .. C.gold .. "/st wf popup" .. C.r .. C.gray .. " for all popup options." .. C.r)
+            end
+        elseif subcmd == "" then
+            local on = db.windfuryTrackerEnabled
+            local popupOn = db.wfPopupEnabled
+            print(C.gold .. "ShammyTime — Windfury tracker" .. C.r)
+            print(C.gray .. "  Tracker: " .. C.r .. (on and (C.green .. "On" .. C.r) or (C.red .. "Off" .. C.r)) .. C.gray .. "  |  Damage popup: " .. C.r .. (popupOn and (C.green .. "On" .. C.r) or (C.red .. "Off" .. C.r)))
+            print("")
+            PrintWindfuryHelp()
         else
-            print("ShammyTime: /st wf reset | lock | unlock")
+            print(C.gray .. "ShammyTime: Unknown Windfury option. Options:" .. C.r)
+            PrintWindfuryHelp()
         end
     else
-        print("ShammyTime: /st lock | unlock | move | scale [0.5-2] | wf reset | debug")
+        PrintMainHelp()
     end
 end

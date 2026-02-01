@@ -22,12 +22,12 @@ This guide summarizes what you need to do to publish ShammyTime on CurseForge, b
 ### Summary (one short line)
 
 - Shown in search; describe **what it does**, not who made it or for which patch.
-- Example: *“Totem bar with timers, out-of-range indicator, Lightning Shield and weapon imbue for TBC Anniversary shaman.”*
+- Example: *“Totem bar with timers, red overlay when too far from totem, Lightning Shield and weapon imbue for TBC Anniversary shaman.”*
 - Avoid generic lines like “A shaman addon.” Be specific.
 
 ### Description (main text)
 
-- Explain **main features and what makes it useful** (totems, timers, “gone” animation, out-of-range, Lightning Shield, weapon imbue, movable/lockable).
+- Explain **main features and what makes it useful** (totems, timers, “gone” animation, red overlay when too far from totem, Lightning Shield, weapon imbue, movable/lockable).
 - **Include at least one in-game screenshot** (or a couple) showing the addon in use. Descriptions that clearly show the addon tend to pass faster.
 - Use normal capitalization; avoid walls of text and ALL CAPS.
 - **English first**; other languages can follow.

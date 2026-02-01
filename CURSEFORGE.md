@@ -1,6 +1,25 @@
 # Publishing ShammyTime on CurseForge
 
-This guide summarizes what you need to do to publish ShammyTime on CurseForge, based on CurseForge’s official submission guide, moderation policies, and “How to Pass Moderation Review” (2025).
+This guide summarizes what you need to do to publish ShammyTime on CurseForge, based on CurseForge’s official submission guide, [Moderation Policies](https://support.curseforge.com/support/solutions/articles/9000197279-moderation-policies), and “How to Pass Moderation Review” (2025).
+
+---
+
+## Readiness: What you have vs what you need
+
+| Requirement (per moderation) | Status |
+|-----------------------------|--------|
+| **Name** — English, no game/version in name | ✅ **ShammyTime** is good |
+| **Summary** — One line, what it does, English | ✅ Copy from below or adapt from README |
+| **Description** — Functional info + what it adds/changes, English first | ✅ Use README content; add **in-game screenshot(s)** |
+| **Avatar** — 400×400 px, not solid color, your own, no copyright | ❌ **You need to create/upload** — none in repo |
+| **License** — Pick from CurseForge dropdown | ✅ e.g. MIT (matches README) |
+| **Categories** — Correct game, main + optional | ✅ Set on project page |
+| **File** — .zip, addon folder as root, no external download links | ✅ Zip `ShammyTime/` with .toc + .lua (see §3) |
+| **In-game image** — Visual/UI mods need at least one screenshot | ❌ **You need to add** to description or gallery |
+| **No third-party downloads** — All files from CurseForge | ✅ No external file links in description |
+| **Donation/social links** — Only at bottom, small | ✅ Keep below main description if used |
+
+**Still to do before submit:** (1) Create a **400×400 project avatar** (not solid color; PNG/JPG, avoid WebP). (2) Take **at least one in-game screenshot** of the addon and add it to the project description (or gallery). (3) Create the **.zip** and upload. (4) Fill in Summary, Description, License, Categories on the project page.
 
 ---
 
@@ -21,22 +40,22 @@ This guide summarizes what you need to do to publish ShammyTime on CurseForge, b
 
 ### Summary (one short line)
 
-- Shown in search; describe **what it does**, not who made it or for which patch.
-- Example: *“Totem bar with timers, red overlay when too far from totem, Lightning Shield and weapon imbue for TBC Anniversary shaman.”*
+- Per [moderation policies](https://support.curseforge.com/support/solutions/articles/9000197279-moderation-policies): like a tldr; one sentence, high-level. Don’t copy the description verbatim.
+- Example: *“Totem bar with timers, red overlay when too far from totem, Lightning Shield, weapon imbue, and Windfury stats for TBC Anniversary shaman.”*
 - Avoid generic lines like “A shaman addon.” Be specific.
 
 ### Description (main text)
 
-- Explain **main features and what makes it useful** (totems, timers, “gone” animation, red overlay when too far from totem, Lightning Shield, weapon imbue, movable/lockable).
-- **Include at least one in-game screenshot** (or a couple) showing the addon in use. Descriptions that clearly show the addon tend to pass faster.
+- Per moderation: **Clear and Informative Description** — must say what the project adds or changes; can include storytelling but must include **functional information**. Avoid generic phrases like “changes the core game” without specifics.
+- Use your **README.md** as the base: totems, timers, “gone” feedback, red overlay (too far from totem), Lightning Shield, weapon imbue, Windfury stats and popup, movable/lockable.
+- **Include at least one in-game screenshot** (or a couple) showing the addon in use. Visual/UI mods are expected to show accurate in-game representation; this helps moderation and users.
 - Use normal capitalization; avoid walls of text and ALL CAPS.
 - **English first**; other languages can follow.
-- If you add donation/social links, put them **below** the main description and keep them small.
+- **Donation/social links** (ko-fi, Patreon, personal site, etc.) must appear **at the bottom**, small and reasonable, so they don’t overwhelm the project info ([moderation policies](https://support.curseforge.com/support/solutions/articles/9000197279-moderation-policies)).
 
 ### Avatar (project image)
 
-- **Minimum 400×400 px**, 1:1.
-- Must **not** be a single solid color or a simple gradient.
+- Per moderation: **Project Avatar** — 400×400 px, not solid color, nothing NSFW or copyrighted. **Avoid WebP** (known bug on CurseForge); use PNG or JPG.
 - Must be **your own** (no copyrighted art, no other project’s avatar).
 - Can include the name “ShammyTime” or a simple icon; simple is OK.
 
@@ -113,30 +132,30 @@ ShammyTime is a simple UI/combat helper and doesn’t touch any of that.
 ## 7. Checklist before you submit
 
 - [ ] CurseForge project created for **World of Warcraft**, correct **category** (e.g. Classic/TBC Anniversary).
-- [ ] **Name:** ShammyTime (no version/category in name).
-- [ ] **Summary:** One line, what it does, in English.
-- [ ] **Description:** Features, screenshots, English first; donation/socials at bottom if any.
-- [ ] **Avatar:** 400×400+, not solid color, your own art.
-- [ ] **License** selected.
-- [ ] **.zip** contains the addon folder (e.g. `ShammyTime/` with `.toc` and `.lua` inside).
-- [ ] **Comments** enabled (or link to Discord/GitHub for support).
-- [ ] You’ve tested the addon in-game and it loads without errors.
-- [ ] **ShammyTime.toc** `## Version:` matches the release you’re uploading (e.g. 1.0.0).
+- [ ] **Name:** ShammyTime (no version/game name in name — [moderation](https://support.curseforge.com/support/solutions/articles/9000197279-moderation-policies)).
+- [ ] **Summary:** One line, what it does, in English (not a copy of the description).
+- [ ] **Description:** Clear functional info + what it adds/changes; **at least one in-game screenshot**; English first; donation/socials only at bottom, small.
+- [ ] **Avatar:** 400×400 px, PNG or JPG (avoid WebP), not solid color, your own art.
+- [ ] **License** selected (e.g. MIT).
+- [ ] **.zip** contains only the addon folder as root (e.g. `ShammyTime/ShammyTime.toc`, `ShammyTime/ShammyTime.lua`). No external download links.
+- [ ] **Comments** enabled or link to Discord/GitHub for support (recommended by CurseForge).
+- [ ] Addon tested in-game and loads without errors.
+- [ ] **ShammyTime.toc** `## Version:` matches the file you’re uploading (e.g. 1.0.0).
 
 ---
 
 ## 8. After submission
 
 - Moderation often runs **Sunday–Thursday, ~8:00–15:00 CET**; files are processed in order.
-- If changes are requested, you’ll get a message (e.g. in notifications); **don’t delete the project and re-upload** — edit the same project and/or upload a new file version.
+- If changes are requested or the project is rejected, you’ll get a message (e.g. in notifications). Per [moderation policies](https://support.curseforge.com/support/solutions/articles/9000197279-moderation-policies): **do not delete the project or file and re-upload** — it only complicates things. Edit the same project and/or upload a new file version; you can appeal or ask for clarification via a ticket.
 - Disagreements or questions: open a [support ticket](https://support.curseforge.com/en/support/tickets/new).
 
 ---
 
 ## 9. Useful links
 
+- [CurseForge – Moderation policies](https://support.curseforge.com/support/solutions/articles/9000197279-moderation-policies) (required reading)
 - [CurseForge – Project submission guide and tips](https://support.curseforge.com/en/support/solutions/articles/9000199552-project-submission-guide-and-tips)
-- [CurseForge – Moderation policies](https://support.curseforge.com/en/support/solutions/articles/9000197279-moderation-policies)
 - [How to pass moderation review (CurseForge blog)](https://blog.curseforge.com/how-to-pass-moderation-review-on-curseforge-2)
 - [WoW addons – FAQ and troubleshooting](https://support.curseforge.com/en/support/solutions/articles/9000198422-world-of-warcraft-addons-faq-and-troubleshooting)
 - [Creating and submitting a project](https://support.curseforge.com/en/support/solutions/articles/9000197241-creating-and-submitting-a-project)

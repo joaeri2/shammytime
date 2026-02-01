@@ -58,9 +58,30 @@ local WEAPON_IMBUE_ENCHANT_ICONS = {
     [15]=136114, [16]=136114, [17]=136114, [283]=136114, [563]=136114, [564]=136114, [1783]=136114, [3787]=136114,
 }
 
--- Totems that do NOT put a buff on the player (no way to detect range). Never show out-of-range overlay for these.
+-- Totems that do NOT put a buff on the player (no way to detect range via buffs). Never show buff-based out-of-range for these.
 local TOTEM_NO_RANGE_BUFF = {
     ["Windfury Totem"] = true,   -- weapon proc only, no persistent buff
+    ["Earth Elemental Totem"] = true,
+    ["Fire Elemental Totem"] = true,
+}
+
+-- Secondary range check: totems with no player buff but a known effect radius. We approximate totem position
+-- as player position when the totem was placed (UnitPosition only works outdoors). Totem name (or prefix) → max radius in yards.
+-- Radii for TBC Anniversary / WoW Classic 2026 (classicdb, wowclassicdb, Wowhead TBC).
+-- GetTotemInfo returns localized spell name. Prefix match handles ranks ("Mana Spring Totem II").
+-- Totems with no player buff: we use position-based range (UnitPosition outdoors only).
+local TOTEM_POSITION_RANGE = {
+    -- Earth
+    ["Stoneclaw Totem"] = 8,
+    ["Earthbind Totem"] = 10,
+    ["Tremor Totem"] = 30,
+    -- Fire
+    ["Searing Totem"] = 20,
+    ["Magma Totem"] = 8,
+    ["Fire Nova Totem"] = 10,
+    -- Water (cleansing: no buff on player)
+    ["Poison Cleansing Totem"] = 30,
+    ["Disease Cleansing Totem"] = 30,
 }
 
 -- Totem name (from GetTotemInfo) → buff spell ID on player. When totem is down but player
@@ -73,15 +94,17 @@ local TOTEM_BUFF_SPELL_IDS = {
     ["Stoneclaw Totem"] = 8072,
     -- Fire
     ["Flametongue Totem"] = 8230,  -- Flametongue Totem Effect
+    ["Totem of Wrath"] = 30708,    -- TBC: party spell crit aura
     -- Water: Mana Spring (multiple ranks = different buff IDs), Healing Stream, resistance totems
     ["Mana Spring Totem"] = { 5675, 10497, 24854 },  -- ranks 1–3+ (Classic/TBC)
     ["Healing Stream Totem"] = 10463,
     ["Frost Resistance Totem"] = 8181,
     ["Fire Resistance Totem"] = 8184,
-    -- Air (Windfury Totem = weapon proc, no persistent buff; Grace of Air, Grounding = persistent)
+    -- Air (Windfury Totem = weapon proc, no persistent buff; Grace of Air, Grounding, Wrath of Air = persistent)
     ["Grace of Air Totem"] = 10627,
     ["Grounding Totem"] = 8178,  -- Grounding Totem Effect
     ["Nature Resistance Totem"] = 10595,
+    ["Wrath of Air Totem"] = 2895,  -- spell haste aura
 }
 
 -- Buff name(s) as shown on player (spell ID can differ by client; name is reliable for range check).
@@ -91,6 +114,7 @@ local TOTEM_BUFF_NAMES = {
     ["Stoneskin Totem"] = "Stoneskin",
     ["Stoneclaw Totem"] = "Stoneclaw",
     ["Flametongue Totem"] = "Flametongue Totem",
+    ["Totem of Wrath"] = "Totem of Wrath",
     ["Mana Spring Totem"] = "Mana Spring",
     ["Healing Stream Totem"] = "Healing Stream",
     ["Frost Resistance Totem"] = "Frost Resistance",
@@ -98,6 +122,7 @@ local TOTEM_BUFF_NAMES = {
     ["Grace of Air Totem"] = "Grace of Air",
     ["Grounding Totem"] = "Grounding Totem Effect",
     ["Nature Resistance Totem"] = "Nature Resistance",
+    ["Wrath of Air Totem"] = "Wrath of Air",
 }
 
 -- True if this totem has no player buff (we can't detect range; never show out-of-range overlay).
@@ -108,6 +133,24 @@ local function IsTotemWithNoRangeBuff(totemName)
         if totemName:find(key, 1, true) == 1 then return true end
     end
     return false
+end
+
+-- Max range in yards for position-based totems (no player buff). Match by exact name or prefix. Returns number or nil.
+local function GetTotemPositionRange(totemName)
+    if not totemName or totemName == "" then return nil end
+    local range = TOTEM_POSITION_RANGE[totemName]
+    if range then return range end
+    for key, yards in pairs(TOTEM_POSITION_RANGE) do
+        if totemName:find(key, 1, true) == 1 then return yards end
+    end
+    return nil
+end
+
+-- Distance in yards between two positions. WoW UnitPosition returns posY, posX, posZ (coords in yards).
+local function GetDistanceYards(ax, ay, az, bx, by, bz)
+    if not (ax and ay and az and bx and by and bz) then return nil end
+    local dx, dy, dz = bx - ax, by - ay, bz - az
+    return (dx * dx + dy * dy + dz * dz) ^ 0.5
 end
 
 -- Get buff spell ID(s) for a totem name; match exact or by prefix. Returns number or table of numbers.
@@ -183,6 +226,12 @@ local DEFAULTS = {
 
 -- State: previous totem presence per slot (to detect "just gone")
 local lastHadTotem = { [1] = false, [2] = false, [3] = false, [4] = false }
+-- Approximate totem position (player position when placed); slot -> { x, y, z }. Used only for totems in TOTEM_POSITION_RANGE (UnitPosition works outdoors only).
+local totemPosition = {}
+-- Last totem name per slot so we clear stored position when the totem in that slot changes (e.g. Stoneclaw -> Earthbind).
+local lastTotemName = {}
+-- Last startTime per slot so we detect same-totem replace (e.g. Earthbind -> new Earthbind) and re-store position.
+local lastTotemStartTime = {}
 
 local mainFrame
 local slotFrames = {}
@@ -313,15 +362,40 @@ local function UpdateSlot(slot)
     if not sf then return end
 
     local nowHasTotem = (totemName and totemName ~= "")
+    local wasJustPlaced = not lastHadTotem[slot] and nowHasTotem
 
     -- Detect "just gone" and trigger obvious animation
     if lastHadTotem[slot] and not nowHasTotem then
         PlayGoneAnimation(sf, element)
+        totemPosition[slot] = nil
+        lastTotemStartTime[slot] = nil
     end
     lastHadTotem[slot] = nowHasTotem
 
     local color = ELEMENT_COLORS[element]
     if nowHasTotem then
+        -- When the totem in this slot changed (e.g. Strength -> Stoneclaw, or Stoneclaw -> Earthbind), clear stored position so we capture the new totem's location.
+        if lastTotemName[slot] ~= totemName then
+            totemPosition[slot] = nil
+            lastTotemName[slot] = totemName
+        end
+        -- Same totem type replaced (e.g. Earthbind -> new Earthbind): startTime changes, so we must re-store position.
+        local isNewInstance = (startTime and startTime ~= lastTotemStartTime[slot])
+        if isNewInstance then
+            totemPosition[slot] = nil
+            lastTotemStartTime[slot] = startTime
+        end
+        -- Store approximate totem position (player position when placed) for position-based range totems. Store when just placed, new instance (same totem re-placed), or we don't have a position yet. UnitPosition works outdoors only.
+        if GetTotemPositionRange(totemName) and UnitPosition and (wasJustPlaced or isNewInstance or not totemPosition[slot]) then
+            local posY, posX, posZ = UnitPosition("player")
+            if posX and posY and posZ then
+                totemPosition[slot] = { x = posX, y = posY, z = posZ }
+            end
+        end
+        if not isNewInstance and startTime then
+            lastTotemStartTime[slot] = startTime
+        end
+
         sf.icon:SetTexture(icon and icon ~= "" and icon or "Interface\\Icons\\INV_Elemental_Primal_Earth")
         sf.icon:SetVertexColor(1, 1, 1)
         sf.icon:Show()
@@ -331,16 +405,30 @@ local function UpdateSlot(slot)
         sf.timer:SetTextColor(1, 1, 1)
         sf.timer:Show()
         sf:SetBackdropBorderColor(color.r, color.g, color.b, 1)
-        -- Out of range: totem is down but we don't have its buff (too far). Use spell ID first, then name fallback.
-        -- Totems with no player buff (Grounding, Windfury) can't be range-checked; never show overlay.
+        -- Out of range: (1) buff-based: totem has a buff but we don't have it; (2) position-based: totem has no buff but we track by distance (e.g. Stoneclaw, Earthbind).
         local buffSpellId = GetTotemBuffSpellId(totemName)
         local hasBuff = (buffSpellId and HasPlayerBuffByAnySpellId(buffSpellId)) or HasPlayerBuffByTotemName(totemName)
-        if not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff then
+        local outOfRangeBuff = not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff
+        local outOfRangePos = false
+        if GetTotemPositionRange(totemName) and totemPosition[slot] and UnitPosition then
+            local posY, posX, posZ = UnitPosition("player")
+            if posX and totemPosition[slot].x then
+                local dist = GetDistanceYards(totemPosition[slot].x, totemPosition[slot].y, totemPosition[slot].z, posX, posY, posZ)
+                local maxRange = GetTotemPositionRange(totemName)
+                if dist and maxRange and dist > maxRange then
+                    outOfRangePos = true
+                end
+            end
+        end
+        if outOfRangeBuff or outOfRangePos then
             sf.rangeOverlay:Show()
         else
             sf.rangeOverlay:Hide()
         end
     else
+        totemPosition[slot] = nil
+        lastTotemName[slot] = nil
+        lastTotemStartTime[slot] = nil
         -- Empty slot: show darkened element icon so you see which one is missing
         sf.icon:SetTexture(ELEMENT_EMPTY_ICONS[element] or "Interface\\Icons\\INV_Misc_QuestionMark")
         sf.icon:SetVertexColor(0.35, 0.35, 0.35)
@@ -433,10 +521,22 @@ local function RefreshTimers()
             local sf = slotFrames[slot]
             if sf and sf.timer then
                 sf.timer:SetText(FormatTime(GetTotemTimeLeft(slot)))
-                -- Refresh range overlay (in case UNIT_AURA didn't fire)
+                -- Refresh range overlay: buff-based and position-based (in case UNIT_AURA didn't fire or player moved)
                 local buffSpellId = GetTotemBuffSpellId(totemName)
                 local hasBuff = (buffSpellId and HasPlayerBuffByAnySpellId(buffSpellId)) or HasPlayerBuffByTotemName(totemName)
-                if not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff then
+                local outOfRangeBuff = not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff
+                local outOfRangePos = false
+                if GetTotemPositionRange(totemName) and totemPosition[slot] and UnitPosition then
+                    local posY, posX, posZ = UnitPosition("player")
+                    if posX and totemPosition[slot].x then
+                        local dist = GetDistanceYards(totemPosition[slot].x, totemPosition[slot].y, totemPosition[slot].z, posX, posY, posZ)
+                        local maxRange = GetTotemPositionRange(totemName)
+                        if dist and maxRange and dist > maxRange then
+                            outOfRangePos = true
+                        end
+                    end
+                end
+                if outOfRangeBuff or outOfRangePos then
                     sf.rangeOverlay:Show()
                 else
                     sf.rangeOverlay:Hide()
@@ -634,15 +734,6 @@ local function CreateMainFrame()
     wifTimer:SetPoint("BOTTOM", 0, 4)
     wifTimer:SetTextColor(1, 1, 1)
     wif.timer = wifTimer
-    wif:SetScript("OnEnter", function(self)
-        if self.imbueName then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(self.imbueName)
-            GameTooltip:AddLine("Time until imbue expires", 0.7, 0.7, 0.7)
-            GameTooltip:Show()
-        end
-    end)
-    wif:SetScript("OnLeave", function() GameTooltip:Hide() end)
     weaponImbueFrame = wif
 
     mainFrame = f

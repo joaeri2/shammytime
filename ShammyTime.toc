@@ -9,5 +9,6 @@
 ShammyTime.lua
 ShammyTime_Media.lua
 ShammyTime_CenterRingTest.lua
+ShammyTime_SatelliteRings.lua
 ShammyTime_Windfury.lua
 AssetTest.lua

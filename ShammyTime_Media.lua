@@ -15,6 +15,11 @@ M.TEX = {
     CENTER_RUNES  = M.MEDIA .. "wf_center_runes.tga",
     CENTER_ENERGY = M.MEDIA .. "wf_center_energy.tga",
     CENTER_SHADOW = M.MEDIA .. "wf_center_shadow.tga",
+    -- Crit satellite ring (layered, aligned)
+    CRIT_BG     = M.MEDIA .. "wf_crit_bg_aligned.tga",
+    CRIT_BORDER = M.MEDIA .. "wf_crit_border_aligned.tga",
+    CRIT_GLOW   = M.MEDIA .. "wf_crit_glow_aligned.tga",
+    CRIT_SHADOW = M.MEDIA .. "wf_crit_shadow_aligned.tga",
     -- Orb set (satellites / totems)
     ORB_BG     = M.MEDIA .. "orb_bg.tga",
     ORB_BORDER = M.MEDIA .. "orb_border.tga",

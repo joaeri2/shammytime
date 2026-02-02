@@ -269,6 +269,8 @@ local DEFAULTS = {
 
 -- State: previous totem presence per slot (to detect "just gone")
 local lastHadTotem = { [1] = false, [2] = false, [3] = false, [4] = false }
+-- Windfury totem bar: set when a totem is just placed (for pop animation); consumed by GetTotemSlotData.
+ShammyTime.windfurySlotJustPlaced = ShammyTime.windfurySlotJustPlaced or {}
 -- Approximate totem position (player position when placed); slot -> { x, y, z }. Used only for totems in TOTEM_POSITION_RANGE (UnitPosition works outdoors only).
 local totemPosition = {}
 -- Last totem name per slot so we clear stored position when the totem in that slot changes (e.g. Stoneclaw -> Earthbind).
@@ -684,6 +686,26 @@ local function PlayGoneAnimation(slotFrame, element)
     end)
 end
 
+-- Returns "in", "out", or "unknown" for Windfury bar and slot data (reuses main bar range logic).
+local function GetSlotRangeState(slot, totemName)
+    if not totemName or totemName == "" then return "unknown" end
+    if IsTotemWithNoRangeBuff(totemName) and not GetTotemPositionRange(totemName) then return "unknown" end
+    local buffSpellId = GetTotemBuffSpellId(totemName)
+    local hasBuff = (buffSpellId and HasPlayerBuffByAnySpellId(buffSpellId)) or HasPlayerBuffByTotemName(totemName)
+    local outOfRangeBuff = not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff
+    local outOfRangePos = false
+    if GetTotemPositionRange(totemName) and totemPosition[slot] and UnitPosition then
+        local posY, posX, posZ = UnitPosition("player")
+        if posX and totemPosition[slot].x then
+            local dist = GetDistanceYards(totemPosition[slot].x, totemPosition[slot].y, totemPosition[slot].z, posX, posY, posZ)
+            local maxRange = GetTotemPositionRange(totemName)
+            if dist and maxRange and dist > maxRange then outOfRangePos = true end
+        end
+    end
+    if outOfRangeBuff or outOfRangePos then return "out" end
+    return "in"
+end
+
 local function UpdateSlot(slot)
     local haveTotem, totemName, startTime, duration, icon = GetTotemInfo(slot)
     local element = SLOT_TO_ELEMENT[slot]
@@ -700,6 +722,9 @@ local function UpdateSlot(slot)
         lastTotemStartTime[slot] = nil
     end
     lastHadTotem[slot] = nowHasTotem
+    if nowHasTotem and wasJustPlaced then
+        ShammyTime.windfurySlotJustPlaced[slot] = true
+    end
 
     local color = ELEMENT_COLORS[element]
     if nowHasTotem then
@@ -773,6 +798,35 @@ local function UpdateAllSlots()
         UpdateSlot(slot)
     end
 end
+
+-- API for Windfury totem bar: one source of truth for totem state (no duplicate GetTotemInfo/range logic).
+-- Returns: active, remainingSeconds, durationSeconds, icon, rangeState ("in"|"out"|"unknown"), justPlaced, emptyIcon.
+-- Consumes justPlaced (clears windfurySlotJustPlaced[slot] when read).
+function ShammyTime.GetTotemSlotData(slot)
+    if not slot or slot < 1 or slot > 4 then return nil end
+    local haveTotem, totemName, startTime, duration, icon = GetTotemInfo(slot)
+    local active = (totemName and totemName ~= "")
+    local remaining = active and GetTotemTimeLeft(slot) or 0
+    local durationSec = (type(duration) == "number" and duration > 0) and duration or 0
+    local iconTex = (icon and icon ~= "") and icon or "Interface\\Icons\\INV_Elemental_Primal_Earth"
+    local rangeState = active and GetSlotRangeState(slot, totemName) or "unknown"
+    local justPlaced = ShammyTime.windfurySlotJustPlaced[slot]
+    if justPlaced then ShammyTime.windfurySlotJustPlaced[slot] = nil end
+    local element = SLOT_TO_ELEMENT[slot]
+    local emptyIcon = ELEMENT_EMPTY_ICONS[element] or "Interface\\Icons\\INV_Misc_QuestionMark"
+    return {
+        active = active,
+        remainingSeconds = remaining,
+        durationSeconds = durationSec,
+        icon = iconTex,
+        rangeState = rangeState,
+        justPlaced = justPlaced,
+        emptyIcon = emptyIcon,
+    }
+end
+
+ShammyTime.DISPLAY_ORDER = DISPLAY_ORDER
+ShammyTime.FormatTime = FormatTime
 
 local function UpdateLightningShield()
     if not lightningShieldFrame then return end

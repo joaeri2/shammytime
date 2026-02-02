@@ -11,12 +11,12 @@ if not M then return end
 
 local TEX = M.TEX
 
--- Satellite ring size (smaller than center's 260); reduced 10%
-local SATELLITE_SIZE = 108
+-- Satellite ring size (smaller than center's 260); reduced another 10%
+local SATELLITE_SIZE = 97
 local SATELLITE_SCALE = 0.85
 
--- Distance from center ring center to satellite center (smaller = closer; reduced ~12% for totem bar space)
-local SATELLITE_RADIUS = 106
+-- Distance from center ring center to satellite center; increased ~22% so satellites sit more outside the circle
+local SATELLITE_RADIUS = 116
 
 -- Satellite text: font + X,Y position within each circle (pixels from center)
 -- +X = right, +Y = up. Tweak these to center text in each ring (designs vary slightly).
@@ -33,15 +33,15 @@ local SATELLITE_FONT = {
     valueY = -6,
 }
 
--- Positions: 8 o'clock to 4 o'clock over the top; 0 = 3 o'clock, CCW
--- Tightened ~12% toward top (90°) so satellites sit higher and leave more room for totem bar
+-- Positions: 8:30 to 3:30 over the top; 0 = 3 o'clock, CCW positive
+-- Evenly spread from 195° (8:30) to 345° (3:30), 42° apart
 local SATELLITE_POSITIONS = {
-    MIN    = 196,  -- was 210
-    AVG    = 153,  -- was 162
-    PROCS  = 111,  -- was 114
-    CRIT   = 69,   -- was 66
-    PROCPCT = 27,  -- was 18
-    MAX    = 301,  -- was 330
+    MIN    = 195,   -- 8:30
+    AVG    = 153,   -- ~9:30
+    PROCS  = 111,   -- ~10:30
+    CRIT   = 69,    -- ~11:30
+    PROCPCT = 27,   -- ~12:30
+    MAX    = 345,   -- 3:30
 }
 
 -- Storage for satellite frames
@@ -249,15 +249,15 @@ local function GetCenterFrame()
     return _G["ShammyTimeCenterRing"]
 end
 
--- Satellite config: 8 → 16 (4) o'clock over the top, 48° apart (MAX and PROCS swapped)
+-- Satellite config: positions come from SATELLITE_POSITIONS (8:30 to 3:30 over the top)
 -- Optional: offsetX, offsetY = circle position nudge. textLabelY, textValueY = text position within circle (+Y = up).
 local SATELLITE_CONFIG = {
-    { name = "MIN",    label = "MIN",    position = 210,  value = "455",  tex = "AIR_FULL" },       -- 8 o'clock
-    { name = "AVG",    label = "AVG",    position = 162,  value = "689",  tex = "AVG",    textLabelY = 14, textValueY = -2 },  -- text up a bit
-    { name = "PROCS",  label = "PROCS",  position = 114,  value = "12",   tex = "PROCS" },          -- fire circle
-    { name = "CRIT",   label = "CRIT%",  position = 66,   value = "42%",  tex = "GRASS_UPPER_RIGHT" },
-    { name = "PROCPCT", label = "PROC%", position = 18,   value = "38%",  tex = "PROCPCT", offsetX = 8, offsetY = 10, textLabelY = 14, textValueY = -2 },  -- text up a bit
-    { name = "MAX",    label = "MAX",    position = 330,  value = "1278", tex = "GRASS_FULL", textLabelY = 14, textValueY = -2 },  -- text up a bit
+    { name = "MIN",    label = "MIN",    value = "455",  tex = "AIR_FULL" },
+    { name = "AVG",    label = "AVG",    value = "689",  tex = "AVG",    textLabelY = 14, textValueY = -2 },
+    { name = "PROCS",  label = "PROCS",  value = "12",   tex = "PROCS" },
+    { name = "CRIT",   label = "CRIT%",  value = "42%",  tex = "GRASS_UPPER_RIGHT" },
+    { name = "PROCPCT", label = "PROC%", value = "38%",  tex = "PROCPCT", offsetX = 8, offsetY = 10, textLabelY = 14, textValueY = -2 },
+    { name = "MAX",    label = "MAX",    value = "1278", tex = "GRASS_FULL", textLabelY = 14, textValueY = -2 },
 }
 
 local function GetSatelliteTextureSet(texKey)
@@ -282,7 +282,8 @@ local function GetSatellite(name)
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         if cfg.name == name then
             local texSet = GetSatelliteTextureSet(cfg.tex)
-            return CreateSatelliteRing(name, texSet, cfg.label, cfg.position, centerFrame, cfg.offsetX, cfg.offsetY, cfg.textLabelX, cfg.textLabelY, cfg.textValueX, cfg.textValueY)
+            local position = SATELLITE_POSITIONS[name] or 90
+            return CreateSatelliteRing(name, texSet, cfg.label, position, centerFrame, cfg.offsetX, cfg.offsetY, cfg.textLabelX, cfg.textLabelY, cfg.textValueX, cfg.textValueY)
         end
     end
     return nil
@@ -303,7 +304,8 @@ local function EnsureAllSatellites()
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         if not satelliteFrames[cfg.name] then
             local texSet = GetSatelliteTextureSet(cfg.tex)
-            CreateSatelliteRing(cfg.name, texSet, cfg.label, cfg.position, centerFrame, cfg.offsetX, cfg.offsetY, cfg.textLabelX, cfg.textLabelY, cfg.textValueX, cfg.textValueY)
+            local position = SATELLITE_POSITIONS[cfg.name] or 90
+            CreateSatelliteRing(cfg.name, texSet, cfg.label, position, centerFrame, cfg.offsetX, cfg.offsetY, cfg.textLabelX, cfg.textLabelY, cfg.textValueX, cfg.textValueY)
         end
     end
 end

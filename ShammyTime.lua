@@ -527,7 +527,7 @@ local function ShowWindfuryRadial()
     local db = GetDB()
     if not db.wfRadialEnabled then return end
     if ShammyTime.EnsureCenterRingExists then ShammyTime.EnsureCenterRingExists() end
-    local center = _G.ShammyTimeCenterRingTest
+    local center = _G.ShammyTimeCenterRing
     if center then
         center:Show()
         if center.textFrame then center.textFrame:Show() end
@@ -543,7 +543,7 @@ end
 
 -- Hide Windfury radial (center ring + satellites).
 local function HideWindfuryRadial()
-    local center = _G.ShammyTimeCenterRingTest
+    local center = _G.ShammyTimeCenterRing
     if center then
         center:Hide()
         if center.textFrame then center.textFrame:Hide() end
@@ -551,7 +551,7 @@ local function HideWindfuryRadial()
     if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
 end
 
--- API for ShammyTime_Windfury.lua (radial UI), CenterRingTest, and AssetTest.lua
+-- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
 ShammyTime.lastProcTotal = 0
 ShammyTime.GetDB = GetDB
 ShammyTime.ResetWindfurySession = ResetWindfurySession
@@ -1559,7 +1559,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 local num = tonumber(radialScaleArg)
                 if num and num >= 0.5 and num <= 2 then
                     db.wfRadialScale = num
-                    local center = _G.ShammyTimeCenterRingTest
+                    local center = _G.ShammyTimeCenterRing
                     if center then center:SetScale(num) end
                     print(C.green .. "ShammyTime: Windfury radial scale set to " .. ("%.2f"):format(num) .. " (all rings resize together)." .. C.r)
                 else

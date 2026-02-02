@@ -19,6 +19,7 @@ Goal:
 File layout:
 	•	ShammyTime.lua — Core: totem bar, Lightning Shield, weapon imbue, Focused, Windfury stats bar, text popup, combat log (SPELL_DAMAGE 25584), SavedVariables. Exposes API for the Windfury module.
 	•	ShammyTime_Media.lua — Single place for Media paths and design constants (center ring + orb set). Load early in TOC.
+	•	ShammyTime_CenterRing.lua — Center ring frame; /wfcenter, /wfproc, /wfresize.
 	•	ShammyTime_Windfury.lua — Radial UI, center ring (layered), 6 satellites, rune ring; AnimationGroups; SPELL_EXTRA_ATTACKS + damage correlation; /wftest.
 	•	AssetTest.lua — Texture tester; /wfassets toggles frame and prints paths.
 	•	Media/ — Center ring: wf_center_bg.tga, wf_center_border.tga, wf_center_runes.tga, wf_center_energy.tga (512×512). Orb set: orb_bg, orb_border, glow_soft, ring_runes. All 32-bit TGA, power-of-two.

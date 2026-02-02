@@ -1,4 +1,4 @@
--- ShammyTime_CenterRingTest.lua
+-- ShammyTime_CenterRing.lua
 -- Phase 1: Center ring only — load 4 layered textures, stack them, add /wfcenter and /wfproc.
 -- No satellites, no combat log. Purely asset + animation integration test.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
@@ -28,7 +28,7 @@ end
 local function CreateCenterRingFrame()
     if centerFrame then return centerFrame end
 
-    local f = CreateFrame("Frame", "ShammyTimeCenterRingTest", UIParent)
+    local f = CreateFrame("Frame", "ShammyTimeCenterRing", UIParent)
     f:SetFrameStrata("DIALOG")
     f:SetSize(260, 260)
     f:SetScale(GetRadialScale())
@@ -76,6 +76,16 @@ local function CreateCenterRingFrame()
     f.border:SetAllPoints(f)
     f.border:SetTexture(TEX.CENTER_BORDER)
     f.border:SetAlpha(1)
+
+    -- 3b. TOTEM BAR: below main circle, scaled to fit center ring width +10%, aspect 996:277
+    f.totemBar = f:CreateTexture(nil, "OVERLAY")
+    f.totemBar:SetTexture(TEX.TOTEM_BAR)
+    local barW = 286  -- 260 * 1.1 (10% larger)
+    local barH = math.floor(barW * 277 / 996 + 0.5)  -- 996:277 aspect
+    f.totemBar:SetSize(barW, barH)
+    f.totemBar:SetAlpha(1)
+    -- Anchor TOP of bar to BOTTOM of frame; positive Y moves bar up toward the circle
+    f.totemBar:SetPoint("TOP", f, "BOTTOM", 0, 65)
 
     -- 4. OVERLAY: wf_center_runes.tga (subtle) — inset so when it rotates it stays inside the border
     f.runes = f:CreateTexture(nil, "OVERLAY")
@@ -233,7 +243,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     f:FlashText()
 end
 
--- /wfcenter — toggle center ring test frame
+-- /wfcenter — toggle center ring frame
 SLASH_WFCENTER1 = "/wfcenter"
 SlashCmdList["WFCENTER"] = function()
     local f = CreateCenterRingFrame()

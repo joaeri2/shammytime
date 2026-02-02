@@ -11,12 +11,12 @@ if not M then return end
 
 local TEX = M.TEX
 
--- Satellite ring size (smaller than center's 260)
-local SATELLITE_SIZE = 120
+-- Satellite ring size (smaller than center's 260); reduced 10%
+local SATELLITE_SIZE = 108
 local SATELLITE_SCALE = 0.85
 
--- Distance from center ring center to satellite center (smaller = closer to center)
-local SATELLITE_RADIUS = 120
+-- Distance from center ring center to satellite center (smaller = closer; reduced ~12% for totem bar space)
+local SATELLITE_RADIUS = 106
 
 -- Satellite text: font + X,Y position within each circle (pixels from center)
 -- +X = right, +Y = up. Tweak these to center text in each ring (designs vary slightly).
@@ -33,15 +33,15 @@ local SATELLITE_FONT = {
     valueY = -6,
 }
 
--- Positions: 8 o'clock to 4 o'clock (16) over the top; 0 = 3 o'clock, CCW
--- Arc 210° (8) → 330° (4) over top = 240°; 6 rings → 5 gaps = 48° apart
+-- Positions: 8 o'clock to 4 o'clock over the top; 0 = 3 o'clock, CCW
+-- Tightened ~12% toward top (90°) so satellites sit higher and leave more room for totem bar
 local SATELLITE_POSITIONS = {
-    MIN    = 210,  -- 8 o'clock
-    AVG    = 162,  -- 9–10
-    PROCS  = 114,  -- 10–11 (was MAX)
-    CRIT   = 66,   -- 11–12
-    PROCPCT = 18,  -- 12–1
-    MAX    = 330,  -- 4 o'clock (16) (was PROCS)
+    MIN    = 196,  -- was 210
+    AVG    = 153,  -- was 162
+    PROCS  = 111,  -- was 114
+    CRIT   = 69,   -- was 66
+    PROCPCT = 27,  -- was 18
+    MAX    = 301,  -- was 330
 }
 
 -- Storage for satellite frames
@@ -244,9 +244,9 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     return f
 end
 
--- Get the center ring frame (from CenterRingTest)
+-- Get the center ring frame (from CenterRing)
 local function GetCenterFrame()
-    return _G["ShammyTimeCenterRingTest"]
+    return _G["ShammyTimeCenterRing"]
 end
 
 -- Satellite config: 8 → 16 (4) o'clock over the top, 48° apart (MAX and PROCS swapped)

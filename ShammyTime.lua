@@ -3,6 +3,8 @@
 -- WoW Classic Anniversary 2026 (TBC Anniversary Edition, Interface 20505); compatible with builds 20501–20505.
 
 local addonName, addon = ...
+-- Expose API for ShammyTime_Windfury.lua and AssetTest.lua (no require in WoW)
+ShammyTime = ShammyTime or {}
 -- Chat colors for slash help (WoW: |cAARRGGBB text |r)
 local C = {
     gold = "|cffffcc00",
@@ -261,6 +263,7 @@ local DEFAULTS = {
     wfPopupScale = 1.3,   -- text size, like ingame crits (0.5–2)
     wfPopupHold = 2.0,    -- seconds visible before fading (0.5–4)
     wfPopupLocked = false,
+    wfRadialEnabled = true,  -- show radial UI on Windfury proc (in addition to text popup option)
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -354,6 +357,7 @@ local function ShowWindfuryPopup(total)
     if not total or total <= 0 then return end
     local db = GetDB()
     if not db.wfPopupEnabled then return end
+    ShammyTime.lastProcTotal = total  -- for Windfury radial module
     local f = CreateWindfuryPopupFrame()
     if f.animTicker then
         f.animTicker:Cancel()
@@ -515,6 +519,13 @@ local function ResetWindfurySession()
     wfSession.total, wfSession.count, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, nil, nil, 0, 0
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
+end
+
+-- API for ShammyTime_Windfury.lua (radial UI) and AssetTest.lua
+ShammyTime.lastProcTotal = 0
+ShammyTime.GetDB = GetDB
+ShammyTime.GetWindfuryStats = function()
+    return wfPull, wfSession, ShammyTime.lastProcTotal or 0
 end
 
 -- Returns Lightning Shield or Water Shield aura on player: icon, count (charges), duration, expirationTime, spellId; or nil if neither active.
@@ -1426,6 +1437,7 @@ local function PrintWindfuryHelp()
     print(C.gray .. "    • " .. C.gold .. "scale 1.2" .. C.r .. C.gray .. " — Windfury bar size (0.5 to 2)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "enable" .. C.r .. C.gray .. " | " .. C.gold .. "disable" .. C.r .. C.gray .. " — Turn the Windfury tracker on or off" .. C.r)
     print("")
+    print(C.gold .. "  Windfury radial" .. C.r .. C.gray .. " — " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. " ; " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays animation" .. C.r)
     print(C.gold .. "  Windfury total popup" .. C.r .. C.gray .. " (damage text when Windfury procs):" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "popup on" .. C.r .. C.gray .. " | " .. C.gold .. "popup off" .. C.r .. C.gray .. " — Show or hide the popup" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "popup lock" .. C.r .. C.gray .. " | " .. C.gold .. "popup unlock" .. C.r .. C.gray .. " — Lock position or unlock to drag the popup" .. C.r)
@@ -1497,6 +1509,17 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             db.windfuryTrackerEnabled = true
             if windfuryStatsFrame then windfuryStatsFrame:Show() end
             print(C.green .. "ShammyTime: Windfury tracker is now on." .. C.r)
+        elseif subcmd == "radial" then
+            local radialArg = (subarg or ""):lower()
+            if radialArg == "on" or radialArg == "enable" or radialArg == "1" then
+                db.wfRadialEnabled = true
+                print(C.green .. "ShammyTime: Windfury radial proc UI is now on." .. C.r)
+            elseif radialArg == "off" or radialArg == "disable" or radialArg == "0" then
+                db.wfRadialEnabled = false
+                print(C.green .. "ShammyTime: Windfury radial proc UI is now off." .. C.r)
+            else
+                print(C.gray .. "ShammyTime: Windfury radial is " .. C.r .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". Use " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. ". " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays the animation." .. C.r)
+            end
         elseif subcmd == "popup" then
             local popupSub, popupArg = subarg:match("^(%S+)%s*(.*)$")
             popupSub = popupSub and popupSub:lower() or ""

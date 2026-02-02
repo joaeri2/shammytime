@@ -180,9 +180,9 @@ local function CreateRadialFrame()
     aAlphaIn:SetToAlpha(1)
     aAlphaIn:SetDuration(RADIAL.OPEN_DURATION)
     aAlphaIn:SetSmoothing("OUT")
+    -- Scale: WoW Classic/TBC uses multiplicative Scale; 0.3 * (1/0.3) = 1
     local aScaleIn = agOpen:CreateAnimation("Scale")
-    aScaleIn:SetFromScale(0.3)
-    aScaleIn:SetToScale(1)
+    aScaleIn:SetScale(1 / 0.3, 1 / 0.3)
     aScaleIn:SetDuration(RADIAL.OPEN_DURATION)
     aScaleIn:SetSmoothing("OUT")
     agOpen:SetScript("OnPlay", function()
@@ -208,8 +208,8 @@ local function CreateRadialFrame()
         local sf = satellites[i]
         local agSat = sf:CreateAnimationGroup()
         local delay = (i - 1) * (RADIAL.SATELLITE_STAGGER or 0.03)
-        agSat:SetDelay(delay)
         local aTrans = agSat:CreateAnimation("Translation")
+        aTrans:SetStartDelay(delay)
         aTrans:SetOffset(-sf.startX, -sf.startY)
         aTrans:SetDuration(RADIAL.SATELLITE_MOVE or 0.18)
         aTrans:SetSmoothing("OUT")
@@ -231,9 +231,9 @@ local function CreateRadialFrame()
     aAlphaOut:SetToAlpha(0)
     aAlphaOut:SetDuration(RADIAL.CLOSE_DURATION or 0.18)
     aAlphaOut:SetSmoothing("IN")
+    -- Scale: multiplicative; 1 * 0.3 = 0.3 (collapse)
     local aScaleOut = agClose:CreateAnimation("Scale")
-    aScaleOut:SetFromScale(1)
-    aScaleOut:SetToScale(0.3)
+    aScaleOut:SetScale(0.3, 0.3)
     aScaleOut:SetDuration(RADIAL.CLOSE_DURATION or 0.18)
     aScaleOut:SetSmoothing("IN")
     agClose:SetScript("OnFinished", function()
@@ -288,16 +288,21 @@ function ShammyTime_Windfury_PlayRadial(forceShow)
     end)
 end
 
+-- Expose stats for the new satellite UI (center + rings)
+function ShammyTime_Windfury_GetStats()
+    return GetStatsForRadial()
+end
+
 -- Called when correlation window ends with a proc total (or from /wftest)
+-- Only show the new center + satellite rings; old radial (numbers in middle of screen) is no longer used.
 function ShammyTime_Windfury_ShowRadial(procTotal)
     if procTotal then
         ShammyTime.lastProcTotal = procTotal
     end
-    -- Center ring (layered orb + text flash) — triggers on real proc
     if ShammyTime.PlayCenterRingProc then
         ShammyTime.PlayCenterRingProc(procTotal)
     end
-    ShammyTime_Windfury_PlayRadial()
+    -- Old radial (ShammyTimeWindfuryRadial) disabled so numbers stick to satellite rings
 end
 
 -- Start or extend the proc damage window (called from SPELL_EXTRA_ATTACKS or first WF damage)

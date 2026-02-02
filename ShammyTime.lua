@@ -264,6 +264,7 @@ local DEFAULTS = {
     wfPopupHold = 2.0,    -- seconds visible before fading (0.5–4)
     wfPopupLocked = false,
     wfRadialEnabled = true,  -- show radial UI on Windfury proc (in addition to text popup option)
+    wfRadialScale = 0.7,    -- scale for center + all satellite rings as one (0.5–2)
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -521,9 +522,41 @@ local function ResetWindfurySession()
     SaveWindfuryDB()
 end
 
--- API for ShammyTime_Windfury.lua (radial UI) and AssetTest.lua
+-- Show Windfury radial (center ring + satellites) with current stats; no proc animation.
+local function ShowWindfuryRadial()
+    local db = GetDB()
+    if not db.wfRadialEnabled then return end
+    if ShammyTime.EnsureCenterRingExists then ShammyTime.EnsureCenterRingExists() end
+    local center = _G.ShammyTimeCenterRingTest
+    if center then
+        center:Show()
+        if center.textFrame then center.textFrame:Show() end
+        if center.total then
+            center.total:SetText("TOTAL: " .. FormatNumberShort(ShammyTime.lastProcTotal or 0))
+        end
+    end
+    if ShammyTime.ShowAllSatellites then ShammyTime.ShowAllSatellites() end
+    if ShammyTime.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
+        ShammyTime.UpdateSatelliteValues(ShammyTime_Windfury_GetStats())
+    end
+end
+
+-- Hide Windfury radial (center ring + satellites).
+local function HideWindfuryRadial()
+    local center = _G.ShammyTimeCenterRingTest
+    if center then
+        center:Hide()
+        if center.textFrame then center.textFrame:Hide() end
+    end
+    if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
+end
+
+-- API for ShammyTime_Windfury.lua (radial UI), CenterRingTest, and AssetTest.lua
 ShammyTime.lastProcTotal = 0
 ShammyTime.GetDB = GetDB
+ShammyTime.ResetWindfurySession = ResetWindfurySession
+ShammyTime.ShowWindfuryRadial = ShowWindfuryRadial
+ShammyTime.HideWindfuryRadial = HideWindfuryRadial
 ShammyTime.GetWindfuryStats = function()
     return wfPull, wfSession, ShammyTime.lastProcTotal or 0
 end
@@ -1360,6 +1393,8 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
         UpdateLightningShield()
         UpdateWeaponImbue()
         UpdateFocused()
+        -- Show Windfury radial (center ring + satellites) if enabled; always visible unless disabled
+        ShowWindfuryRadial()
         print(C.green .. "ShammyTime is enabled." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for settings." .. C.r)
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
@@ -1437,7 +1472,7 @@ local function PrintWindfuryHelp()
     print(C.gray .. "    • " .. C.gold .. "scale 1.2" .. C.r .. C.gray .. " — Windfury bar size (0.5 to 2)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "enable" .. C.r .. C.gray .. " | " .. C.gold .. "disable" .. C.r .. C.gray .. " — Turn the Windfury tracker on or off" .. C.r)
     print("")
-    print(C.gold .. "  Windfury radial" .. C.r .. C.gray .. " — " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. " ; " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays animation" .. C.r)
+    print(C.gold .. "  Windfury radial" .. C.r .. C.gray .. " — " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. " ; " .. C.gold .. "/st wf radial scale 0.8" .. C.r .. C.gray .. " resizes all rings together ; " .. C.gold .. "/wfresize 0.8" .. C.r .. C.gray .. " same ; " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays animation" .. C.r)
     print(C.gold .. "  Windfury total popup" .. C.r .. C.gray .. " (damage text when Windfury procs):" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "popup on" .. C.r .. C.gray .. " | " .. C.gold .. "popup off" .. C.r .. C.gray .. " — Show or hide the popup" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "popup lock" .. C.r .. C.gray .. " | " .. C.gold .. "popup unlock" .. C.r .. C.gray .. " — Lock position or unlock to drag the popup" .. C.r)
@@ -1511,14 +1546,27 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.green .. "ShammyTime: Windfury tracker is now on." .. C.r)
         elseif subcmd == "radial" then
             local radialArg = (subarg or ""):lower()
+            local radialScaleArg = radialArg:match("^scale%s+(%S+)$")
             if radialArg == "on" or radialArg == "enable" or radialArg == "1" then
                 db.wfRadialEnabled = true
+                ShowWindfuryRadial()
                 print(C.green .. "ShammyTime: Windfury radial proc UI is now on." .. C.r)
             elseif radialArg == "off" or radialArg == "disable" or radialArg == "0" then
                 db.wfRadialEnabled = false
+                HideWindfuryRadial()
                 print(C.green .. "ShammyTime: Windfury radial proc UI is now off." .. C.r)
+            elseif radialScaleArg then
+                local num = tonumber(radialScaleArg)
+                if num and num >= 0.5 and num <= 2 then
+                    db.wfRadialScale = num
+                    local center = _G.ShammyTimeCenterRingTest
+                    if center then center:SetScale(num) end
+                    print(C.green .. "ShammyTime: Windfury radial scale set to " .. ("%.2f"):format(num) .. " (all rings resize together)." .. C.r)
+                else
+                    print(C.red .. "ShammyTime: Radial scale must be between 0.5 and 2." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf radial scale 0.8" .. C.r)
+                end
             else
-                print(C.gray .. "ShammyTime: Windfury radial is " .. C.r .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". Use " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. ". " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays the animation." .. C.r)
+                print(C.gray .. "ShammyTime: Windfury radial is " .. C.r .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". Use " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. ". " .. C.gold .. "/st wf radial scale 0.8" .. C.r .. C.gray .. " resizes all rings together. " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays the animation." .. C.r)
             end
         elseif subcmd == "popup" then
             local popupSub, popupArg = subarg:match("^(%S+)%s*(.*)$")

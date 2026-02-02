@@ -12,8 +12,11 @@ if not M then return end
 local TEX = M.TEX
 local centerFrame
 
--- Resize the center ring: change this number (e.g. 0.85 = smaller, 1.0 = original 260px)
-local CENTER_RING_SCALE = 1
+-- Center ring (and all satellites, as children) scale; read/write via GetDB().wfRadialScale (0.5–2).
+local function GetRadialScale()
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    return (db.wfRadialScale and db.wfRadialScale >= 0.5 and db.wfRadialScale <= 2) and db.wfRadialScale or 0.7
+end
 
 local function FormatNum(n)
     if not n or n < 0 then return "0" end
@@ -28,12 +31,31 @@ local function CreateCenterRingFrame()
     local f = CreateFrame("Frame", "ShammyTimeCenterRingTest", UIParent)
     f:SetFrameStrata("DIALOG")
     f:SetSize(260, 260)
-    f:SetScale(CENTER_RING_SCALE)
+    f:SetScale(GetRadialScale())
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    -- Right-click: show options menu (reset numbers)
+    f:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:SetText("Right-click to reset numbers")
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    f:SetScript("OnMouseDown", function(self, button)
+        if button ~= "RightButton" then return end
+        if ShammyTime and ShammyTime.ResetWindfurySession then
+            ShammyTime.ResetWindfurySession()
+        end
+        if ShammyTime then ShammyTime.lastProcTotal = 0 end
+        if centerFrame and centerFrame.total then
+            centerFrame.total:SetText("TOTAL: 0")
+        end
+    end)
     f:Hide()
 
     -- 1. BACKGROUND: wf_center_bg.tga
@@ -63,13 +85,13 @@ local function CreateCenterRingFrame()
     f.runes:SetSize(260 - runesInset * 2, 260 - runesInset * 2)
     f.runes:SetPoint("CENTER", 0, 12)  -- slightly up
 
-    -- Text on a SEPARATE frame (not a child of f) so it doesn't scale with the ring
-    -- No scaling on text — stays crisp. Use color flash for dramatic effect instead.
-    local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", UIParent)
+    -- Text as child of center so it scales with the ring when radial is resized (one object)
+    local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", f)
     textFrame:SetFrameStrata("DIALOG")
-    textFrame:SetFrameLevel(f:GetFrameLevel() + 10)
+    textFrame:SetFrameLevel(10)
     textFrame:SetSize(260, 260)
     textFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
+    textFrame:EnableMouse(false)  -- allow drag to pass through to center when clicking text
     textFrame:Hide()
     f.textFrame = textFrame
 
@@ -189,15 +211,21 @@ local function CreateCenterRingFrame()
     return f
 end
 
+-- Ensure center ring exists (for satellites that anchor to it)
+function ShammyTime.EnsureCenterRingExists()
+    return CreateCenterRingFrame()
+end
+
 -- Called when a Windfury proc is detected (from ShammyTime_Windfury.lua combat log)
-function ShammyTime.PlayCenterRingProc(procTotal)
+-- forceShow: if true, show even when wfRadialEnabled is off (e.g. /wfproc test)
+function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
-    if not db.wfRadialEnabled then return end
+    if not forceShow and not db.wfRadialEnabled then return end
     local f = CreateCenterRingFrame()
     f:Show()
     f.textFrame:Show()
     f.total:SetText("TOTAL: " .. FormatNum(procTotal or 0))
-    f:SetScale(CENTER_RING_SCALE)
+    f:SetScale(GetRadialScale())
     f.energy:SetAlpha(0.12)
     f.runes:SetAlpha(0.18)
     f.procAnim:Stop()
@@ -221,5 +249,26 @@ end
 -- /wfproc — play proc pulse (energy glow + scale breath + rune rotation)
 SLASH_WFPROC1 = "/wfproc"
 SlashCmdList["WFPROC"] = function()
-    ShammyTime.PlayCenterRingProc(3245)
+    ShammyTime.PlayCenterRingProc(3245, true)  -- forceShow so it always pops for testing
+end
+
+-- /wfresize [0.5–2.0] — set radial scale (center + all satellites as one object; no arg = print current)
+SLASH_WFRESIZE1 = "/wfresize"
+SlashCmdList["WFRESIZE"] = function(msg)
+    msg = msg and strmatch(msg, "^%s*(%S+)") or nil
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    if msg then
+        local scale = tonumber(msg)
+        if scale and scale >= 0.5 and scale <= 2 then
+            db.wfRadialScale = scale
+            if centerFrame then
+                centerFrame:SetScale(scale)
+            end
+            print(("ShammyTime: Windfury radial scale set to %.2f (all rings resize together)."):format(scale))
+        else
+            print("ShammyTime: /wfresize expects a number between 0.5 and 2 (e.g. /wfresize 0.8)")
+        end
+    else
+        print(("ShammyTime: Windfury radial scale is %.2f. Use /wfresize <0.5–2> to change."):format(GetRadialScale()))
+    end
 end

@@ -238,21 +238,7 @@ local function CreateCenterRingFrame()
     local function BuildProcAnim(rf)
         local g = rf:CreateAnimationGroup()
 
-        -- Energy: instant flash to full brightness, then smooth fade back to dim (lightning-hit feel).
-        local aFlash = g:CreateAnimation("Alpha")
-        aFlash:SetTarget(rf.energy)
-        aFlash:SetOrder(1)
-        aFlash:SetDuration(0.02)
-        aFlash:SetFromAlpha(0.12)
-        aFlash:SetToAlpha(1.0)
-
-        local aSoft = g:CreateAnimation("Alpha")
-        aSoft:SetTarget(rf.energy)
-        aSoft:SetOrder(2)
-        aSoft:SetDuration(0.35)
-        aSoft:SetFromAlpha(1.0)
-        aSoft:SetToAlpha(0.18)
-        aSoft:SetSmoothing("OUT")
+        -- Energy flash+soften is done in OnPlay with a ticker so the animation group does not "own" rf.energy for 6s (which would block lightning pulses from showing).
 
         -- Runes: instant flash from hidden to full visibility, then slow fade back to fully hidden (0). Duration of the fade is 3s; adjust for faster/slower fade-out.
         local runeFlash = g:CreateAnimation("Alpha")
@@ -265,26 +251,72 @@ local function CreateCenterRingFrame()
         local runeSoft = g:CreateAnimation("Alpha")
         runeSoft:SetTarget(rf.runes)
         runeSoft:SetOrder(2)
-        runeSoft:SetDuration(3)
+        runeSoft:SetDuration(4)
         runeSoft:SetFromAlpha(1)
         runeSoft:SetToAlpha(0)
         runeSoft:SetSmoothing("OUT")
 
-        -- Rune rotation: small spin (degrees) when the proc plays; gives a "wake up" motion.
-        local rot = g:CreateAnimation("Rotation")
-        rot:SetTarget(rf.runes)
-        rot:SetOrder(1)
-        rot:SetDuration(0.7)
-        rot:SetSmoothing("OUT")
-        rot:SetDegrees(3)
+        -- Rune rotation is driven by a momentum ticker (fast spin then lose momentum), not by an animation.
 
         return g
     end
 
     ringFrame.procAnim = BuildProcAnim(ringFrame)
     local ag = ringFrame.procAnim
+    -- Start momentum spin when proc anim plays: fast at first, then slows down like a wheel (same 3s as rune fade).
+    ag:SetScript("OnPlay", function()
+        local rf = ringFrame
+        -- Energy: flash to full then soften to 0.18 over 0.35s (timer-driven so lightning can later control energy without being overwritten)
+        if rf.energy then
+            rf.energy:SetAlpha(1)
+            if rf.energySoftTicker then rf.energySoftTicker:Cancel() end
+            local softDur = 0.35
+            local steps = math.max(1, math.floor(softDur / 0.02))
+            local step = 0
+            rf.energySoftTicker = C_Timer.NewTicker(softDur / steps, function()
+                step = step + 1
+                local t = step / steps
+                rf.energy:SetAlpha(1 + (0.18 - 1) * t)
+                if step >= steps then
+                    rf.energySoftTicker:Cancel()
+                    rf.energySoftTicker = nil
+                    rf.energy:SetAlpha(0.18)
+                end
+            end)
+        end
+        if not rf.runes then return end
+        if rf.runeMomentumTicker then
+            rf.runeMomentumTicker:Cancel()
+            rf.runeMomentumTicker = nil
+        end
+        rf.runes:SetRotation(0)
+        local startTime = GetTime()
+        local spinDur = 3
+        rf.runeMomentumTicker = C_Timer.NewTicker(0.03, function()
+            local elapsed = GetTime() - startTime
+            local t = elapsed / spinDur
+            if t >= 1 then
+                rf.runeMomentumTicker:Cancel()
+                rf.runeMomentumTicker = nil
+                rf.runes:SetRotation(math.rad(90))
+                return
+            end
+            -- Angle curve: fast start, slow end (like a wheel losing momentum). 90° total over 3s.
+            local angleDeg = 90 * (2 * t - t * t)
+            rf.runes:SetRotation(math.rad(angleDeg))
+        end)
+    end)
     -- When the proc animation (energy + runes + rotation) finishes: stop scale ticker, reset ring scale to 1, reset satellite positions, then start timers for text fade and satellite number fade. Lightning pulses are started separately when the *scale* ticker ends (see PlayCenterRingProc).
     local function onProcAnimEnd()
+        if ringFrame.energySoftTicker then
+            ringFrame.energySoftTicker:Cancel()
+            ringFrame.energySoftTicker = nil
+        end
+        if ringFrame.runeMomentumTicker then
+            ringFrame.runeMomentumTicker:Cancel()
+            ringFrame.runeMomentumTicker = nil
+        end
+        if ringFrame.runes then ringFrame.runes:SetRotation(0) end
         if ringFrame.satelliteTicker then
             ringFrame.satelliteTicker:Cancel()
             ringFrame.satelliteTicker = nil
@@ -322,63 +354,70 @@ local function CreateCenterRingFrame()
     ag:SetScript("OnFinished", onProcAnimEnd)
     ag:SetScript("OnStop", onProcAnimEnd)
 
-    -- Lightning pulses: after the main proc, the energy layer blinks a few times (brighten then dim). Only the energy texture is animated; the rune ring is left alone so its fade-out is not interrupted.
+    -- Lightning pulses: after the main proc, the energy layer blinks a few times (brighten then dim). Implemented with timers that call SetAlpha directly so it runs independently of the proc animation group (which can be 6s or longer); using an AnimationGroup on the same texture would be blocked while the proc anim is still playing.
     local function randBetween(lo, hi)
         return lo + math.random() * (hi - lo)
     end
-    local function BuildLightningPulseGroup(rf)
-        if rf.lightningPulseGroup then return rf.lightningPulseGroup end
-        local g = rf:CreateAnimationGroup()
-        local energyUp = g:CreateAnimation("Alpha")
-        energyUp:SetTarget(rf.energy)
-        energyUp:SetOrder(1)
-        energyUp:SetDuration(0.045)
-        energyUp:SetFromAlpha(0.12)
-        energyUp:SetToAlpha(0.5)
-        local energyDown = g:CreateAnimation("Alpha")
-        energyDown:SetTarget(rf.energy)
-        energyDown:SetOrder(2)
-        energyDown:SetDuration(0.1)
-        energyDown:SetFromAlpha(0.5)
-        energyDown:SetToAlpha(0.12)
-        rf.lightningPulseGroup = g
-        rf.lightningPulseAnims = { energyUp = energyUp, energyDown = energyDown }
-        return g
-    end
-    -- Called after the ring scale ticker finishes (see PlayCenterRingProc). Schedules WF_LIGHTNING_PULSE_COUNT blinks with random peak alpha and gaps; each blink uses the shared lightning pulse animation group.
+    local ENERGY_REST_ALPHA = 0.12
+    -- Called after the ring scale ticker finishes (see PlayCenterRingProc). Runs WF_LIGHTNING_PULSE_COUNT blinks by setting rf.energy alpha with timers/tickers (no AnimationGroup).
     function ShammyTime.StartLightningPulses(rf)
         if not rf or not rf.energy then return end
         if rf.lightningPulseTimer then
             rf.lightningPulseTimer:Cancel()
             rf.lightningPulseTimer = nil
         end
+        if rf.lightningPulseTicker then
+            rf.lightningPulseTicker:Cancel()
+            rf.lightningPulseTicker = nil
+        end
         if rf.lightningPulseGroup then rf.lightningPulseGroup:Stop() end
-        local g = BuildLightningPulseGroup(rf)
-        local anims = rf.lightningPulseAnims
         local pulseIndex = 0
-        local function runNextPulse()
+        local runNextPulse  -- forward declare so timer callbacks can capture it
+        local function runRampDown(ePeak, downDur, thenGap)
+            local downSteps = math.max(1, math.floor(downDur / 0.02))
+            local downStep = 0
+            rf.lightningPulseTicker = C_Timer.NewTicker(downDur / downSteps, function()
+                downStep = downStep + 1
+                local t = downStep / downSteps
+                rf.energy:SetAlpha(ePeak + (ENERGY_REST_ALPHA - ePeak) * t)
+                if downStep >= downSteps then
+                    rf.lightningPulseTicker:Cancel()
+                    rf.lightningPulseTicker = nil
+                    rf.energy:SetAlpha(ENERGY_REST_ALPHA)
+                    if thenGap then
+                        rf.lightningPulseTimer = C_Timer.NewTimer(thenGap, function()
+                            rf.lightningPulseTimer = nil
+                            runNextPulse()
+                        end)
+                    end
+                end
+            end)
+        end
+        local function runRampUp(ePeak)
+            local upDur = randBetween(WF_LIGHTNING_UP_DUR_MIN, WF_LIGHTNING_UP_DUR_MAX)
+            local downDur = randBetween(WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX)
+            local upSteps = math.max(1, math.floor(upDur / 0.02))
+            local upStep = 0
+            rf.lightningPulseTicker = C_Timer.NewTicker(upDur / upSteps, function()
+                upStep = upStep + 1
+                local t = upStep / upSteps
+                rf.energy:SetAlpha(ENERGY_REST_ALPHA + (ePeak - ENERGY_REST_ALPHA) * t)
+                if upStep >= upSteps then
+                    rf.lightningPulseTicker:Cancel()
+                    rf.lightningPulseTicker = nil
+                    rf.energy:SetAlpha(ePeak)
+                    local gap = (pulseIndex < WF_LIGHTNING_PULSE_COUNT) and randBetween(WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX) or nil
+                    runRampDown(ePeak, downDur, gap)
+                end
+            end)
+        end
+        runNextPulse = function()
             pulseIndex = pulseIndex + 1
             if pulseIndex > WF_LIGHTNING_PULSE_COUNT then return end
-            -- Falloff: each successive pulse is a bit weaker (fading lightning effect).
             local falloff = 1 - (pulseIndex - 1) * 0.3
             if falloff < 0.35 then falloff = 0.35 end
             local ePeak = randBetween(WF_LIGHTNING_ENERGY_PEAK_MIN, WF_LIGHTNING_ENERGY_PEAK_MAX) * falloff
-            local upDur = randBetween(WF_LIGHTNING_UP_DUR_MIN, WF_LIGHTNING_UP_DUR_MAX)
-            local downDur = randBetween(WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX)
-            anims.energyUp:SetToAlpha(ePeak)
-            anims.energyUp:SetDuration(upDur)
-            anims.energyDown:SetFromAlpha(ePeak)
-            anims.energyDown:SetDuration(downDur)
-            g:SetScript("OnFinished", function()
-                if pulseIndex < WF_LIGHTNING_PULSE_COUNT then
-                    local gap = randBetween(WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX)
-                    rf.lightningPulseTimer = C_Timer.NewTimer(gap, function()
-                        rf.lightningPulseTimer = nil
-                        runNextPulse()
-                    end)
-                end
-            end)
-            g:Play()
+            runRampUp(ePeak)
         end
         runNextPulse()
     end
@@ -573,7 +612,11 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     end
     f:SetScale(GetRadialScale())
     local rf = f.ringFrame
-    -- Cancel any lightning timers/anim from a previous proc so we start clean
+    -- Cancel any lightning and energy-soften timers/tickers from a previous proc so we start clean
+    if rf.energySoftTicker then
+        rf.energySoftTicker:Cancel()
+        rf.energySoftTicker = nil
+    end
     if rf.lightningStartTimer then
         rf.lightningStartTimer:Cancel()
         rf.lightningStartTimer = nil
@@ -581,6 +624,10 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     if rf.lightningPulseTimer then
         rf.lightningPulseTimer:Cancel()
         rf.lightningPulseTimer = nil
+    end
+    if rf.lightningPulseTicker then
+        rf.lightningPulseTicker:Cancel()
+        rf.lightningPulseTicker = nil
     end
     if rf.lightningPulseGroup then rf.lightningPulseGroup:Stop() end
     rf.energy:SetAlpha(0.12)

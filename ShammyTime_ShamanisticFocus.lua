@@ -29,7 +29,7 @@ local DEFAULTS = {
     relativePoint = "CENTER",
     x = 0,
     y = -150,
-    scale = 1.0,
+    scale = 0.8,
     locked = false,
 }
 
@@ -68,13 +68,14 @@ local function CreateFocusFrame()
     f:SetFrameStrata("DIALOG")
     f:SetSize(iconSize + padW, iconSize + padH)
     f:SetClipsChildren(false)
-    f:SetScale(db.scale or 1)
+    f:SetScale(db.scale or 0.8)
     -- Use frame reference so position sticks; never re-set position in UpdateFocus
     local relTo = (db.relativeTo and _G[db.relativeTo]) or UIParent
     f:SetPoint(db.point or "CENTER", relTo, db.relativePoint or "CENTER", db.x or 0, db.y or -150)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
-    f:EnableMouse(true)
+    local mainDb = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
+    f:EnableMouse(not (mainDb and mainDb.locked))
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
         local mainDb = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
@@ -235,13 +236,19 @@ function ShammyTime.IsShamanisticFocusTestActive()
     return focusTestActive
 end
 
--- Apply current scale from saved settings (called from /st focus scale X)
+-- Apply current scale from saved settings (called from /st focus scale X). Re-apply saved position so the frame does not appear to move when scaling.
 function ShammyTime.ApplyShamanisticFocusScale()
     local f = focusFrame
     if not f then return end
     local db = GetDB()
-    local s = (db.scale and db.scale >= 0.5 and db.scale <= 2) and db.scale or 1
+    local s = (db.scale and db.scale >= 0.5 and db.scale <= 2) and db.scale or 0.8
     f:SetScale(s)
+    -- Keep position fixed: re-apply saved anchor so scale change doesn't shift the frame
+    local relTo = (db.relativeTo and _G[db.relativeTo]) or UIParent
+    if relTo then
+        f:ClearAllPoints()
+        f:SetPoint(db.point or "CENTER", relTo, db.relativePoint or "CENTER", db.x or 0, db.y or -150)
+    end
 end
 
 -- Defer creation until ADDON_LOADED so SavedVariables (position) are loaded first
@@ -263,3 +270,6 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, addon)
     if event == "UNIT_AURA" and unit ~= "player" then return end
     if event == "UNIT_AURA" and not focusTestActive then UpdateFocus() end
 end)
+
+ShammyTime.HasFocusedBuff = HasFocusedBuff
+ShammyTime.GetShamanisticFocusFrame = function() return focusFrame end

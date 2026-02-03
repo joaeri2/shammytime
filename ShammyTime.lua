@@ -3,7 +3,7 @@
 -- WoW Classic Anniversary 2026 (TBC Anniversary Edition, Interface 20505); compatible with builds 20501–20505.
 
 local addonName, addon = ...
--- Expose API for ShammyTime_Windfury.lua and AssetTest.lua (no require in WoW)
+-- Expose API for ShammyTime_Windfury.lua (no require in WoW)
 ShammyTime = ShammyTime or {}
 -- Chat colors for slash help (WoW: |cAARRGGBB text |r)
 local C = {
@@ -266,8 +266,12 @@ local DEFAULTS = {
     wfRadialEnabled = true,  -- show radial UI on Windfury proc (in addition to text popup option)
     wfRadialScale = 0.7,    -- scale for center ring + satellites (circle only) (0.5–2)
     wfTotemBarScale = 1.0,  -- scale for Windfury totem bar only (0.5–2)
-    wfRadialShown = false,  -- persist: center + totem bar visible (restored after reload; set when /wfcenter on, proc, or placing totem)
+    wfRadialShown = false,  -- persist: center + totem bar visible (restored after reload; set when /st circle toggle on, proc, or placing totem)
     wfAlwaysShowNumbers = false,  -- if false (default): numbers fade after proc, show on hover; if true: numbers always visible
+    wfFadeOutOfCombat = false,   -- when on: dim all elements (circle, totem bar, focus, imbue, etc.) when out of combat (with slow fade animation)
+    wfFadeWhenNotProcced = false, -- when on: dim each element when it is not "procced" (e.g. no recent WF proc for circle; no Focus buff for focus; no imbue for imbue bar)
+    wfFadeWhenNoTotems = false,  -- when on: after delay with no totems, slow fade radial (center + totem bar + satellites) to hidden; placing a totem fades back in
+    wfNoTotemsFadeDelay = 5,     -- seconds with no totems before radial fades out (when wfFadeWhenNoTotems is on)
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -283,13 +287,6 @@ local lastTotemName = {}
 -- Last startTime per slot so we detect same-totem replace (e.g. Earthbind -> new Earthbind) and re-store position.
 local lastTotemStartTime = {}
 
-local mainFrame
-local slotFrames = {}
-local lightningShieldFrame
-local weaponImbueFrame
-local focusedFrame
-local timerTicker
-local windfuryStatsFrame
 
 -- Windfury proc stats: pull (this combat) and session (since login / last reset).
 -- All damage stats (min, max, total, avg) are per-PROC (sum of 1–2 hits per proc), not per hit.
@@ -305,7 +302,15 @@ local wfPopupTimer = nil
 local wfPopupFrame = nil
 local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
 local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
-local wfTestTimer = nil  -- /st test: Windfury proc every 10s (random hits/crits) + Shamanistic Focus every 10s (toggle off by /st test again)
+local wfTestTimer = nil  -- /st test: global test (circle + Windfury + Shamanistic Focus); one proc immediately, then every 10s
+local lastWfProcEndTime = 0  -- GetTime() when last Windfury proc animation ended; used for "fade when not procced" grace
+local FADE_GRACE_AFTER_PROC = 15  -- seconds after proc end we still consider circle "procced"
+local FADE_ALPHA = 0.35  -- alpha when faded (out of combat or not procced)
+local FADE_ANIM_OUT_DURATION = 2.5  -- slow fade-out when going out of combat / not procced (when user has fade settings on)
+local FADE_ANIM_IN_DURATION = 1.5   -- slow fade-in when entering combat / procced
+local NO_TOTEMS_FADE_ALPHA = 0.05   -- nearly hidden when no totems (after delay)
+local noTotemsFadeTimer = nil
+local noTotemsFaded = false  -- true when radial has been faded due to no totems
 
 local function GetDB()
     ShammyTimeDB = ShammyTimeDB or {}
@@ -330,15 +335,6 @@ function ShammyTime.GetRadialPositionDB()
     return db.wfRadialPos[key]
 end
 
-local function ApplyScale()
-    local db = GetDB()
-    if mainFrame then
-        mainFrame:SetScale(db.scale or 1)
-    end
-    if windfuryStatsFrame then
-        windfuryStatsFrame:SetScale(db.wfScale or 1)
-    end
-end
 
 -- Format number for compact display (1234 -> "1.2k", 1234567 -> "1.2m").
 local function FormatNumberShort(n)
@@ -359,7 +355,7 @@ local function CreateWindfuryPopupFrame()
     f:SetPoint(db.wfPopupPoint or "CENTER", db.wfPopupRelativeTo or "UIParent", db.wfPopupRelativePoint or "CENTER", db.wfPopupX or 0, db.wfPopupY or 80)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
-    f:EnableMouse(true)
+    f:EnableMouse(not db.locked)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
         if not GetDB().wfPopupLocked then self:StartMoving() end
@@ -495,18 +491,8 @@ local function RestoreWindfuryDB()
     end
 end
 
--- Schedule Windfury stats UI refresh on next frame so it updates in combat (avoids deferred/blocked updates during CLEU).
+-- No-op: stats bar UI removed; data still used by center ring and satellites.
 local function ScheduleWindfuryUpdate()
-    if not windfuryStatsFrame or not windfuryStatsFrame.UpdateText then return end
-    if C_Timer and C_Timer.After then
-        C_Timer.After(0, function()
-            if windfuryStatsFrame and windfuryStatsFrame.UpdateText then
-                windfuryStatsFrame:UpdateText()
-            end
-        end)
-    else
-        windfuryStatsFrame:UpdateText()
-    end
 end
 
 -- Record one eligible white swing (SWING_DAMAGE from player). Windfury procs only on white swings, not on WF hits.
@@ -610,9 +596,6 @@ local function SimulateTestProc()
     FlushWindfuryProc()  -- commit this proc so min/max/avg reflect combined total
     if wfPopupTimer then wfPopupTimer:Cancel() wfPopupTimer = nil end
     ShammyTime.lastProcTotal = total  -- so radial/satellites and GetWindfuryStats() show this proc
-    if windfuryStatsFrame and windfuryStatsFrame.UpdateText then
-        windfuryStatsFrame:UpdateText()
-    end
     if ShammyTime.PlayCenterRingProc then ShammyTime.PlayCenterRingProc(total, true) end
 end
 
@@ -633,6 +616,7 @@ local function ShowWindfuryRadial()
     if ShammyTime.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
         ShammyTime.UpdateSatelliteValues(ShammyTime_Windfury_GetStats())
     end
+    UpdateAllElementsFadeState()
 end
 
 -- Hide Windfury radial (center ring + satellites).
@@ -739,6 +723,18 @@ function ShammyTime.OnRadialHoverEnter()
         wfRadialHideNumbersTimer:Cancel()
         wfRadialHideNumbersTimer = nil
     end
+    -- Cancel proc-based fade timers so numbers don't disappear while hovering
+    local center = _G.ShammyTimeCenterRing
+    if center then
+        if center.wfTextFadeTimer then
+            center.wfTextFadeTimer:Cancel()
+            center.wfTextFadeTimer = nil
+        end
+        if center.wfFadeDelayTimer then
+            center.wfFadeDelayTimer:Cancel()
+            center.wfFadeDelayTimer = nil
+        end
+    end
     StartRadialNumbersFadeIn()
 end
 
@@ -758,6 +754,168 @@ ShammyTime.ResetWindfurySession = ResetWindfurySession
 ShammyTime.ShowWindfuryRadial = ShowWindfuryRadial
 ShammyTime.HideWindfuryRadial = HideWindfuryRadial
 ShammyTime.FlushWindfuryProc = FlushWindfuryProc  -- commit current proc buffer so min/max/avg include this proc (e.g. when radial opens)
+
+-- When locked: make all elements click-through (EnableMouse false) except the circle, which keeps mouse so right-click reset still works.
+function ApplyLockStateToAllFrames()
+    local db = GetDB()
+    local useMouse = not db.locked
+    -- Center ring: always keep EnableMouse true so right-click reset works when locked
+    local center = _G.ShammyTimeCenterRing
+    if center then center:EnableMouse(true) end
+    -- Totem bar, popup, focus, imbue: click-through when locked
+    if ShammyTime.EnsureWindfuryTotemBarFrame then
+        local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
+        if bar then bar:EnableMouse(useMouse) end
+    end
+    if wfPopupFrame then wfPopupFrame:EnableMouse(useMouse) end
+    local focusFrame = ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame()
+    if focusFrame then focusFrame:EnableMouse(useMouse) end
+    if ShammyTime.EnsureImbueBarFrame then
+        local imbueBar = ShammyTime.EnsureImbueBarFrame()
+        if imbueBar then imbueBar:EnableMouse(useMouse) end
+    end
+    if ShammyTime.SetSatellitesEnableMouse then ShammyTime.SetSatellitesEnableMouse(useMouse) end
+end
+
+-- Animate a frame's alpha to target over duration (used for slow fade when wfFadeOutOfCombat is on). Stops any in-progress fade on the frame.
+local function AnimateFrameToAlpha(frame, targetAlpha, duration)
+    if not frame or not frame.CreateAnimationGroup then return end
+    if frame._stFadeAg then
+        frame._stFadeAg:Stop()
+        frame._stFadeAg = nil
+    end
+    local fromAlpha = frame:GetAlpha()
+    if math.abs((fromAlpha or 1) - targetAlpha) < 0.01 then
+        frame:SetAlpha(targetAlpha)
+        frame._stFadeTarget = targetAlpha
+        return
+    end
+    frame._stFadeTarget = targetAlpha
+    local ag = frame:CreateAnimationGroup()
+    local anim = ag:CreateAnimation("Alpha")
+    anim:SetFromAlpha(fromAlpha)
+    anim:SetToAlpha(targetAlpha)
+    anim:SetDuration(duration)
+    anim:SetSmoothing("OUT")
+    ag:SetScript("OnFinished", function()
+        frame:SetAlpha(targetAlpha)
+        if frame._stFadeAg == ag then frame._stFadeAg = nil end
+    end)
+    ag:SetScript("OnStop", function()
+        if frame._stFadeAg == ag then frame._stFadeAg = nil end
+    end)
+    frame._stFadeAg = ag
+    ag:Play()
+end
+
+-- Set alpha on frame; when useSlowFade and target changed, animate over duration instead of instant.
+local function SetOrAnimateFade(frame, targetAlpha, useSlowFade, fadeOut)
+    if not frame then return end
+    if frame._stFadeTarget and math.abs(frame._stFadeTarget - targetAlpha) < 0.01 then return end
+    local duration = useSlowFade and (fadeOut and FADE_ANIM_OUT_DURATION or FADE_ANIM_IN_DURATION) or 0
+    if duration > 0 then
+        AnimateFrameToAlpha(frame, targetAlpha, duration)
+    else
+        if frame._stFadeAg then
+            frame._stFadeAg:Stop()
+            frame._stFadeAg = nil
+        end
+        frame:SetAlpha(targetAlpha)
+        frame._stFadeTarget = targetAlpha
+    end
+end
+
+-- True if player has at least one totem in any slot.
+local function HasAnyTotem()
+    for slot = 1, 4 do
+        local _, totemName = GetTotemInfo(slot)
+        if totemName and totemName ~= "" then return true end
+    end
+    return false
+end
+
+-- Fade state: apply "fade out of combat", "fade when not procced", and "fade when no totems" to all elements. Uses slow fade animations when wfFadeOutOfCombat is on.
+function UpdateAllElementsFadeState()
+    local db = GetDB()
+    local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
+    if inCombat == nil then inCombat = false end
+    local fadedCombat = db.wfFadeOutOfCombat and not inCombat
+    local useSlowFade = db.wfFadeOutOfCombat
+    local alphaWf = 1
+    local wfProcced = (db.wfRadialShown) or (GetTime() - lastWfProcEndTime) < FADE_GRACE_AFTER_PROC
+    if fadedCombat or (db.wfFadeWhenNotProcced and not wfProcced) then
+        alphaWf = FADE_ALPHA
+    end
+    -- Radial (center + totem bar + satellites): if no totems faded, override to nearly hidden
+    local radialAlpha = noTotemsFaded and NO_TOTEMS_FADE_ALPHA or alphaWf
+    local radialFadeOut = radialAlpha < 1
+    local center = _G.ShammyTimeCenterRing
+    if center then SetOrAnimateFade(center, radialAlpha, useSlowFade, radialFadeOut) end
+    if ShammyTime.EnsureWindfuryTotemBarFrame then
+        local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
+        if bar then SetOrAnimateFade(bar, radialAlpha, useSlowFade, radialFadeOut) end
+    end
+    if ShammyTime.AnimateSatellitesToAlpha then
+        ShammyTime.AnimateSatellitesToAlpha(radialAlpha, useSlowFade and (radialFadeOut and FADE_ANIM_OUT_DURATION or FADE_ANIM_IN_DURATION) or 0)
+    else
+        if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(radialAlpha) end
+    end
+    local focusFaded = fadedCombat or (db.wfFadeWhenNotProcced and not (ShammyTime.HasFocusedBuff and ShammyTime.HasFocusedBuff()))
+    local focusAlpha = focusFaded and FADE_ALPHA or 1
+    local focusFrame = ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame()
+    if focusFrame then SetOrAnimateFade(focusFrame, focusAlpha, useSlowFade, focusFaded) end
+    local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
+    local imbueFaded = fadedCombat or (db.wfFadeWhenNotProcced and not imbueProcced)
+    local imbueAlpha = imbueFaded and FADE_ALPHA or 1
+    local imbueBar = ShammyTime.EnsureImbueBarFrame and ShammyTime.EnsureImbueBarFrame()
+    if imbueBar then SetOrAnimateFade(imbueBar, imbueAlpha, useSlowFade, imbueFaded) end
+    local popupAlpha = fadedCombat and FADE_ALPHA or 1
+    if wfPopupFrame and wfPopupFrame:IsShown() then
+        SetOrAnimateFade(wfPopupFrame, popupAlpha, useSlowFade, fadedCombat)
+    end
+end
+
+function ShammyTime.OnWindfuryProcAnimEnd()
+    lastWfProcEndTime = GetTime()
+    UpdateAllElementsFadeState()
+end
+
+-- Called from UpdateAllSlots / PLAYER_TOTEM_UPDATE: start or cancel no-totems fade timer; when totem placed, clear noTotemsFaded and refresh fade state.
+function UpdateNoTotemsFadeState()
+    local db = GetDB()
+    if not db.wfFadeWhenNoTotems then
+        if noTotemsFadeTimer then
+            noTotemsFadeTimer:Cancel()
+            noTotemsFadeTimer = nil
+        end
+        noTotemsFaded = false
+        UpdateAllElementsFadeState()
+        return
+    end
+    if HasAnyTotem() then
+        if noTotemsFadeTimer then
+            noTotemsFadeTimer:Cancel()
+            noTotemsFadeTimer = nil
+        end
+        if noTotemsFaded then
+            noTotemsFaded = false
+            UpdateAllElementsFadeState()
+        end
+        return
+    end
+    -- No totems: start delay timer if not already running
+    if not noTotemsFadeTimer then
+        local delay = math.max(1, tonumber(db.wfNoTotemsFadeDelay) or 5)
+        noTotemsFadeTimer = C_Timer.NewTimer(delay, function()
+            noTotemsFadeTimer = nil
+            noTotemsFaded = true
+            UpdateAllElementsFadeState()
+        end)
+    end
+end
+
+ShammyTime.UpdateAllElementsFadeState = UpdateAllElementsFadeState
+ShammyTime.AnimateFrameToAlpha = AnimateFrameToAlpha
 ShammyTime.GetWindfuryStats = function()
     return wfPull, wfSession, ShammyTime.lastProcTotal or 0
 end
@@ -836,6 +994,12 @@ function ShammyTime.GetWeaponImbuePerHand()
     return out
 end
 
+function ShammyTime.HasAnyWeaponImbue()
+    local hands = ShammyTime.GetWeaponImbuePerHand and ShammyTime.GetWeaponImbuePerHand()
+    if not hands then return false end
+    return (hands.mainHand and hands.mainHand.expirationTime) or (hands.offHand and hands.offHand.expirationTime)
+end
+
 -- Returns first weapon imbue on player: icon, expirationTime, name, spellId; or nil if none.
 -- Uses UnitAura first (for name/icon/spellId), then GetWeaponEnchantInfo so imbue always shows on TBC Anniversary.
 -- Per https://warcraft.wiki.gg/wiki/API_UnitAura: 10 returns = name,icon,count,dispelType,duration,expirationTime,source,...,spellId(10th).
@@ -890,21 +1054,6 @@ local function FormatTime(seconds)
     return ("%.0f sec"):format(seconds)
 end
 
--- Use the same "cooldown finish" spiral as action buttons (native WoW UI)
-local function PlayGoneAnimation(slotFrame, element)
-    if not slotFrame or not slotFrame.expiryCooldown then return end
-    local cd = slotFrame.expiryCooldown
-    cd:Show()
-    -- Brief cooldown that completes in ~0.5s: spiral sweeps and disappears like ability coming off CD
-    cd:SetCooldown(GetTime() - 0.5, 0.5)
-    C_Timer.After(0.6, function()
-        if cd and cd.SetCooldown then
-            cd:SetCooldown(0, 0)
-            cd:Hide()
-        end
-    end)
-end
-
 -- Returns "in", "out", or "unknown" for Windfury bar and slot data (reuses main bar range logic).
 local function GetSlotRangeState(slot, totemName)
     if not totemName or totemName == "" then return "unknown" end
@@ -932,18 +1081,13 @@ local function GetSlotRangeState(slot, totemName)
     return "in"
 end
 
+-- Update totem state only (for GetTotemSlotData / Windfury totem bar). No legacy main bar UI.
 local function UpdateSlot(slot)
     local haveTotem, totemName, startTime, duration, icon = GetTotemInfo(slot)
-    local element = SLOT_TO_ELEMENT[slot]
-    local sf = slotFrames[slot]
-    if not sf then return end
-
     local nowHasTotem = (totemName and totemName ~= "")
     local wasJustPlaced = not lastHadTotem[slot] and nowHasTotem
 
-    -- Detect "just gone" and trigger obvious animation
     if lastHadTotem[slot] and not nowHasTotem then
-        PlayGoneAnimation(sf, element)
         totemPosition[slot] = nil
         lastTotemStartTime[slot] = nil
     end
@@ -953,20 +1097,16 @@ local function UpdateSlot(slot)
         ShammyTime.windfurySlotJustPlaced[slot] = true
     end
 
-    local color = ELEMENT_COLORS[element]
     if nowHasTotem then
-        -- When the totem in this slot changed (e.g. Strength -> Stoneclaw, or Stoneclaw -> Earthbind), clear stored position so we capture the new totem's location.
         if lastTotemName[slot] ~= totemName then
             totemPosition[slot] = nil
             lastTotemName[slot] = totemName
         end
-        -- Same totem type replaced (e.g. Earthbind -> new Earthbind): startTime changes, so we must re-store position.
         local isNewInstance = (startTime and startTime ~= lastTotemStartTime[slot])
         if isNewInstance then
             totemPosition[slot] = nil
             lastTotemStartTime[slot] = startTime
         end
-        -- Store approximate totem position (player position when placed) for position-based range totems. Store when just placed, new instance (same totem re-placed), or we don't have a position yet. UnitPosition works outdoors only.
         if GetTotemPositionRange(totemName) and UnitPosition and (wasJustPlaced or isNewInstance or not totemPosition[slot]) then
             local posY, posX, posZ = UnitPosition("player")
             if posX and posY and posZ then
@@ -976,47 +1116,10 @@ local function UpdateSlot(slot)
         if not isNewInstance and startTime then
             lastTotemStartTime[slot] = startTime
         end
-
-        sf.icon:SetTexture(icon and icon ~= "" and icon or "Interface\\Icons\\INV_Elemental_Primal_Earth")
-        sf.icon:SetVertexColor(1, 1, 1)
-        sf.icon:Show()
-        sf.goneOverlay:Hide()
-        local timeLeft = GetTotemTimeLeft(slot)
-        sf.timer:SetText(FormatTime(timeLeft))
-        sf.timer:SetTextColor(1, 1, 1)
-        sf.timer:Show()
-        sf:SetBackdropBorderColor(color.r, color.g, color.b, 1)
-        -- Out of range: (1) buff-based: totem has a buff but we don't have it; (2) position-based: totem has no buff but we track by distance (e.g. Stoneclaw, Earthbind).
-        local buffSpellId = GetTotemBuffSpellId(totemName)
-        local hasBuff = (buffSpellId and HasPlayerBuffByAnySpellId(buffSpellId)) or HasPlayerBuffByTotemName(totemName)
-        local outOfRangeBuff = not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff
-        local outOfRangePos = false
-        if GetTotemPositionRange(totemName) and totemPosition[slot] and UnitPosition then
-            local posY, posX, posZ = UnitPosition("player")
-            if posX and totemPosition[slot].x then
-                local dist = GetDistanceYards(totemPosition[slot].x, totemPosition[slot].y, totemPosition[slot].z, posX, posY, posZ)
-                local maxRange = GetTotemPositionRange(totemName)
-                if dist and maxRange and dist > maxRange then
-                    outOfRangePos = true
-                end
-            end
-        end
-        if outOfRangeBuff or outOfRangePos then
-            sf.rangeOverlay:Show()
-        else
-            sf.rangeOverlay:Hide()
-        end
     else
         totemPosition[slot] = nil
         lastTotemName[slot] = nil
         lastTotemStartTime[slot] = nil
-        -- Empty slot: show darkened element icon so you see which one is missing
-        sf.icon:SetTexture(ELEMENT_EMPTY_ICONS[element] or "Interface\\Icons\\INV_Misc_QuestionMark")
-        sf.icon:SetVertexColor(0.35, 0.35, 0.35)
-        sf.timer:SetText("")
-        sf.timer:Hide()
-        sf.rangeOverlay:Hide()
-        sf:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.8)
     end
 end
 
@@ -1024,6 +1127,7 @@ local function UpdateAllSlots()
     for slot = 1, 4 do
         UpdateSlot(slot)
     end
+    UpdateNoTotemsFadeState()
 end
 
 -- API for Windfury totem bar: one source of truth for totem state (no duplicate GetTotemInfo/range logic).
@@ -1054,540 +1158,6 @@ end
 
 ShammyTime.DISPLAY_ORDER = DISPLAY_ORDER
 ShammyTime.FormatTime = FormatTime
-
-local function UpdateLightningShield()
-    if not lightningShieldFrame then return end
-    local icon, count, duration, expirationTime, spellId, defaultIcon = GetElementalShieldAura()
-    if icon or spellId then
-        -- Prefer path from GetSpellTexture; some clients don't display SetTexture(path). Fall back to string path, then numeric icon.
-        local tex = (spellId and GetSpellTexture and GetSpellTexture(spellId)) or (icon and type(icon) == "string" and icon) or (icon and type(icon) == "number" and icon) or (defaultIcon or LIGHTNING_SHIELD_ICON)
-        -- TBC Anniversary: use numeric icon when default is Water Shield and path may not display
-        if defaultIcon == WATER_SHIELD_ICON and (not tex or tex == WATER_SHIELD_ICON) then
-            tex = WATER_SHIELD_ICON_ID
-        end
-        if tex then lightningShieldFrame.icon:SetTexture(tex) end
-        lightningShieldFrame.icon:SetVertexColor(1, 1, 1)
-        local numCount = (type(count) == "number" and count) or 0
-        local expTime = (type(expirationTime) == "number" and expirationTime) or 0
-        local timeLeft = expTime > 0 and (expTime - GetTime()) or 0
-        -- Charges in the middle of the icon (Lightning Shield orbs, Water Shield globes)
-        if lightningShieldFrame.charges then
-            lightningShieldFrame.charges:SetText(numCount > 0 and tostring(numCount) or "")
-            lightningShieldFrame.charges:Show()
-        end
-        -- Timer on the bottom
-        lightningShieldFrame.timer:SetText(FormatTime(timeLeft))
-        lightningShieldFrame.timer:Show()
-        lightningShieldFrame:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-    else
-        lightningShieldFrame.icon:SetTexture(LIGHTNING_SHIELD_ICON)
-        lightningShieldFrame.icon:SetVertexColor(0.35, 0.35, 0.35)
-        if lightningShieldFrame.charges then
-            lightningShieldFrame.charges:SetText("")
-            lightningShieldFrame.charges:Hide()
-        end
-        lightningShieldFrame.timer:SetText("")
-        lightningShieldFrame.timer:Hide()
-        lightningShieldFrame:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.8)
-    end
-end
-
-local function UpdateWeaponImbue()
-    if not weaponImbueFrame then return end
-    local icon, expirationTime, name, spellId = GetWeaponImbueAura()
-    if name then
-        -- Prefer path from GetSpellTexture; some clients don't display SetTexture(path) and need FileDataID (number).
-        local tex = (spellId and GetSpellTexture and GetSpellTexture(spellId)) or (icon and type(icon) == "string" and icon) or (icon and type(icon) == "number" and icon) or WEAPON_IMBUE_ICON
-        local texToSet = tex or WEAPON_IMBUE_ICON
-        -- When we have no spellId (GetWeaponEnchantInfo path), use numeric icon ID so TBC Anniversary displays it.
-        if not spellId and (texToSet == WEAPON_IMBUE_ICON or not texToSet) then
-            texToSet = WEAPON_IMBUE_ICON_ID
-        end
-        weaponImbueFrame.icon:SetTexture(texToSet)
-        weaponImbueFrame.icon:Show()
-        weaponImbueFrame.icon:SetVertexColor(1, 1, 1)
-        local expTime = (type(expirationTime) == "number" and expirationTime) or 0
-        local timeLeft = expTime > 0 and (expTime - GetTime()) or 0
-        weaponImbueFrame.timer:SetText(FormatTime(timeLeft))
-        weaponImbueFrame.timer:Show()
-        weaponImbueFrame.imbueName = name
-        weaponImbueFrame:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-    else
-        weaponImbueFrame.icon:SetTexture(WEAPON_IMBUE_EMPTY_ICON_ID)
-        weaponImbueFrame.icon:Show()
-        weaponImbueFrame.icon:SetVertexColor(0.35, 0.35, 0.35)
-        weaponImbueFrame.timer:SetText("")
-        weaponImbueFrame.timer:Hide()
-        weaponImbueFrame.imbueName = nil
-        weaponImbueFrame:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.8)
-    end
-end
-
-local function UpdateFocused()
-    if not focusedFrame then return end
-    local icon, duration, expirationTime, spellId = GetFocusedAura()
-    if icon or spellId then
-        local tex = (spellId and GetSpellTexture and GetSpellTexture(spellId)) or (icon and type(icon) == "string" and icon) or (icon and type(icon) == "number" and icon) or FOCUSED_ICON
-        focusedFrame.icon:SetTexture(tex or FOCUSED_ICON)
-        focusedFrame.icon:SetVertexColor(1, 1, 1)
-        local expTime = (type(expirationTime) == "number" and expirationTime) or 0
-        local timeLeft = expTime > 0 and (expTime - GetTime()) or 0
-        focusedFrame.timer:SetText(FormatTime(timeLeft))
-        focusedFrame.timer:Show()
-        focusedFrame:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-    else
-        focusedFrame.icon:SetTexture(FOCUSED_ICON)
-        focusedFrame.icon:SetVertexColor(0.35, 0.35, 0.35)
-        focusedFrame.timer:SetText("")
-        focusedFrame.timer:Hide()
-        focusedFrame:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.8)
-    end
-end
-
-local function RefreshTimers()
-    if not mainFrame or not mainFrame:IsShown() then return end
-    for slot = 1, 4 do
-        local haveTotem, totemName = GetTotemInfo(slot)
-        if totemName and totemName ~= "" then
-            local sf = slotFrames[slot]
-            if sf and sf.timer then
-                sf.timer:SetText(FormatTime(GetTotemTimeLeft(slot)))
-                -- Refresh range overlay: buff-based and position-based (in case UNIT_AURA didn't fire or player moved)
-                local buffSpellId = GetTotemBuffSpellId(totemName)
-                local hasBuff = (buffSpellId and HasPlayerBuffByAnySpellId(buffSpellId)) or HasPlayerBuffByTotemName(totemName)
-                local outOfRangeBuff = not IsTotemWithNoRangeBuff(totemName) and buffSpellId and not hasBuff
-                local outOfRangePos = false
-                if GetTotemPositionRange(totemName) and totemPosition[slot] and UnitPosition then
-                    local posY, posX, posZ = UnitPosition("player")
-                    if posX and totemPosition[slot].x then
-                        local dist = GetDistanceYards(totemPosition[slot].x, totemPosition[slot].y, totemPosition[slot].z, posX, posY, posZ)
-                        local maxRange = GetTotemPositionRange(totemName)
-                        if dist and maxRange and dist > maxRange then
-                            outOfRangePos = true
-                        end
-                    end
-                end
-                if outOfRangeBuff or outOfRangePos then
-                    sf.rangeOverlay:Show()
-                else
-                    sf.rangeOverlay:Hide()
-                end
-            end
-        end
-    end
-    UpdateLightningShield()
-    UpdateWeaponImbue()
-    UpdateFocused()
-end
-
-local function CreateMainFrame()
-    local db = GetDB()
-    local f = CreateFrame("Frame", "ShammyTimeFrame", UIParent, "BackdropTemplate")
-    local iconSize = 36
-    local gap = 2
-    local slotW, slotH = iconSize + 6, iconSize + 18
-    local fw = 7 * slotW + 6 * gap  -- 4 totems + Lightning Shield + Weapon Imbue + Focused
-    local fh = slotH
-    f:SetSize(fw, fh)
-    f:SetScale(db.scale or 1)
-    f:SetPoint(db.point or "CENTER", db.relativeTo or "UIParent", db.relativePoint or "CENTER", db.x or 0, db.y or -180)
-    f:SetMovable(true)
-    f:SetClampedToScreen(true)
-    f:EnableMouse(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", function(self) if not (db.locked) then self:StartMoving() end end)
-    f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        db.point, _, db.relativePoint, db.x, db.y = self:GetPoint(1)
-    end)
-    -- No bar-wide background: texture is on each button
-
-    -- Slot row: chained left-to-right as stone, fire, water, air (then shield, imbue)
-    for i = 1, 4 do
-        local slot = DISPLAY_ORDER[i]
-        local element = SLOT_TO_ELEMENT[slot]
-        local sf = CreateFrame("Frame", nil, f, "BackdropTemplate")
-        sf:SetSize(slotW, slotH)
-        if i == 1 then
-            sf:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
-        else
-            sf:SetPoint("LEFT", slotFrames[DISPLAY_ORDER[i - 1]], "RIGHT", gap, 0)
-            sf:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
-        end
-        -- Slot: dark background; bar texture only in the timer (numbers) area at bottom
-        sf:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true,
-            tileSize = 16,
-            edgeSize = 10,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 },
-        })
-        sf:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
-        local c = ELEMENT_COLORS[element]
-        sf:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-
-        -- Bar texture strip behind where the numbers show (bottom of slot)
-        local timerBar = CreateFrame("Frame", nil, sf)
-        timerBar:SetPoint("BOTTOMLEFT", 2, 2)
-        timerBar:SetPoint("BOTTOMRIGHT", -2, 2)
-        timerBar:SetHeight(14)
-        timerBar:SetFrameLevel(sf:GetFrameLevel())
-        local timerBarTex = timerBar:CreateTexture(nil, "BACKGROUND")
-        timerBarTex:SetAllPoints(timerBar)
-        timerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
-        timerBarTex:SetTexCoord(0, 1, 0, 0.5)
-        timerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
-
-        local icon = sf:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(iconSize, iconSize)
-        icon:SetPoint("TOP", 0, -4)
-        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        icon:SetTexture(ELEMENT_EMPTY_ICONS[element])
-        icon:SetVertexColor(0.35, 0.35, 0.35)
-        sf.icon = icon
-
-        -- Cooldown spiral (same as action buttons): used for "expired" effect
-        local expiryCd = CreateFrame("Cooldown", nil, sf, "CooldownFrameTemplate")
-        expiryCd:SetPoint("TOP", sf, "TOP", 0, -4)
-        expiryCd:SetSize(iconSize, iconSize)
-        expiryCd:SetFrameLevel(sf:GetFrameLevel() + 1)
-        if expiryCd.SetDrawEdge then expiryCd:SetDrawEdge(false) end
-        if expiryCd.SetHideCountdownNumbers then
-            expiryCd:SetHideCountdownNumbers(true)
-        else
-            local regions = { expiryCd:GetRegions() }
-            for _, r in ipairs(regions) do
-                if r and r.SetText then r:SetText("") end
-                if r and r.Hide then r:Hide() end
-            end
-        end
-        expiryCd:Hide()
-        sf.expiryCooldown = expiryCd
-
-        local timer = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        timer:SetPoint("BOTTOM", 0, 4)
-        timer:SetTextColor(1, 1, 1)
-        sf.timer = timer
-
-        -- "GONE" overlay (flashes when totem dies/expires)
-        local overlay = CreateFrame("Frame", nil, sf)
-        overlay:SetAllPoints(sf)
-        overlay:SetFrameLevel(sf:GetFrameLevel() + 2)
-        local ot = overlay:CreateTexture(nil, "BACKGROUND")
-        ot:SetAllPoints()
-        ot:SetColorTexture(0.5, 0, 0, 0.6)
-        overlay.text = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        overlay.text:SetPoint("CENTER")
-        overlay.text:SetText("GONE")
-        overlay.text:SetTextColor(1, 0.3, 0.3)
-        overlay:Hide()
-        sf.goneOverlay = overlay
-
-        -- "Out of range" overlay: totem is down but player is too far to get the buff
-        local rangeOverlay = CreateFrame("Frame", nil, sf)
-        rangeOverlay:SetAllPoints(sf)
-        rangeOverlay:SetFrameLevel(sf:GetFrameLevel() + 1)
-        local rt = rangeOverlay:CreateTexture(nil, "BACKGROUND")
-        rt:SetAllPoints()
-        rt:SetColorTexture(0.6, 0, 0, 0.5)
-        rangeOverlay:Hide()
-        sf.rangeOverlay = rangeOverlay
-
-        slotFrames[slot] = sf
-    end
-
-    -- Lightning Shield slot (same style as totem slots)
-    local lsf = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    lsf:SetSize(slotW, slotH)
-    lsf:SetPoint("LEFT", slotFrames[4], "RIGHT", gap, 0)
-    lsf:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
-    lsf:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 10,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
-    })
-    lsf:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
-    lsf:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-    -- Bar texture strip behind where the numbers show (bottom of slot)
-    local lsfTimerBar = CreateFrame("Frame", nil, lsf)
-    lsfTimerBar:SetPoint("BOTTOMLEFT", 2, 2)
-    lsfTimerBar:SetPoint("BOTTOMRIGHT", -2, 2)
-    lsfTimerBar:SetHeight(14)
-    lsfTimerBar:SetFrameLevel(lsf:GetFrameLevel())
-    local lsfTimerBarTex = lsfTimerBar:CreateTexture(nil, "BACKGROUND")
-    lsfTimerBarTex:SetAllPoints(lsfTimerBar)
-    lsfTimerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
-    lsfTimerBarTex:SetTexCoord(0, 1, 0, 0.5)
-    lsfTimerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
-    local icon = lsf:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(iconSize, iconSize)
-    icon:SetPoint("TOP", 0, -4)
-    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    icon:SetTexture(LIGHTNING_SHIELD_ICON)
-    icon:SetVertexColor(0.35, 0.35, 0.35)
-    lsf.icon = icon
-    -- Charge count in the middle of the icon (like WoW buff stacks)
-    local charges = lsf:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    charges:SetPoint("CENTER", icon, "CENTER", 0, 0)
-    charges:SetTextColor(1, 1, 1)
-    lsf.charges = charges
-    local timer = lsf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    timer:SetPoint("BOTTOM", 0, 4)
-    timer:SetTextColor(1, 1, 1)
-    lsf.timer = timer
-    lightningShieldFrame = lsf
-
-    -- Weapon Imbue slot (Flametongue / Frostbrand / Rockbiter / Windfury Weapon)
-    local wif = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    wif:SetSize(slotW, slotH)
-    wif:SetPoint("LEFT", lightningShieldFrame, "RIGHT", gap, 0)
-    wif:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
-    wif:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 10,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
-    })
-    wif:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
-    wif:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-    -- Bar texture strip behind where the numbers show (bottom of slot); same as totem/Lightning Shield slots
-    local wifTimerBar = CreateFrame("Frame", nil, wif)
-    wifTimerBar:SetPoint("BOTTOMLEFT", 2, 2)
-    wifTimerBar:SetPoint("BOTTOMRIGHT", -2, 2)
-    wifTimerBar:SetHeight(14)
-    wifTimerBar:SetFrameLevel(wif:GetFrameLevel())
-    local wifTimerBarTex = wifTimerBar:CreateTexture(nil, "BACKGROUND")
-    wifTimerBarTex:SetAllPoints(wifTimerBar)
-    wifTimerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
-    wifTimerBarTex:SetTexCoord(0, 1, 0, 0.5)
-    wifTimerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
-    local wifIcon = wif:CreateTexture(nil, "ARTWORK")
-    wifIcon:SetSize(iconSize, iconSize)
-    wifIcon:SetPoint("TOP", 0, -4)
-    wifIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    wifIcon:SetTexture(WEAPON_IMBUE_EMPTY_ICON_ID)
-    wifIcon:SetVertexColor(0.35, 0.35, 0.35)
-    wif.icon = wifIcon
-    local wifTimer = wif:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    wifTimer:SetPoint("BOTTOM", 0, 4)
-    wifTimer:SetTextColor(1, 1, 1)
-    wif.timer = wifTimer
-    weaponImbueFrame = wif
-
-    -- Focused slot (Shamanistic Focus proc: next Shock costs 60% less, 15 sec)
-    local ff = CreateFrame("Frame", nil, f, "BackdropTemplate")
-    ff:SetSize(slotW, slotH)
-    ff:SetPoint("LEFT", weaponImbueFrame, "RIGHT", gap, 0)
-    ff:SetPoint("TOP", slotFrames[DISPLAY_ORDER[1]], "TOP", 0, 0)
-    ff:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true,
-        tileSize = 16,
-        edgeSize = 10,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 },
-    })
-    ff:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
-    ff:SetBackdropBorderColor(0.35, 0.35, 0.35, 0.8)
-    local ffTimerBar = CreateFrame("Frame", nil, ff)
-    ffTimerBar:SetPoint("BOTTOMLEFT", 2, 2)
-    ffTimerBar:SetPoint("BOTTOMRIGHT", -2, 2)
-    ffTimerBar:SetHeight(14)
-    ffTimerBar:SetFrameLevel(ff:GetFrameLevel())
-    local ffTimerBarTex = ffTimerBar:CreateTexture(nil, "BACKGROUND")
-    ffTimerBarTex:SetAllPoints(ffTimerBar)
-    ffTimerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
-    ffTimerBarTex:SetTexCoord(0, 1, 0, 0.5)
-    ffTimerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
-    local ffIcon = ff:CreateTexture(nil, "ARTWORK")
-    ffIcon:SetSize(iconSize, iconSize)
-    ffIcon:SetPoint("TOP", 0, -4)
-    ffIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    ffIcon:SetTexture(FOCUSED_ICON)
-    ffIcon:SetVertexColor(0.35, 0.35, 0.35)
-    ff.icon = ffIcon
-    local ffTimer = ff:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    ffTimer:SetPoint("BOTTOM", 0, 4)
-    ffTimer:SetTextColor(1, 1, 1)
-    ff.timer = ffTimer
-    focusedFrame = ff
-
-    mainFrame = f
-    return f
-end
-
--- Windfury stats: same layout/design as totem bar — row of slots (Procs, Proc %, Crits, Min, Avg, Max, Total), each with Pull/Session values.
--- Procs = number of proc events (1 per WF proc, whether it hits 1 or 2 times).
-local WF_STAT_LABELS = { "Procs", "Proc %", "Crits", "Min", "Avg", "Max", "Total" }
-local function CreateWindfuryStatsFrame()
-    if windfuryStatsFrame then return windfuryStatsFrame end
-    if not mainFrame then return nil end
-    local db = GetDB()
-    local iconSize = 36
-    local gap = 2
-    local slotW, slotH = iconSize + 6, iconSize + 18
-    local numSlots = 7
-    local fw = numSlots * slotW + (numSlots - 1) * gap
-    local fh = slotH
-
-    local wf = CreateFrame("Frame", "ShammyTimeWindfuryFrame", UIParent, "BackdropTemplate")
-    wf:SetSize(fw, fh)
-    wf:SetScale(db.wfScale or 1)
-    local wfRelTo = (db.wfRelativeTo and _G[db.wfRelativeTo]) or mainFrame or UIParent
-    wf:SetPoint(db.wfPoint or "TOP", wfRelTo, db.wfRelativePoint or "BOTTOM", db.wfX or 0, db.wfY or -4)
-    wf:SetMovable(true)
-    wf:SetClampedToScreen(true)
-    wf:EnableMouse(true)
-    wf:RegisterForDrag("LeftButton")
-    wf:SetScript("OnDragStart", function(self)
-        if not (db.wfLocked) then self:StartMoving() end
-    end)
-    wf:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        local pt, relTo, relPt, x, y = self:GetPoint(1)
-        db.wfPoint = pt
-        db.wfRelativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
-        db.wfRelativePoint = relPt
-        db.wfX = x
-        db.wfY = y
-    end)
-    wf:SetScript("OnMouseDown", function(self, button)
-        if button == "RightButton" then
-            ResetWindfurySession()
-            print(C.green .. "ShammyTime: Windfury stats reset." .. C.r)
-        end
-    end)
-    wf:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        GameTooltip:SetText("Right-click to reset stats")
-        GameTooltip:Show()
-    end)
-    wf:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-    -- Same backdrop and styling as totem slots
-    local slotFrames = {}
-    for i = 1, numSlots do
-        local sf = CreateFrame("Frame", nil, wf, "BackdropTemplate")
-        sf:SetSize(slotW, slotH)
-        if i == 1 then
-            sf:SetPoint("TOPLEFT", wf, "TOPLEFT", 0, 0)
-        else
-            sf:SetPoint("LEFT", slotFrames[i - 1], "RIGHT", gap, 0)
-            sf:SetPoint("TOP", slotFrames[1], "TOP", 0, 0)
-        end
-        sf:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true,
-            tileSize = 16,
-            edgeSize = 10,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 },
-        })
-        sf:SetBackdropColor(0.12, 0.1, 0.08, 0.94)
-        sf:SetBackdropBorderColor(0.55, 0.48, 0.35, 1)
-
-        -- Dark bar strip at bottom (same as totem timer area)
-        local timerBar = CreateFrame("Frame", nil, sf)
-        timerBar:SetPoint("BOTTOMLEFT", 2, 2)
-        timerBar:SetPoint("BOTTOMRIGHT", -2, 2)
-        timerBar:SetHeight(14)
-        timerBar:SetFrameLevel(sf:GetFrameLevel())
-        local timerBarTex = timerBar:CreateTexture(nil, "BACKGROUND")
-        timerBarTex:SetAllPoints(timerBar)
-        timerBarTex:SetTexture("Interface\\Buttons\\UI-SliderBar-Background")
-        timerBarTex:SetTexCoord(0, 1, 0, 0.5)
-        timerBarTex:SetVertexColor(0.35, 0.3, 0.25, 0.95)
-
-        -- Label at top (Procs, Min, Max, Avg, Total)
-        local label = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        label:SetPoint("TOP", 0, -6)
-        label:SetText(WF_STAT_LABELS[i])
-        label:SetTextColor(0.7, 0.68, 0.62)
-        sf.label = label
-
-        -- Values: Pull above Session, spaced so they don't overlap (same value = was drawing twice)
-        local pullVal = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        pullVal:SetPoint("BOTTOM", 0, 20)
-        pullVal:SetTextColor(0.65, 0.62, 0.58)
-        sf.pullVal = pullVal
-        local sessionVal = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        sessionVal:SetPoint("BOTTOM", 0, 4)
-        sessionVal:SetTextColor(1, 1, 1)
-        sf.sessionVal = sessionVal
-
-        slotFrames[i] = sf
-    end
-    wf.slotFrames = slotFrames
-
-    function wf:UpdateText()
-        local function val(st, kind)
-            -- No data = no procs completed (min/max/avg/total are per-proc; procs count proc events)
-            if (st.procs or 0) == 0 then
-                if kind == "procs" or kind == "crits" then return "0" end
-                if kind == "procrate" then
-                    local swings = st.swings or 0
-                    return (swings > 0) and "0%" or "–"
-                end
-                return "–"
-            end
-            -- Procs = number of proc events (1 per WF proc, whether 1 or 2 hits)
-            if kind == "procs" then return tostring(st.procs or 0) end
-            -- Proc % = proc events / eligible white swings
-            if kind == "procrate" then
-                local swings = st.swings or 0
-                if swings <= 0 then return "–" end
-                local procs = st.procs or 0
-                if procs <= 0 then return "0%" end
-                local rate = procs / swings
-                if rate >= 1 then return "100%" end
-                return ("%.0f%%"):format(rate * 100)
-            end
-            -- Min/Avg/Max/Total = per-PROC (combined 1–2 hits per Windfury proc).
-            if kind == "min" then return st.min and FormatNumberShort(st.min) or "–" end
-            if kind == "max" then return st.max and FormatNumberShort(st.max) or "–" end
-            if kind == "avg" then
-                local procs = st.procs or 0
-                if procs <= 0 then return "–" end
-                return FormatNumberShort(math.floor(st.total / procs + 0.5))
-            end
-            if kind == "total" then return FormatNumberShort(st.total) end
-            if kind == "crits" then return tostring(st.crits or 0) end
-            return "–"
-        end
-        local kinds = { "procs", "procrate", "crits", "min", "avg", "max", "total" }
-        for i = 1, numSlots do
-            local sf = self.slotFrames[i]
-            local pullStr = val(wfPull, kinds[i])
-            local sessionStr = val(wfSession, kinds[i])
-            sf.pullVal:SetText(pullStr)
-            sf.sessionVal:SetText(sessionStr)
-            -- Show pull row whenever in a pull (count > 0) so both rows are visible in combat; hide when out of combat
-            if (wfPull.procs or 0) > 0 then sf.pullVal:Show() else sf.pullVal:Hide() end
-        end
-    end
-    wf:UpdateText()
-    windfuryStatsFrame = wf
-    return wf
-end
-
-local function OnEvent(_, event)
-    if event == "PLAYER_TOTEM_UPDATE" then
-        UpdateAllSlots()
-    elseif event == "PLAYER_LOGIN" or event == "ADDON_LOADED" then
-        if addonName ~= "ShammyTime" then return end
-        CreateMainFrame()
-        UpdateAllSlots()
-        if timerTicker then timerTicker:Cancel() end
-        timerTicker = C_Timer.NewTicker(1, RefreshTimers)
-        mainFrame:UnregisterEvent("ADDON_LOADED")
-    end
-end
 
 -- WoW Classic Anniversary 2026 (Interface 20505) and older builds (20501–20504): payload may come from
 -- CombatLogGetCurrentEventInfo() or from event varargs; spellId can be 0 in Classic so we match by spell name too.
@@ -1656,6 +1226,7 @@ eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 if eventFrame.RegisterUnitEvent then
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
     eventFrame:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
@@ -1666,39 +1237,31 @@ end
 eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         RestoreWindfuryDB()
-        if not mainFrame then
-            CreateMainFrame()
-            mainFrame:Show()
-            if timerTicker then timerTicker:Cancel() end
-            timerTicker = C_Timer.NewTicker(1, RefreshTimers)
-        end
-        CreateWindfuryStatsFrame()
-        if windfuryStatsFrame then
-            if GetDB().windfuryTrackerEnabled then windfuryStatsFrame:Show() else windfuryStatsFrame:Hide() end
-        end
         UpdateAllSlots()
-        UpdateLightningShield()
-        UpdateWeaponImbue()
-        UpdateFocused()
         -- Show Windfury radial (center ring + satellites) if enabled; always visible unless disabled
         ShowWindfuryRadial()
+        C_Timer.After(0, function()
+            UpdateNoTotemsFadeState()
+            UpdateAllElementsFadeState()
+            ApplyLockStateToAllFrames()
+        end)
         print(C.green .. "ShammyTime is enabled." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for settings." .. C.r)
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
     elseif event == "UNIT_AURA" then
         if not eventFrame.RegisterUnitEvent or arg1 == "player" then
             UpdateAllSlots()
-            UpdateLightningShield()
-            UpdateWeaponImbue()
-            UpdateFocused()
+            UpdateAllElementsFadeState()
         end
     elseif event == "UNIT_INVENTORY_CHANGED" and arg1 == "player" then
-        UpdateWeaponImbue()
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         OnCombatLogWindfury(...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Reset pull when entering combat so new pull starts fresh; last pull persists out of combat
         if GetDB().windfuryTrackerEnabled then ResetWindfuryPull() end
+        UpdateAllElementsFadeState()
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        UpdateAllElementsFadeState()
     end
 end)
 
@@ -1747,12 +1310,12 @@ local function PrintMainHelp()
     print(C.green .. "  GLOBAL (affects everything)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. "   — Lock all bars (no drag)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st unlock" .. C.r .. C.gray .. " — Unlock so you can drag" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Windfury proc every 10s (random hits/crits), Shamanistic Focus every 10s (toggle; run again to stop)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Global test: circle + Windfury + Shamanistic Focus (run again to stop)" .. C.r)
     print("")
-    print(C.green .. "  CIRCLE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st radial" .. C.r .. C.gray .. "  on|off, scale, numbers" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st radial" .. C.r .. C.gray .. " for list" .. C.r)
+    print(C.green .. "  CIRCLE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st circle" .. C.r .. C.gray .. "  on|off, scale, numbers, toggle" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st circle" .. C.r .. C.gray .. " for list" .. C.r)
     print("")
-    print(C.green .. "  TOTEM BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st totem" .. C.r .. C.gray .. "  scale" .. C.r)
+    print(C.green .. "  TOTEM BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st totem" .. C.r .. C.gray .. "  scale, pos" .. C.r)
     print(C.gray .. "    " .. C.gold .. "/st totem" .. C.r .. C.gray .. " for list" .. C.r)
     print("")
     print(C.green .. "  SHAMANISTIC FOCUS" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st focus" .. C.r .. C.gray .. "  scale (proc indicator)" .. C.r)
@@ -1761,21 +1324,21 @@ local function PrintMainHelp()
     print(C.green .. "  IMBUE BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st imbue" .. C.r .. C.gray .. "  scale, layout (weapon imbues MH/OH)" .. C.r)
     print(C.gray .. "    " .. C.gold .. "/st imbue scale 0.5" .. C.r .. C.gray .. " bar size; " .. C.gold .. "/st imbue layout" .. C.r .. C.gray .. " move/resize icons" .. C.r)
     print("")
-    print(C.gray .. "  LEGACY (deprecating soon)" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st legacy" .. C.r .. C.gray .. "  reset, bar, popup, main" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st legacy" .. C.r .. C.gray .. " for list" .. C.r)
+    print(C.green .. "  FADE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st fade" .. C.r .. C.gray .. "  combat, procced (dim elements out of combat / when not procced)" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st fade" .. C.r .. C.gray .. " for list" .. C.r)
     print("")
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
     print("")
 end
 
-local function PrintRadialHelp()
+local function PrintCircleHelp()
     print("")
-    print(C.green .. "ShammyTime — Circle (" .. C.gold .. "/st radial" .. C.r .. C.green .. ")" .. C.r)
+    print(C.green .. "ShammyTime — Circle (" .. C.gold .. "/st circle" .. C.r .. C.green .. ")" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "on" .. C.r .. C.gray .. "  / " .. C.gold .. "off" .. C.r .. C.gray .. "     — Show or hide circle" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Size (0.5–2). Shortcut: " .. C.gold .. "/wfresize 0.8" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "numbers on" .. C.r .. C.gray .. "  — Numbers always visible" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "numbers off" .. C.r .. C.gray .. "  — Numbers fade; show on hover (default)" .. C.r)
-    print(C.gray .. "  Toggle UI: " .. C.gold .. "/wfcenter" .. C.r .. C.gray .. "  |  One-shot test: " .. C.gold .. "/wftest" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Size (0.5–2)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "numbers on|off" .. C.r .. C.gray .. "  — Numbers always visible or fade on hover" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "toggle" .. C.r .. C.gray .. "  — Show/hide circle and totem bar" .. C.r)
+    print(C.gray .. "  Test: " .. C.gold .. "/st test" .. C.r .. C.gray .. " (global; affects circle, Windfury, focus)" .. C.r)
     print("")
 end
 
@@ -1783,6 +1346,7 @@ local function PrintTotemHelp()
     print("")
     print(C.green .. "ShammyTime — Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.green .. ")" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "scale 1" .. C.r .. C.gray .. "  — Size (0.5–2, default 1)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "pos" .. C.r .. C.gray .. "  — Print layout coords (for editing)" .. C.r)
     print("")
 end
 
@@ -1790,17 +1354,18 @@ local function PrintFocusHelp()
     print("")
     print(C.green .. "ShammyTime — Shamanistic Focus (" .. C.gold .. "/st focus" .. C.r .. C.green .. ")" .. C.r)
     print(C.gray .. "  Proc indicator (light on/off when Shamanistic Focus is active)." .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "scale 1" .. C.r .. C.gray .. "  — Size (0.5–2, default 1)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Size (0.5–2, default 0.8)" .. C.r)
     print("")
 end
 
-local function PrintLegacyHelp()
+local function PrintFadeHelp()
     print("")
-    print(C.gray .. "ShammyTime — Legacy (" .. C.gold .. "/st legacy" .. C.r .. C.gray .. ") — deprecating soon" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "reset" .. C.r .. C.gray .. "     — Clear Windfury stats" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "bar lock|unlock|scale 1|on|off" .. C.r .. C.gray .. "  — Stats bar" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "popup on|off|lock|unlock|scale 1|hold 2" .. C.r .. C.gray .. "  — Damage popup" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "main lock|unlock|scale 1|debug" .. C.r .. C.gray .. "  — Main totem bar" .. C.r)
+    print(C.green .. "ShammyTime — Fade (" .. C.gold .. "/st fade" .. C.r .. C.green .. ")" .. C.r)
+    print(C.gray .. "  Dim all elements (circle, totem bar, satellites, Shamanistic Focus, imbue bar, popup) when conditions are met. Slow fade when combat/procced on." .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "combat on|off" .. C.r .. C.gray .. "  — Fade when out of combat (slow fade)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "procced on|off" .. C.r .. C.gray .. "  — Fade when not procced" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "nototems on|off" .. C.r .. C.gray .. "  — Fade radial when no totems (after delay); placing a totem fades back in" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "nototemsdelay 5" .. C.r .. C.gray .. "  — Seconds with no totems before fade (1–30)" .. C.r)
     print("")
 end
 
@@ -1819,13 +1384,15 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         db.locked = true
         db.wfLocked = true
         db.wfPopupLocked = true
-        print(C.green .. "ShammyTime: All bars locked." .. C.r)
+        ApplyLockStateToAllFrames()
+        print(C.green .. "ShammyTime: All bars locked (click-through except right-click reset on circle)." .. C.r)
     elseif cmd == "unlock" or cmd == "move" then
         db.locked = false
         db.wfLocked = false
         db.wfPopupLocked = false
+        ApplyLockStateToAllFrames()
         print(C.green .. "ShammyTime: All bars unlocked — you can drag to move." .. C.r)
-    -- Global: test mode — Windfury proc every 10s (random hits/crits), Shamanistic Focus every 10s (toggle)
+    -- Global test: Windfury proc + Shamanistic Focus (one proc immediately, then every 10s). Run /st test again to stop.
     elseif cmd == "test" then
         if wfTestTimer then
             wfTestTimer:Cancel()
@@ -1833,30 +1400,76 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if ShammyTime.StopShamanisticFocusTest then ShammyTime.StopShamanisticFocusTest() end
             print(C.green .. "ShammyTime: Test mode off." .. C.r)
         else
+            if ShammyTime.StartShamanisticFocusTest then ShammyTime.StartShamanisticFocusTest() end
+            SimulateTestProc()  -- one proc immediately so circle + focus react right away
             wfTestTimer = C_Timer.NewTicker(10, function()
                 SimulateTestProc()
             end)
-            if ShammyTime.StartShamanisticFocusTest then ShammyTime.StartShamanisticFocusTest() end
-            print(C.green .. "ShammyTime: Test mode on — Windfury proc every 10s (random hits/crits), Shamanistic Focus every 10s. Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
-        end
-    -- Global: scale (legacy main bar) and debug
-    elseif cmd == "scale" then
-        if arg == "" then
-            print(C.gray .. "ShammyTime: Main bar scale " .. C.gold .. ("%.2f"):format(db.scale or 1) .. C.r .. C.gray .. ". " .. C.gold .. "/st legacy main scale 1" .. C.r .. C.gray .. " (0.5–2)." .. C.r)
-        else
-            local num = tonumber(arg)
-            if num and num >= 0.5 and num <= 2 then
-                db.scale = num
-                ApplyScale()
-                print(C.green .. "ShammyTime: Main bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
-            else
-                print(C.red .. "ShammyTime: Scale 0.5–2. " .. C.gold .. "/st legacy main scale 1" .. C.r)
-            end
+            print(C.green .. "ShammyTime: Test mode on (circle, focus, Windfury). Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
         end
     elseif cmd == "debug" then
         DebugWeaponImbue()
-    -- Circle: /st radial [on|off|scale X|numbers on|off]
-    elseif cmd == "radial" then
+    -- Fade: /st fade [combat on|off | procced on|off]
+    elseif cmd == "fade" then
+        local sub, subarg = arg:match("^(%S+)%s*(.*)$")
+        sub = sub and sub:lower() or ""
+        subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", ""):lower() or ""
+        if sub == "combat" then
+            if subarg == "on" or subarg == "enable" or subarg == "1" then
+                db.wfFadeOutOfCombat = true
+                UpdateAllElementsFadeState()
+                print(C.green .. "ShammyTime: Fade out of combat on." .. C.r)
+            elseif subarg == "off" or subarg == "disable" or subarg == "0" then
+                db.wfFadeOutOfCombat = false
+                UpdateAllElementsFadeState()
+                print(C.green .. "ShammyTime: Fade out of combat off." .. C.r)
+            else
+                print(C.gray .. "ShammyTime: Fade combat " .. (db.wfFadeOutOfCombat and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st fade combat on|off" .. C.r)
+            end
+        elseif sub == "procced" then
+            if subarg == "on" or subarg == "enable" or subarg == "1" then
+                db.wfFadeWhenNotProcced = true
+                UpdateAllElementsFadeState()
+                print(C.green .. "ShammyTime: Fade when not procced on." .. C.r)
+            elseif subarg == "off" or subarg == "disable" or subarg == "0" then
+                db.wfFadeWhenNotProcced = false
+                UpdateAllElementsFadeState()
+                print(C.green .. "ShammyTime: Fade when not procced off." .. C.r)
+            else
+                print(C.gray .. "ShammyTime: Fade procced " .. (db.wfFadeWhenNotProcced and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st fade procced on|off" .. C.r)
+            end
+        elseif sub == "nototems" then
+            if subarg == "on" or subarg == "enable" or subarg == "1" then
+                db.wfFadeWhenNoTotems = true
+                UpdateNoTotemsFadeState()
+                UpdateAllElementsFadeState()
+                print(C.green .. "ShammyTime: Fade when no totems on." .. C.r)
+            elseif subarg == "off" or subarg == "disable" or subarg == "0" then
+                db.wfFadeWhenNoTotems = false
+                UpdateNoTotemsFadeState()
+                print(C.green .. "ShammyTime: Fade when no totems off." .. C.r)
+            else
+                print(C.gray .. "ShammyTime: Fade nototems " .. (db.wfFadeWhenNoTotems and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)) .. C.gray .. ", delay " .. C.gold .. tostring(db.wfNoTotemsFadeDelay or 5) .. "s" .. C.r .. C.gray .. ". " .. C.gold .. "/st fade nototems on|off" .. C.r)
+            end
+        elseif sub == "nototemsdelay" then
+            local num = tonumber(subarg)
+            if num and num >= 1 and num <= 30 then
+                db.wfNoTotemsFadeDelay = num
+                UpdateNoTotemsFadeState()
+                print(C.green .. "ShammyTime: No-totems fade delay " .. num .. " s." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Delay 1–30 s. " .. C.gold .. "/st fade nototemsdelay 5" .. C.r)
+            end
+        elseif sub == "" then
+            local nt = db.wfFadeWhenNoTotems and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)
+            local nd = C.gold .. tostring(db.wfNoTotemsFadeDelay or 5) .. "s" .. C.r
+            print(C.gray .. "ShammyTime: Fade — combat " .. (db.wfFadeOutOfCombat and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)) .. C.gray .. ", procced " .. (db.wfFadeWhenNotProcced and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)) .. C.gray .. ", nototems " .. nt .. C.gray .. " (delay " .. nd .. C.gray .. "). " .. C.gold .. "/st fade" .. C.r .. C.gray .. " for list." .. C.r)
+            PrintFadeHelp()
+        else
+            PrintFadeHelp()
+        end
+    -- Circle: /st circle [on|off|scale X|numbers on|off|toggle]
+    elseif cmd == "circle" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
         local numArg = a:match("^numbers%s+(%S+)$")
@@ -1876,7 +1489,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if center then center:SetScale(num) end
                 print(C.green .. "ShammyTime: Circle scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Circle scale 0.5–2. " .. C.gold .. "/st radial scale 0.8" .. C.r)
+                print(C.red .. "ShammyTime: Circle scale 0.5–2. " .. C.gold .. "/st circle scale 0.8" .. C.r)
             end
         elseif numArg == "on" or numArg == "enable" or numArg == "1" then
             db.wfAlwaysShowNumbers = true
@@ -1885,12 +1498,23 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             db.wfAlwaysShowNumbers = false
             print(C.green .. "ShammyTime: Circle numbers fade; show on hover." .. C.r)
         elseif a == "numbers" then
-            print(C.gray .. "ShammyTime: Circle numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "always on" .. C.r) or (C.gray .. "fade; show on hover" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st radial numbers on|off" .. C.r)
+            print(C.gray .. "ShammyTime: Circle numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "always on" .. C.r) or (C.gray .. "fade; show on hover" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st circle numbers on|off" .. C.r)
+        elseif a == "toggle" then
+            local center = _G.ShammyTimeCenterRing
+            if center and center:IsShown() then
+                HideWindfuryRadial()
+                db.wfRadialShown = false
+                print(C.green .. "ShammyTime: Circle hidden." .. C.r)
+            else
+                ShowWindfuryRadial()
+                db.wfRadialShown = true
+                print(C.green .. "ShammyTime: Circle shown." .. C.r)
+            end
         elseif a == "" then
             print(C.gray .. "ShammyTime: Circle " .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ", scale " .. C.gold .. ("%.2f"):format(db.wfRadialScale or 0.7) .. C.r .. C.gray .. ", numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "on" .. C.r) or (C.gray .. "hover" .. C.r)) .. C.r)
-            PrintRadialHelp()
+            PrintCircleHelp()
         else
-            PrintRadialHelp()
+            PrintCircleHelp()
         end
     -- Totem bar: /st totem [scale X]
     elseif cmd == "totem" then
@@ -1906,8 +1530,10 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             else
                 print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st totem scale 1" .. C.r)
             end
+        elseif a == "pos" then
+            if ShammyTime.PrintTotemBarPos then ShammyTime.PrintTotemBarPos() end
         elseif a == "" then
-            print(C.gray .. "ShammyTime: Totem bar scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2)." .. C.r)
+            print(C.gray .. "ShammyTime: Totem bar scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2). Use " .. C.gold .. "/st totem pos" .. C.r .. C.gray .. " for layout." .. C.r)
             PrintTotemHelp()
         else
             PrintTotemHelp()
@@ -1926,11 +1552,11 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyShamanisticFocusScale then ShammyTime.ApplyShamanisticFocusScale() end
                 print(C.green .. "ShammyTime: Shamanistic Focus scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Shamanistic Focus scale 0.5–2. " .. C.gold .. "/st focus scale 1" .. C.r)
+                print(C.red .. "ShammyTime: Shamanistic Focus scale 0.5–2. " .. C.gold .. "/st focus scale 0.8" .. C.r)
             end
         elseif a == "" then
             local s = focusDb.scale
-            if s == nil then s = 1 end
+            if s == nil then s = 0.8 end
             print(C.gray .. "ShammyTime: Shamanistic Focus scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.5–2)." .. C.r)
             PrintFocusHelp()
         else
@@ -2002,109 +1628,6 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.gray .. "  Layout (move/resize icons): " .. C.gold .. "/st imbue layout" .. C.r)
         else
             print(C.gray .. "ShammyTime: Imbue bar — " .. C.gold .. "/st imbue scale 0.4" .. C.r .. C.gray .. " (size), " .. C.gold .. "/st imbue layout" .. C.r .. C.gray .. " (icon position/size)." .. C.r)
-        end
-    -- Legacy: /st legacy [reset|bar ...|popup ...|main ...]
-    elseif cmd == "legacy" then
-        local sub, subarg = arg:match("^(%S+)%s*(.*)$")
-        sub = sub and sub:lower() or ""
-        subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-        if sub == "reset" then
-            ResetWindfurySession()
-            print(C.green .. "ShammyTime: Statistics reset." .. C.r)
-        elseif sub == "bar" then
-            local b, val = subarg:match("^(%S+)%s*(.*)$")
-            b = b and b:lower() or ""
-            val = val and val:gsub("^%s+", ""):gsub("%s+$", "") or ""
-            if b == "lock" then
-                db.wfLocked = true
-                print(C.green .. "ShammyTime: Legacy stats bar locked." .. C.r)
-            elseif b == "unlock" then
-                db.wfLocked = false
-                print(C.green .. "ShammyTime: Legacy stats bar unlocked." .. C.r)
-            elseif b == "on" or b == "enable" or b == "1" then
-                db.windfuryTrackerEnabled = true
-                if windfuryStatsFrame then windfuryStatsFrame:Show() end
-                print(C.green .. "ShammyTime: Legacy tracker on." .. C.r)
-            elseif b == "off" or b == "disable" or b == "0" then
-                db.windfuryTrackerEnabled = false
-                if windfuryStatsFrame then windfuryStatsFrame:Hide() end
-                print(C.green .. "ShammyTime: Legacy tracker off." .. C.r)
-            elseif b == "scale" then
-                local num = tonumber(val)
-                if num and num >= 0.5 and num <= 2 then
-                    db.wfScale = num
-                    ApplyScale()
-                    print(C.green .. "ShammyTime: Legacy bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
-                else
-                    print(C.red .. "ShammyTime: Scale 0.5–2. " .. C.gold .. "/st legacy bar scale 1" .. C.r)
-                end
-            else
-                print(C.gray .. "ShammyTime: " .. C.gold .. "/st legacy bar lock|unlock|on|off|scale 1" .. C.r)
-            end
-        elseif sub == "popup" then
-            local p, pval = subarg:match("^(%S+)%s*(.*)$")
-            p = p and p:lower() or ""
-            pval = pval and pval:gsub("^%s+", ""):gsub("%s+$", "") or ""
-            if p == "on" or p == "enable" or p == "1" then
-                db.wfPopupEnabled = true
-                print(C.green .. "ShammyTime: Damage popup on." .. C.r)
-            elseif p == "off" or p == "disable" or p == "0" then
-                db.wfPopupEnabled = false
-                print(C.green .. "ShammyTime: Damage popup off." .. C.r)
-            elseif p == "lock" then
-                db.wfPopupLocked = true
-                print(C.green .. "ShammyTime: Popup locked." .. C.r)
-            elseif p == "unlock" then
-                db.wfPopupLocked = false
-                print(C.green .. "ShammyTime: Popup unlocked." .. C.r)
-            elseif p == "scale" then
-                local num = tonumber(pval)
-                if num and num >= 0.5 and num <= 2 then
-                    db.wfPopupScale = num
-                    print(C.green .. "ShammyTime: Popup scale " .. ("%.2f"):format(num) .. "." .. C.r)
-                else
-                    print(C.red .. "ShammyTime: Popup scale 0.5–2." .. C.r)
-                end
-            elseif p == "hold" or p == "time" then
-                local num = tonumber(pval)
-                if num and num >= 0.5 and num <= 4 then
-                    db.wfPopupHold = num
-                    print(C.green .. "ShammyTime: Popup hold " .. ("%.1f"):format(num) .. " s." .. C.r)
-                else
-                    print(C.red .. "ShammyTime: Popup hold 0.5–4 s." .. C.r)
-                end
-            else
-                print(C.gray .. "ShammyTime: " .. C.gold .. "/st legacy popup on|off|lock|unlock|scale 1|hold 2" .. C.r)
-            end
-        elseif sub == "main" then
-            local m, mval = subarg:match("^(%S+)%s*(.*)$")
-            m = m and m:lower() or ""
-            mval = mval and mval:gsub("^%s+", ""):gsub("%s+$", "") or ""
-            if m == "lock" then
-                db.locked = true
-                print(C.green .. "ShammyTime: Main bar locked." .. C.r)
-            elseif m == "unlock" then
-                db.locked = false
-                print(C.green .. "ShammyTime: Main bar unlocked." .. C.r)
-            elseif m == "scale" then
-                local num = tonumber(mval)
-                if num and num >= 0.5 and num <= 2 then
-                    db.scale = num
-                    ApplyScale()
-                    print(C.green .. "ShammyTime: Main bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
-                else
-                    print(C.red .. "ShammyTime: Main bar scale 0.5–2." .. C.r)
-                end
-            elseif m == "debug" then
-                DebugWeaponImbue()
-            else
-                print(C.gray .. "ShammyTime: " .. C.gold .. "/st legacy main lock|unlock|scale 1|debug" .. C.r)
-            end
-        elseif sub == "" then
-            PrintLegacyHelp()
-        else
-            print(C.gray .. "ShammyTime: Unknown legacy option. " .. C.gold .. "/st legacy" .. C.r .. C.gray .. " for list." .. C.r)
-            PrintLegacyHelp()
         end
     else
         if cmd ~= "" then

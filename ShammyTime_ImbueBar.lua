@@ -27,7 +27,6 @@ local SLOT_H = 32
 local ICON_OFFSET_TOP = -3
 local TIMER_OFFSET_BOTTOM = -50
 local TIMER_FONT_SIZE = 20
-local PLACEHOLDER_OH_ALPHA = 0.55
 -- Shadow behind icon (same style as totem bar: wf_center_shadow.tga, drop below icon)
 local ICON_SHADOW_OFFSET_X = 2
 local ICON_SHADOW_OFFSET_Y = 15
@@ -101,30 +100,20 @@ local function RenderImbueSlot(slotFrame, data)
             timerText:Show()
         end
     else
-        -- Empty: show dummy/placeholder for off-hand so you can see where OH sits on the artwork
+        -- Empty slot: no placeholder for off-hand; main hand shows dimmed empty icon
+        if iconShadow then iconShadow:Hide() end
+        SetSlotTexture(icon, EMPTY_ICON)
+        icon:SetVertexColor(0.45, 0.42, 0.38)
+        icon:SetAlpha(isOffHand and 0 or ICON_ALPHA_EMPTY)
+        if icon.SetDesaturated then icon:SetDesaturated(true) end
         if isOffHand then
-            if iconShadow then iconShadow:Show() end
-            SetSlotTexture(icon, EMPTY_ICON)
-            icon:SetVertexColor(0.6, 0.55, 0.5)
-            icon:SetAlpha(PLACEHOLDER_OH_ALPHA)
-            if icon.SetDesaturated then icon:SetDesaturated(true) end
-            icon:Show()
-            if timerText then
-                timerText:SetText("OH")
-                timerText:SetTextColor(TIMER_COLOR[1] * 0.8, TIMER_COLOR[2] * 0.8, TIMER_COLOR[3] * 0.8)
-                timerText:Show()
-            end
+            icon:Hide()
         else
-            if iconShadow then iconShadow:Hide() end
-            SetSlotTexture(icon, EMPTY_ICON)
-            icon:SetVertexColor(0.45, 0.42, 0.38)
-            icon:SetAlpha(ICON_ALPHA_EMPTY)
-            if icon.SetDesaturated then icon:SetDesaturated(true) end
             icon:Show()
-            if timerText then
-                timerText:SetText("")
-                timerText:Hide()
-            end
+        end
+        if timerText then
+            timerText:SetText("")
+            timerText:Hide()
         end
     end
 end
@@ -149,7 +138,7 @@ local function CreateImbueBarFrame()
     f:SetScale(scale)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
-    f:EnableMouse(true)
+    f:EnableMouse(not (GetDB and GetDB().locked))
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
         if GetDB and GetDB().locked then return end

@@ -14,4 +14,3 @@ ShammyTime_ImbueBar.lua
 ShammyTime_SatelliteRings.lua
 ShammyTime_Windfury.lua
 ShammyTime_ShamanisticFocus.lua
-AssetTest.lua

@@ -77,7 +77,8 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     f:SetScale(SATELLITE_SCALE)
     f:SetPoint("CENTER", parentFrame, "CENTER", offsetX, offsetY)
-    f:EnableMouse(true)   -- hover for quick-peek numbers (no RegisterForDrag)
+    local dbLocked = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked
+    f:EnableMouse(not dbLocked)   -- hover for quick-peek; when locked, click-through
     f:EnableMouseWheel(false)
     f:Hide()
     f:SetScript("OnEnter", function()
@@ -483,6 +484,36 @@ function ShammyTime.ResetSatellitePositions()
     end
 end
 
+-- Set alpha on all satellite frames (for fade-out-of-combat / fade-when-not-procced)
+function ShammyTime.SetSatelliteFadeAlpha(alpha)
+    for _, f in pairs(satelliteFrames) do
+        if f and f.SetAlpha then f:SetAlpha(alpha) end
+    end
+end
+
+-- Set EnableMouse on all satellite frames (when locked, click-through)
+function ShammyTime.SetSatellitesEnableMouse(enable)
+    for _, f in pairs(satelliteFrames) do
+        if f and f.EnableMouse then f:EnableMouse(enable) end
+    end
+end
+
+-- Animate all satellite frames to target alpha over duration (0 = instant). Uses ShammyTime.AnimateFrameToAlpha when duration > 0.
+function ShammyTime.AnimateSatellitesToAlpha(targetAlpha, duration)
+    if not duration or duration <= 0 then
+        if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(targetAlpha) end
+        return
+    end
+    local anim = ShammyTime.AnimateFrameToAlpha
+    if not anim then
+        if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(targetAlpha) end
+        return
+    end
+    for _, f in pairs(satelliteFrames) do
+        if f then anim(f, targetAlpha, duration) end
+    end
+end
+
 -- Expose API for other files
 ShammyTime.CreateSatelliteRing = CreateSatelliteRing
 ShammyTime.GetSatelliteFrame = function(name) return satelliteFrames[name] end
@@ -538,9 +569,8 @@ ShammyTime.PlayCenterRingProc = function(procTotal, forceShow)
     end
 end
 
--- /wfcrit — toggle crit ring only
-SLASH_WFCRIT1 = "/wfcrit"
-SlashCmdList["WFCRIT"] = function()
+-- Expose for /st satellites
+function ShammyTime.ToggleSatelliteCrit()
     local f = GetCritRing()
     if f:IsShown() then
         f:HideSatellite()
@@ -550,9 +580,7 @@ SlashCmdList["WFCRIT"] = function()
     end
 end
 
--- /wfsatellites — toggle all 6 satellites (3 left, 3 right) with placeholder values
-SLASH_WFSATELLITES1 = "/wfsatellites"
-SlashCmdList["WFSATELLITES"] = function()
+function ShammyTime.ToggleSatellites()
     EnsureAllSatellites()
     local anyShown = satelliteFrames.CRIT and satelliteFrames.CRIT:IsShown()
     if anyShown then
@@ -562,9 +590,7 @@ SlashCmdList["WFSATELLITES"] = function()
     end
 end
 
--- /wfcritproc — show crit ring (no animation; CRIT is static full texture)
-SLASH_WFCRITPROC1 = "/wfcritproc"
-SlashCmdList["WFCRITPROC"] = function()
+function ShammyTime.ShowSatelliteCritProc()
     local f = GetCritRing()
     f:ShowSatellite()
     f:SetValue("–")

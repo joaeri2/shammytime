@@ -1,5 +1,5 @@
 -- ShammyTime_CenterRing.lua
--- Phase 1: Center ring only — load 4 layered textures, stack them, add /wfcenter and /wfproc.
+-- Center ring: layered textures, proc animation. Toggle/scale via /st circle.
 -- No satellites, no combat log. Purely asset + animation integration test.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
@@ -34,7 +34,7 @@ local WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX = 0.07, 0.14
 -- Random gap in seconds between one blink finishing and the next starting.
 local WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX = 0.09, 0.19
 
--- Returns the user's saved scale for the center ring (0.5–2). Used when showing the ring and by /wfresize.
+-- Returns the user's saved scale for the center ring (0.5–2). Used when showing the ring and by /st circle scale.
 local function GetRadialScale()
     local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
     return (db.wfRadialScale and db.wfRadialScale >= 0.5 and db.wfRadialScale <= 2) and db.wfRadialScale or 0.7
@@ -184,7 +184,7 @@ local function CreateCenterRingFrame()
     ringFrame.runes:SetSize(RUNE_RING_SIZE, RUNE_RING_SIZE)
     ringFrame.runes:SetPoint("CENTER", RUNE_RING_OFFSET_X, RUNE_RING_OFFSET_Y)
 
-    -- Text frame: holds "Windfury!", "TOTAL: xxx", and optional "CRITICAL". Child of main frame so it doesn't get scaled by the ring's proc pop; it stays crisp. Still scales with /wfresize (whole frame scale).
+    -- Text frame: holds "Windfury!", "TOTAL: xxx", and optional "CRITICAL". Child of main frame so it doesn't get scaled by the ring's proc pop; it stays crisp. Still scales with /st circle scale (whole frame scale).
     local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", f)
     textFrame:SetFrameStrata("DIALOG")
     textFrame:SetFrameLevel(10)
@@ -350,6 +350,7 @@ local function CreateCenterRingFrame()
             if not center or not center:IsShown() then return end
             if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
         end)
+        if ShammyTime.OnWindfuryProcAnimEnd then ShammyTime.OnWindfuryProcAnimEnd() end
     end
     ag:SetScript("OnFinished", onProcAnimEnd)
     ag:SetScript("OnStop", onProcAnimEnd)
@@ -539,7 +540,8 @@ local function CreateWindfuryTotemBarFrame()
     ApplyTotemBarPosition(f)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
-    f:EnableMouse(true)
+    local dbLocked = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked
+    f:EnableMouse(not dbLocked)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
         if ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked then return end
@@ -575,7 +577,7 @@ function ShammyTime.GetCenterRingFrame()
 end
 
 -- Called when a Windfury proc is detected (from combat log in ShammyTime_Windfury.lua). Shows the center ring, totem bar, and "Windfury!" text; plays the proc animation (energy flash, rune flash+spin+fade, ring scale pop) and schedules lightning pulses and text/satellite fades.
--- forceShow: if true, show and play even when wfRadialEnabled is off (e.g. /wfproc for testing).
+-- forceShow: if true, show and play even when wfRadialEnabled is off (e.g. /st test).
 function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
     if not forceShow and not db.wfRadialEnabled then return end
@@ -597,6 +599,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     if barFrame then barFrame:Show() end
     if db.wfRadialShown == nil then db.wfRadialShown = false end
     db.wfRadialShown = true
+    if ShammyTime.UpdateAllElementsFadeState then ShammyTime.UpdateAllElementsFadeState() end
     f.total:SetText("TOTAL: " .. FormatNum(procTotal or 0))
     if ShammyTime.lastProcHadCrit then
         f.criticalLine:SetText("CRITICAL")
@@ -680,67 +683,4 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     f:FlashText()
 end
 
--- /wfcenter — Toggle the center ring and totem bar on/off. Positions are saved separately per character.
-SLASH_WFCENTER1 = "/wfcenter"
-SlashCmdList["WFCENTER"] = function()
-    local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
-    local f = CreateCenterRingFrame()
-    local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
-    if f:IsShown() then
-        f:Hide()
-        f.textFrame:Hide()
-        if barFrame then barFrame:Hide() end
-        db.wfRadialShown = false
-    else
-        f:Show()
-        f.textFrame:Show()
-        f.criticalLine:Hide()
-        f.title:SetText("Windfury!")
-        f.total:SetPoint("CENTER", 0, 2)
-        f.total:SetText("TOTAL: " .. FormatNum(ShammyTime and ShammyTime.lastProcTotal or 0))
-        if barFrame then barFrame:Show() end
-        db.wfRadialShown = true
-        -- Show numbers so user sees it's not reset, then fade out (same as on reload)
-        C_Timer.After(0, function()
-            local stats = (ShammyTime_Windfury_GetStats and ShammyTime_Windfury_GetStats()) or nil
-            if ShammyTime.UpdateSatelliteValues then ShammyTime.UpdateSatelliteValues(stats) end
-            if db.wfAlwaysShowNumbers then return end
-            C_Timer.After(WF_NUMBERS_HOLD_BEFORE_FADE, function()
-                if not f or not f:IsShown() then return end
-                if f.textFrame and f.textFrame:IsShown() and f.textFrame.fadeOutAnim then
-                    f.textFrame.fadeOutAnim:Stop()
-                    f.textFrame:SetAlpha(1)
-                    f.textFrame.fadeOutAnim:Play()
-                end
-                if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
-            end)
-        end)
-    end
-end
-
--- /wfproc — Play the proc animation without combat (test mode). Uses a dummy total (3245) and forceShow so the radial always appears.
-SLASH_WFPROC1 = "/wfproc"
-SlashCmdList["WFPROC"] = function()
-    ShammyTime.PlayCenterRingProc(3245, true)
-end
-
--- /wfresize [0.5–2.0] — Set the center ring (and satellites) scale. Totem bar scale is separate: /st totem scale.
-SLASH_WFRESIZE1 = "/wfresize"
-SlashCmdList["WFRESIZE"] = function(msg)
-    msg = msg and strmatch(msg, "^%s*(%S+)") or nil
-    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
-    if msg then
-        local scale = tonumber(msg)
-        if scale and scale >= 0.5 and scale <= 2 then
-            db.wfRadialScale = scale
-            if centerFrame then
-                centerFrame:SetScale(scale)
-            end
-            print(("ShammyTime: Windfury circle scale set to %.2f."):format(scale))
-        else
-            print("ShammyTime: /wfresize expects 0.5–2 (e.g. /wfresize 0.8). Totem bar: /st totem scale 1")
-        end
-    else
-        print(("ShammyTime: Circle scale %.2f. /wfresize <0.5-2> or /st radial scale. Totem bar: /st totem scale"):format(GetRadialScale()))
-    end
-end
+-- Circle/totem bar toggle and scale are handled via /st circle in ShammyTime.lua.

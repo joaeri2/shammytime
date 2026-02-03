@@ -254,12 +254,11 @@ if ShammyTime.EnsureCenterRingExists then
     C_Timer.After(0, Init)
 end
 
--- /wftotempos — print layout constants and current screen x,y coords for bar + slots
-SLASH_WFTOTEMPOS1 = "/wftotempos"
-SlashCmdList["WFTOTEMPOS"] = function()
+-- Expose for /st totem pos
+function ShammyTime.PrintTotemBarPos()
     local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
     if not barFrame then
-        print("ShammyTime: Totem bar not created. Place a totem or show radial (/wfcenter) then try again.")
+        print("ShammyTime: Totem bar not created. Place a totem or show circle (/st circle toggle) then try again.")
         return
     end
     print("|cff00ff00ShammyTime totem bar layout|r")

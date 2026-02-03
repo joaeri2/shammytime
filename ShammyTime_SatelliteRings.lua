@@ -68,8 +68,10 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     local offsetX = SATELLITE_RADIUS * math.cos(angle) + (nudgeX or 0)
     local offsetY = SATELLITE_RADIUS * math.sin(angle) + (nudgeY or 0)
 
-    -- Parent to center so we scale and move as one object; resize keeps satellites connected
+    -- Parent to main center; base offsets stored so we can move satellites with the ring (rubber-band style)
     local f = CreateFrame("Frame", "ShammyTimeSatellite_" .. name, parentFrame)
+    f.baseOffsetX = offsetX
+    f.baseOffsetY = offsetY
     f:SetFrameStrata("DIALOG")
     f:SetFrameLevel(5)
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
@@ -244,9 +246,14 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     return f
 end
 
--- Get the center ring frame (from CenterRing)
+-- Main center container (satellites parent here; we move them explicitly when ring scales)
 local function GetCenterFrame()
     return _G["ShammyTimeCenterRing"]
+end
+
+-- Ring frame (we read its scale during proc to drive satellite positions)
+local function GetCenterRingFrame()
+    return ShammyTime.GetCenterRingFrame and ShammyTime.GetCenterRingFrame()
 end
 
 -- Satellite config (what controls what).
@@ -289,7 +296,7 @@ local SATELLITE_CONFIG = {
     { name = "water",   position = 153, tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
     { name = "fire",    position = 111, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
     { name = "grass",   position = 69,  tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "stone",   position = 27,  tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 8, offsetY = 10, textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "stone",   position = 27,  tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0, textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
     { name = "grass_2", position = 345, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
 }
 
@@ -306,7 +313,7 @@ local function GetSatelliteTextureSet(texKey)
     }
 end
 
--- Create a single satellite by name
+-- Create a single satellite by name (parent = main center so we can move them with ring scale)
 local function GetSatellite(name)
     if satelliteFrames[name] then return satelliteFrames[name] end
     if ShammyTime.EnsureCenterRingExists then ShammyTime.EnsureCenterRingExists() end
@@ -363,6 +370,30 @@ local function HideAllSatellites()
     end
 end
 
+-- Called every frame during center ring proc: move satellites outward/inward with ring scale (rubber-band)
+function ShammyTime.OnRingProcScaleUpdate(scale)
+    local centerFrame = GetCenterFrame()
+    if not centerFrame then return end
+    for _, f in pairs(satelliteFrames) do
+        if f and f.baseOffsetX then
+            local x = f.baseOffsetX * scale
+            local y = f.baseOffsetY * scale
+            f:SetPoint("CENTER", centerFrame, "CENTER", x, y)
+        end
+    end
+end
+
+-- Reset satellite positions to base (scale 1) when proc animation finishes or stops
+function ShammyTime.ResetSatellitePositions()
+    local centerFrame = GetCenterFrame()
+    if not centerFrame then return end
+    for _, f in pairs(satelliteFrames) do
+        if f and f.baseOffsetX then
+            f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX, f.baseOffsetY)
+        end
+    end
+end
+
 -- Expose API for other files
 ShammyTime.CreateSatelliteRing = CreateSatelliteRing
 ShammyTime.GetSatelliteFrame = function(name) return satelliteFrames[name] end
@@ -398,11 +429,9 @@ ShammyTime.UpdateSatelliteValues = UpdateSatelliteValues
 
 -- Play center + all satellites with real Windfury stats; animate center + crit on proc
 local originalPlayCenterRingProc = ShammyTime.PlayCenterRingProc
-ShammyTime.PlayCenterRingProc = function(procTotal)
-    if originalPlayCenterRingProc then
-        originalPlayCenterRingProc(procTotal)
-    end
+ShammyTime.PlayCenterRingProc = function(procTotal, forceShow)
     local stats = (ShammyTime_Windfury_GetStats and ShammyTime_Windfury_GetStats()) or nil
+    -- Create and show satellites before playing proc so they exist when ring scale drives their position
     ShowAllSatellites()
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
@@ -411,11 +440,12 @@ ShammyTime.PlayCenterRingProc = function(procTotal)
             f:SetValue(val or cfg.value)
         end
     end
-    -- CRIT (upper right) is now 1 static texture — no proc animation
     local critRing = GetCritRing()
     if critRing then
-        local critVal = GetSatelliteValueFromStats("CRIT", stats)
-        critRing:SetValue(critVal or "–")
+        critRing:SetValue(GetSatelliteValueFromStats("CRIT", stats) or "–")
+    end
+    if originalPlayCenterRingProc then
+        originalPlayCenterRingProc(procTotal, forceShow)
     end
 end
 

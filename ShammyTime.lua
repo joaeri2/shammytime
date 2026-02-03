@@ -271,6 +271,8 @@ local DEFAULTS = {
 local lastHadTotem = { [1] = false, [2] = false, [3] = false, [4] = false }
 -- Windfury totem bar: set when a totem is just placed (for pop animation); consumed by GetTotemSlotData.
 ShammyTime.windfurySlotJustPlaced = ShammyTime.windfurySlotJustPlaced or {}
+-- Time of last placement per slot (for short range-overlay grace period).
+local lastTotemPlacedTime = {}
 -- Approximate totem position (player position when placed); slot -> { x, y, z }. Used only for totems in TOTEM_POSITION_RANGE (UnitPosition works outdoors only).
 local totemPosition = {}
 -- Last totem name per slot so we clear stored position when the totem in that slot changes (e.g. Stoneclaw -> Earthbind).
@@ -689,6 +691,13 @@ end
 -- Returns "in", "out", or "unknown" for Windfury bar and slot data (reuses main bar range logic).
 local function GetSlotRangeState(slot, totemName)
     if not totemName or totemName == "" then return "unknown" end
+    -- Water totems: give a brief grace window on placement so the buff has time to apply (prevents dark flash).
+    if SLOT_TO_ELEMENT[slot] == "Water" then
+        local placedAt = lastTotemPlacedTime[slot]
+        if placedAt and (GetTime() - placedAt) < 0.4 then
+            return "in"
+        end
+    end
     if IsTotemWithNoRangeBuff(totemName) and not GetTotemPositionRange(totemName) then return "unknown" end
     local buffSpellId = GetTotemBuffSpellId(totemName)
     local hasBuff = (buffSpellId and HasPlayerBuffByAnySpellId(buffSpellId)) or HasPlayerBuffByTotemName(totemName)
@@ -723,6 +732,7 @@ local function UpdateSlot(slot)
     end
     lastHadTotem[slot] = nowHasTotem
     if nowHasTotem and wasJustPlaced then
+        lastTotemPlacedTime[slot] = GetTime()
         ShammyTime.windfurySlotJustPlaced[slot] = true
     end
 
@@ -1317,7 +1327,7 @@ local function CreateWindfuryStatsFrame()
                 if swings <= 0 then return "–" end
                 local rate = st.count / swings
                 if rate >= 1 then return "100%" end
-                return ("%.1f%%"):format(rate * 100)
+                return ("%.0f%%"):format(rate * 100)
             end
             -- Min/Avg/Max = single-hit stats (not sums). Total = sum only.
             if kind == "min" then return st.min and FormatNumberShort(st.min) or "–" end

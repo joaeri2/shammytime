@@ -22,8 +22,8 @@ local SATELLITE_RADIUS = 116
 -- +X = right, +Y = up. Tweak these to center text in each ring (designs vary slightly).
 local SATELLITE_FONT = {
     path   = "Fonts\\FRIZQT__.TTF",
-    labelSize = 9,
-    valueSize = 14,
+    labelSize = 8,
+    valueSize = 13,
     outline = "OUTLINE",
     -- Label (e.g. "PROCS", "CRIT%") position in circle:
     labelX = 0,
@@ -249,15 +249,48 @@ local function GetCenterFrame()
     return _G["ShammyTimeCenterRing"]
 end
 
--- Satellite config: positions come from SATELLITE_POSITIONS (8:30 to 3:30 over the top)
--- Optional: offsetX, offsetY = circle position nudge. textLabelY, textValueY = text position within circle (+Y = up).
+-- Satellite config (what controls what).
+--
+-- Each row here creates ONE satellite ring frame. The *ring art* (textures) and the *ring placement* are controlled
+-- independently from the *text that is shown*:
+--
+-- - name:
+--   - Unique id for the frame (stored in `satelliteFrames[name]`). Use GetSatellite(name) to get it.
+--   - Named by *appearance* (same as `tex`): the ring is independent of which stat it displays.
+--   - Does NOT have to match the stat being displayed (that's `statName`).
+--
+-- - position:
+--   - Where the ring is placed around the center (degrees; 0 = right / 3 o’clock, counter-clockwise positive)
+--   - This is the ONLY thing that changes the ring’s angular placement (media positions stay the same if this stays the same)
+--
+-- - tex:
+--   - Which texture set/art is used for that ring (see `GetSatelliteTextureSet()`)
+--   - Changing this swaps the ring art, but not its position
+--
+-- - label:
+--   - The *top* text shown inside the ring (e.g. "MIN", "CRIT%")
+--
+-- - statName:
+--   - Which stat value is shown as the *bottom* text (fed into `GetSatelliteValueFromStats(statName, stats)`)
+--   - This is what we remap when you want to reorder text left-to-right without moving ring art
+--
+-- - value:
+--   - Placeholder value used by `ShowAllSatellites()` (test / default display)
+--
+-- - offsetX / offsetY:
+--   - Nudges the whole ring (and its text) by pixels AFTER the polar placement from `position`
+--
+-- - textLabelX / textLabelY, textValueX / textValueY:
+--   - Pixel offsets of label/value relative to the ring center.
+--   - If you want “no override”, set to 0 (which effectively uses the base placement plus 0 offset).
+-- Satellite names = element / look (from art): air, water, fire, grass, stone, grass_2. Same values still shown.
 local SATELLITE_CONFIG = {
-    { name = "MIN",    label = "MIN",    value = "455",  tex = "AIR_FULL" },
-    { name = "AVG",    label = "AVG",    value = "689",  tex = "AVG",    textLabelY = 14, textValueY = -2 },
-    { name = "PROCS",  label = "PROCS",  value = "12",   tex = "PROCS" },
-    { name = "CRIT",   label = "CRIT%",  value = "42%",  tex = "GRASS_UPPER_RIGHT" },
-    { name = "PROCPCT", label = "PROC%", value = "38%",  tex = "PROCPCT", offsetX = 8, offsetY = 10, textLabelY = 14, textValueY = -2 },
-    { name = "MAX",    label = "MAX",    value = "1278", tex = "GRASS_FULL", textLabelY = 14, textValueY = -2 },
+    { name = "air",     position = 195, tex = "AIR_FULL",          label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "water",   position = 153, tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "fire",    position = 111, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "grass",   position = 69,  tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "stone",   position = 27,  tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 8, offsetY = 10, textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "grass_2", position = 345, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
 }
 
 local function GetSatelliteTextureSet(texKey)
@@ -282,16 +315,16 @@ local function GetSatellite(name)
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         if cfg.name == name then
             local texSet = GetSatelliteTextureSet(cfg.tex)
-            local position = SATELLITE_POSITIONS[name] or 90
+            local position = cfg.position or SATELLITE_POSITIONS[name] or 90
             return CreateSatelliteRing(name, texSet, cfg.label, position, centerFrame, cfg.offsetX, cfg.offsetY, cfg.textLabelX, cfg.textLabelY, cfg.textValueX, cfg.textValueY)
         end
     end
     return nil
 end
 
--- Create CRIT satellite ring (convenience)
+-- Ring that displays CRIT% (grass_2 = wf_magic_gras / GRASS_FULL art)
 local function GetCritRing()
-    return GetSatellite("CRIT")
+    return GetSatellite("grass_2")
 end
 
 -- Create all 6 satellite rings (call once to ensure all exist)
@@ -304,7 +337,7 @@ local function EnsureAllSatellites()
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         if not satelliteFrames[cfg.name] then
             local texSet = GetSatelliteTextureSet(cfg.tex)
-            local position = SATELLITE_POSITIONS[cfg.name] or 90
+            local position = cfg.position or SATELLITE_POSITIONS[cfg.name] or 90
             CreateSatelliteRing(cfg.name, texSet, cfg.label, position, centerFrame, cfg.offsetX, cfg.offsetY, cfg.textLabelX, cfg.textLabelY, cfg.textValueX, cfg.textValueY)
         end
     end
@@ -346,7 +379,7 @@ local function GetSatelliteValueFromStats(name, stats)
     if name == "MAX" then return stats.max and FormatNum(stats.max) or "–" end
     if name == "AVG" then return stats.avg and FormatNum(stats.avg) or "–" end
     if name == "PROCS" then return tostring(stats.procCount or 0) end
-    if name == "PROCPCT" then return (stats.procPct and ("%.1f%%"):format(stats.procPct)) or "–" end
+    if name == "PROCPCT" then return (stats.procPct and ("%.0f%%"):format(stats.procPct)) or "–" end
     if name == "CRIT" then return (stats.critPct and ("%.0f%%"):format(stats.critPct)) or "–" end
     return nil
 end
@@ -356,7 +389,7 @@ local function UpdateSatelliteValues(stats)
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f then
-            local val = GetSatelliteValueFromStats(cfg.name, stats)
+            local val = GetSatelliteValueFromStats(cfg.statName or cfg.name, stats)
             f:SetValue(val or "–")
         end
     end
@@ -374,7 +407,7 @@ ShammyTime.PlayCenterRingProc = function(procTotal)
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f then
-            local val = GetSatelliteValueFromStats(cfg.name, stats)
+            local val = GetSatelliteValueFromStats(cfg.statName or cfg.name, stats)
             f:SetValue(val or cfg.value)
         end
     end

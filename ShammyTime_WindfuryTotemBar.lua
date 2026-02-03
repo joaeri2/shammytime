@@ -23,12 +23,25 @@ local BAR_W = 286
 local SLOT_W = math.floor((BAR_W - 2 * SLOT_MARGIN - 3 * SLOT_GAP) / 4 + 0.5)
 local SLOT_H = 32
 -- Vertical (Y-axis): move the slot row up/down within the bar texture
-local SLOT_OFFSET_Y = -25  -- 0 = slots at bar TOP; negative = push slots down; positive = push slots up
+local SLOT_OFFSET_Y = -24  -- 0 = slots at bar TOP; negative = push slots down; positive = push slots up
 local ICON_SIZE = 22
 local ICON_OFFSET_TOP = -3   -- icon position from slot TOP (negative = down)
-local TIMER_OFFSET_BOTTOM = -4  -- timer from slot BOTTOM
+local TIMER_OFFSET_BOTTOM = -3  -- timer from slot BOTTOM
+local TIMER_FONT_SIZE = 7     -- timer text size (smaller = lower number, e.g. 8–12)
+-- Per-slot fine-tuning (x = horizontal, y = vertical in pixels; positive x = right, positive y = up):
+local SLOT_OFFSETS = {
+    { x = 0, y = 0 },  -- slot 1 (Earth, leftmost)
+    { x = -2, y = 0 },  -- slot 2 (Fire)
+    { x = 4, y = 0 },  -- slot 3 (Water)
+    { x = 0, y = 0 },  -- slot 4 (Air, rightmost)
+}
 -- Bar position (whole bar up/down): ShammyTime_CenterRing.lua line ~88: SetPoint(..., 0, 65)  -- lower = bar further down
 -- ═══════════════════════════════════════════════════════════════════════════════
+-- Shadow behind icon: wf_center_shadow.tga (circular, fades at edges)
+local ICON_SHADOW_SIZE = 50   -- total size (icon is ~22; larger = more soft edge visible)
+local ICON_SHADOW_OFFSET_X = 2   -- drop shadow offset right
+local ICON_SHADOW_OFFSET_Y = 15  -- drop shadow offset down
+local ICON_SHADOW_TINT = { 0, 0, 0, 0.85 }  -- r, g, b, a (darken the texture)
 -- Fade into bar: slightly muted so the ornate frame shows through
 local ICON_ALPHA_ACTIVE = 0.9
 local ICON_ALPHA_EMPTY = 0
@@ -42,8 +55,9 @@ local function RenderSlot(slotFrame, data)
     local stateOverlay = slotFrame.stateOverlay
     local alertGlow = slotFrame.alertGlow
 
+    local iconShadow = slotFrame.iconShadow
     if data.active then
-        -- Totem is down: show icon, timer text; state/glow by range and time left (no cooldown spiral)
+        if iconShadow then iconShadow:Show() end
         if icon then
             icon:SetTexture(data.icon)
             icon:SetVertexColor(1, 1, 1)
@@ -82,17 +96,15 @@ local function RenderSlot(slotFrame, data)
             slotFrame:PlayPlacePop()
         end
     else
-        -- Empty/expired: desaturated + low alpha so bar art shows through
+        -- Empty/expired: no overlay (no faint square), no shadow; just dimmed empty icon
+        if iconShadow then iconShadow:Hide() end
+        if stateOverlay then stateOverlay:Hide() end
         if icon then
             icon:SetTexture(data.emptyIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
             icon:SetVertexColor(0.45, 0.42, 0.38)
             icon:SetAlpha(ICON_ALPHA_EMPTY)
             if icon.SetDesaturated then icon:SetDesaturated(true) end
             icon:Show()
-        end
-        if stateOverlay then
-            stateOverlay:SetColorTexture(0.18, 0.16, 0.14, 0.4)
-            stateOverlay:Show()
         end
         if timerText then
             timerText:SetText("")
@@ -127,19 +139,35 @@ local function CreateWindfuryTotemSlots()
 
     for i = 1, 4 do
         local slot = DISPLAY_ORDER[i]
+        local off = SLOT_OFFSETS[i] or { x = 0, y = 0 }
         local sf = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%d"):format(i), center)
         sf:SetSize(SLOT_W, SLOT_H)
         sf:SetFrameLevel(baseLevel)
         if i == 1 then
-            sf:SetPoint("LEFT", bar, "LEFT", SLOT_MARGIN, 0)
+            sf:SetPoint("LEFT", bar, "LEFT", SLOT_MARGIN + off.x, off.y)
         else
-            sf:SetPoint("LEFT", windfurySlots[i - 1], "RIGHT", SLOT_GAP, 0)
+            sf:SetPoint("LEFT", windfurySlots[i - 1], "RIGHT", SLOT_GAP + off.x, off.y)
         end
-        sf:SetPoint("TOP", bar, "TOP", 0, SLOT_OFFSET_Y)
+        sf:SetPoint("TOP", bar, "TOP", off.x, SLOT_OFFSET_Y + off.y)
         sf:SetAlpha(SLOT_FRAME_ALPHA)
         sf:EnableMouse(false)
 
-        -- Icon (layer 2)
+        -- Shadow behind icon: wf_center_shadow.tga (circular, fades at edges)
+        local iconShadow = sf:CreateTexture(nil, "ARTWORK")
+        iconShadow:SetDrawLayer("ARTWORK", -1)
+        iconShadow:SetSize(ICON_SHADOW_SIZE, ICON_SHADOW_SIZE)
+        iconShadow:SetPoint("TOP", ICON_SHADOW_OFFSET_X, ICON_OFFSET_TOP + ICON_SHADOW_OFFSET_Y)
+        local M = ShammyTime_Media
+        if M and M.TEX and M.TEX.CENTER_SHADOW then
+            iconShadow:SetTexture(M.TEX.CENTER_SHADOW)
+            iconShadow:SetTexCoord(0, 1, 0, 1)
+            iconShadow:SetVertexColor(ICON_SHADOW_TINT[1], ICON_SHADOW_TINT[2], ICON_SHADOW_TINT[3], ICON_SHADOW_TINT[4])
+        else
+            iconShadow:SetColorTexture(0.1, 0.08, 0.06, 0.7)
+        end
+        sf.iconShadow = iconShadow
+
+        -- Icon (drawn on top of shadow)
         local icon = sf:CreateTexture(nil, "ARTWORK")
         icon:SetSize(ICON_SIZE, ICON_SIZE)
         icon:SetPoint("TOP", 0, ICON_OFFSET_TOP)
@@ -149,6 +177,7 @@ local function CreateWindfuryTotemSlots()
         -- Timer text at bottom of slot (no cooldown spiral) (muted so it sits in the bar)
         local timerText = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         timerText:SetPoint("BOTTOM", 0, TIMER_OFFSET_BOTTOM)
+        timerText:SetFont("Fonts\\FRIZQT__.TTF", TIMER_FONT_SIZE, "OUTLINE")
         timerText:SetTextColor(TIMER_COLOR[1], TIMER_COLOR[2], TIMER_COLOR[3])
         timerText:SetShadowColor(0, 0, 0, 1)
         timerText:SetShadowOffset(1, -1)

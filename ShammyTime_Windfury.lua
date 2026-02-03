@@ -77,7 +77,7 @@ local function UpdateRadialText(stats)
             if i == 1 then v = stats.min and FormatNum(stats.min) or "–"
             elseif i == 2 then v = stats.avg and FormatNum(stats.avg) or "–"
             elseif i == 3 then v = stats.max and FormatNum(stats.max) or "–"
-            elseif i == 4 then v = stats.procCount > 0 and ("%.1f%%"):format(stats.procPct) or "–"
+            elseif i == 4 then v = stats.procCount > 0 and ("%.0f%%"):format(stats.procPct) or "–"
             elseif i == 5 then v = tostring(stats.procCount)
             elseif i == 6 then v = FormatNum(stats.lastTotal)
             end
@@ -160,10 +160,12 @@ local function CreateRadialFrame()
         SetTextureSafe(sbor, TEX.ORB_BORDER)
         sbor:SetVertexColor(0.4, 0.42, 0.48, 1)
         local slab = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        slab:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
         slab:SetPoint("TOP", 0, -2)
         slab:SetText(SATELLITE_LABELS[i] or "")
         slab:SetTextColor(0.7, 0.7, 0.75)
         local sval = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        sval:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
         sval:SetPoint("BOTTOM", 0, 2)
         sval:SetTextColor(1, 1, 1)
         sf.label = slab

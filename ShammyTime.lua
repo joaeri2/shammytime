@@ -305,7 +305,7 @@ local wfPopupTimer = nil
 local wfPopupFrame = nil
 local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
 local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
-local wfTestTimer = nil  -- /st test: Windfury proc every 5s (random hits/crits) + Shamanistic Focus every 10s (toggle off by /st test again)
+local wfTestTimer = nil  -- /st test: Windfury proc every 10s (random hits/crits) + Shamanistic Focus every 10s (toggle off by /st test again)
 
 local function GetDB()
     ShammyTimeDB = ShammyTimeDB or {}
@@ -1747,7 +1747,7 @@ local function PrintMainHelp()
     print(C.green .. "  GLOBAL (affects everything)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. "   — Lock all bars (no drag)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st unlock" .. C.r .. C.gray .. " — Unlock so you can drag" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Windfury proc every 5s (random hits/crits), Shamanistic Focus every 10s (toggle; run again to stop)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Windfury proc every 10s (random hits/crits), Shamanistic Focus every 10s (toggle; run again to stop)" .. C.r)
     print("")
     print(C.green .. "  CIRCLE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st radial" .. C.r .. C.gray .. "  on|off, scale, numbers" .. C.r)
     print(C.gray .. "    " .. C.gold .. "/st radial" .. C.r .. C.gray .. " for list" .. C.r)
@@ -1825,7 +1825,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         db.wfLocked = false
         db.wfPopupLocked = false
         print(C.green .. "ShammyTime: All bars unlocked — you can drag to move." .. C.r)
-    -- Global: test mode — Windfury proc every 5s (random hits/crits), Shamanistic Focus every 10s (toggle)
+    -- Global: test mode — Windfury proc every 10s (random hits/crits), Shamanistic Focus every 10s (toggle)
     elseif cmd == "test" then
         if wfTestTimer then
             wfTestTimer:Cancel()
@@ -1833,11 +1833,11 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if ShammyTime.StopShamanisticFocusTest then ShammyTime.StopShamanisticFocusTest() end
             print(C.green .. "ShammyTime: Test mode off." .. C.r)
         else
-            wfTestTimer = C_Timer.NewTicker(5, function()
+            wfTestTimer = C_Timer.NewTicker(10, function()
                 SimulateTestProc()
             end)
             if ShammyTime.StartShamanisticFocusTest then ShammyTime.StartShamanisticFocusTest() end
-            print(C.green .. "ShammyTime: Test mode on — Windfury proc every 5s (random hits/crits), Shamanistic Focus every 10s. Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
+            print(C.green .. "ShammyTime: Test mode on — Windfury proc every 10s (random hits/crits), Shamanistic Focus every 10s. Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
         end
     -- Global: scale (legacy main bar) and debug
     elseif cmd == "scale" then

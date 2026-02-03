@@ -98,8 +98,13 @@ local function CreateCenterRingFrame()
             ShammyTime.ResetWindfurySession()
         end
         if ShammyTime then ShammyTime.lastProcTotal = 0 end
-        if centerFrame and centerFrame.total then
-            centerFrame.total:SetText("TOTAL: 0")
+        if centerFrame then
+            if centerFrame.criticalLine then centerFrame.criticalLine:Hide() end
+            if centerFrame.total then
+                centerFrame.total:SetPoint("CENTER", 0, 2)
+                centerFrame.total:SetText("TOTAL: 0")
+            end
+            if centerFrame.title then centerFrame.title:SetText("Windfury!") end
         end
         -- Refresh satellite numbers so they show reset values (0 / –)
         if ShammyTime.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
@@ -176,6 +181,16 @@ local function CreateCenterRingFrame()
     end)
     textFrame.fadeOutAnim = fadeOutAg
 
+    -- When crit: "CRITICAL" on top, "Windfury!" below; when not crit: just "Windfury!"
+    f.criticalLine = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.criticalLine:SetPoint("CENTER", 0, 42)
+    f.criticalLine:SetText("CRITICAL")
+    f.criticalLine:SetTextColor(1, 0.5, 0.3)  -- orange-red for impact
+    f.criticalLine:SetFont("Fonts\\FRIZQT__.TTF", 20, "OUTLINE")
+    f.criticalLine:Hide()
+    f.criticalLineRestColor = {1, 0.5, 0.3}
+    f.criticalLineFlashColor = {1, 0.9, 0.5}
+
     f.title = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     f.title:SetPoint("CENTER", 0, 17)
     f.title:SetText("Windfury!")
@@ -185,7 +200,7 @@ local function CreateCenterRingFrame()
     f.titleFlashColor = {1, 1, 1}  -- bright white flash
 
     f.total = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    f.total:SetPoint("CENTER", 0, -4)
+    f.total:SetPoint("CENTER", 0, 2)  -- moved down when crit (see PlayCenterRingProc)
     f.total:SetText("TOTAL: 3245")
     f.total:SetTextColor(1, 1, 1)
     f.total:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
@@ -287,6 +302,9 @@ local function CreateCenterRingFrame()
         -- Instant flash to bright color
         self.title:SetTextColor(unpack(self.titleFlashColor))
         self.total:SetTextColor(unpack(self.totalFlashColor))
+        if self.criticalLine:IsShown() then
+            self.criticalLine:SetTextColor(unpack(self.criticalLineFlashColor))
+        end
         -- Fade back to rest color over 0.4s
         local steps = 20
         local interval = 0.4 / steps
@@ -304,11 +322,20 @@ local function CreateCenterRingFrame()
             local vg = self.totalFlashColor[2] + (self.totalRestColor[2] - self.totalFlashColor[2]) * t
             local vb = self.totalFlashColor[3] + (self.totalRestColor[3] - self.totalFlashColor[3]) * t
             self.total:SetTextColor(vr, vg, vb)
+            if self.criticalLine:IsShown() then
+                local cr = self.criticalLineFlashColor[1] + (self.criticalLineRestColor[1] - self.criticalLineFlashColor[1]) * t
+                local cg = self.criticalLineFlashColor[2] + (self.criticalLineRestColor[2] - self.criticalLineFlashColor[2]) * t
+                local cb = self.criticalLineFlashColor[3] + (self.criticalLineRestColor[3] - self.criticalLineFlashColor[3]) * t
+                self.criticalLine:SetTextColor(cr, cg, cb)
+            end
             if step >= steps then
                 self.textFlashTicker:Cancel()
                 self.textFlashTicker = nil
                 self.title:SetTextColor(unpack(self.titleRestColor))
                 self.total:SetTextColor(unpack(self.totalRestColor))
+                if self.criticalLine:IsShown() then
+                    self.criticalLine:SetTextColor(unpack(self.criticalLineRestColor))
+                end
             end
         end)
     end
@@ -318,6 +345,9 @@ local function CreateCenterRingFrame()
     if db and db.wfRadialShown then
         f:Show()
         f.textFrame:Show()
+        f.criticalLine:Hide()
+        f.title:SetText("Windfury!")
+        f.total:SetPoint("CENTER", 0, 2)
         f.total:SetText("TOTAL: " .. FormatNum(ShammyTime and ShammyTime.lastProcTotal or 0))
         local bar = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
         if bar then bar:Show() end
@@ -441,6 +471,18 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     if db.wfRadialShown == nil then db.wfRadialShown = false end
     db.wfRadialShown = true  -- keep radial visible after proc
     f.total:SetText("TOTAL: " .. FormatNum(procTotal or 0))
+    if ShammyTime.lastProcHadCrit then
+        f.criticalLine:SetText("CRITICAL")
+        f.criticalLine:Show()
+        f.title:SetText("Windfury!")
+        f.total:SetPoint("CENTER", 0, -4)  -- lower so three lines fit
+        ShammyTime.lastProcHadCritForPopup = true  -- so delayed popup can show CRITICAL! too
+        ShammyTime.lastProcHadCrit = nil
+    else
+        f.criticalLine:Hide()
+        f.title:SetText("Windfury!")
+        f.total:SetPoint("CENTER", 0, 2)
+    end
     f:SetScale(GetRadialScale())
     local rf = f.ringFrame
     rf.energy:SetAlpha(0.12)
@@ -501,6 +543,9 @@ SlashCmdList["WFCENTER"] = function()
     else
         f:Show()
         f.textFrame:Show()
+        f.criticalLine:Hide()
+        f.title:SetText("Windfury!")
+        f.total:SetPoint("CENTER", 0, 2)
         f.total:SetText("TOTAL: " .. FormatNum(ShammyTime and ShammyTime.lastProcTotal or 0))
         if barFrame then barFrame:Show() end
         db.wfRadialShown = true

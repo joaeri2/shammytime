@@ -55,7 +55,9 @@ local function GetStatsForRadial()
     session = session or {}
     local count = session.count or 0
     local swings = session.swings or 0
+    local crits = session.crits or 0
     local procPct = (swings > 0 and count > 0) and (count / swings * 100) or 0
+    local critPct = (count > 0 and crits > 0) and (crits / count * 100) or nil
     local avg = (count > 0 and session.total) and math.floor(session.total / count + 0.5) or nil
     return {
         min = session.min,
@@ -63,6 +65,7 @@ local function GetStatsForRadial()
         avg = avg,
         procPct = procPct,
         procCount = count,
+        critPct = critPct,
         lastTotal = lastTotal,
     }
 end

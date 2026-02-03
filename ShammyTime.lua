@@ -301,7 +301,7 @@ local wfPopupTimer = nil
 local wfPopupFrame = nil
 local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
 local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
-local wfTestTimer = nil  -- /st test: Windfury + Shamanistic Focus proc every 10s (toggle off by /st test again)
+local wfTestTimer = nil  -- /st test: Windfury proc every 5s (random hits/crits) + Shamanistic Focus every 10s (toggle off by /st test again)
 
 local function GetDB()
     ShammyTimeDB = ShammyTimeDB or {}
@@ -389,7 +389,12 @@ local function ShowWindfuryPopup(total)
         f.animTicker:Cancel()
         f.animTicker = nil
     end
-    f.text:SetText(("Windfury: %s"):format(FormatNumberShort(total)))
+    local hadCrit = ShammyTime.lastProcHadCritForPopup or ShammyTime.lastProcHadCrit
+    ShammyTime.lastProcHadCritForPopup = nil
+    ShammyTime.lastProcHadCrit = nil
+    local popupText = ("Windfury: %s"):format(FormatNumberShort(total))
+    if hadCrit then popupText = popupText .. "  CRITICAL!" end
+    f.text:SetText(popupText)
     f.text:SetTextColor(1, 0.85, 0.2)  -- gold/yellow
     local popupScale = db.wfPopupScale or 1.3
     f:ClearAllPoints()
@@ -509,6 +514,7 @@ end
 -- Buffers damage for floating popup: after 0.4s with no new hit, show total (one proc = up to 2 hits).
 local function RecordWindfuryHit(amount, isCrit)
     if not amount or amount <= 0 then return end
+    if isCrit then ShammyTime.lastProcHadCrit = true end  -- for "Windfury! CRITICAL!" / popup
     for _, st in ipairs({ wfPull, wfSession }) do
         st.total = st.total + amount
         st.count = st.count + 1
@@ -545,6 +551,24 @@ local function ResetWindfurySession()
     wfSession.total, wfSession.count, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, nil, nil, 0, 0
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
+end
+
+-- Test mode: simulate one Windfury proc with 2 random hits, some random crits; update stats and play center ring.
+local function SimulateTestProc()
+    local critChance = math.random(20, 45)  -- 20–45% crit per hit so crit % varies
+    local function rollCrit() return math.random(1, 100) <= critChance end
+    local amount1 = math.random(700, 2200)
+    local amount2 = math.random(700, 2200)
+    local crit1 = rollCrit()
+    local crit2 = rollCrit()
+    if crit1 then amount1 = math.floor(amount1 * (math.random(140, 200) / 100) + 0.5) end
+    if crit2 then amount2 = math.floor(amount2 * (math.random(140, 200) / 100) + 0.5) end
+    local numSwings = math.random(4, 10)
+    for _ = 1, numSwings do RecordEligibleSwing() end
+    RecordWindfuryHit(amount1, crit1)
+    RecordWindfuryHit(amount2, crit2)
+    local total = amount1 + amount2
+    if ShammyTime.PlayCenterRingProc then ShammyTime.PlayCenterRingProc(total, true) end
 end
 
 -- Show Windfury radial (center ring + satellites) with current stats; no proc animation.
@@ -1651,7 +1675,7 @@ local function PrintMainHelp()
     print(C.green .. "  GLOBAL (affects everything)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. "   — Lock all bars (no drag)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st unlock" .. C.r .. C.gray .. " — Unlock so you can drag" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Windfury + Shamanistic Focus proc every 10s (toggle; run again to stop)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Windfury proc every 5s (random hits/crits), Shamanistic Focus every 10s (toggle; run again to stop)" .. C.r)
     print("")
     print(C.green .. "  CIRCLE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st radial" .. C.r .. C.gray .. "  on|off, scale, numbers" .. C.r)
     print(C.gray .. "    " .. C.gold .. "/st radial" .. C.r .. C.gray .. " for list" .. C.r)
@@ -1726,7 +1750,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         db.wfLocked = false
         db.wfPopupLocked = false
         print(C.green .. "ShammyTime: All bars unlocked — you can drag to move." .. C.r)
-    -- Global: test mode — Windfury proc every 10s + Shamanistic Focus proc every 10s (toggle)
+    -- Global: test mode — Windfury proc every 5s (random hits/crits), Shamanistic Focus every 10s (toggle)
     elseif cmd == "test" then
         if wfTestTimer then
             wfTestTimer:Cancel()
@@ -1734,13 +1758,11 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if ShammyTime.StopShamanisticFocusTest then ShammyTime.StopShamanisticFocusTest() end
             print(C.green .. "ShammyTime: Test mode off." .. C.r)
         else
-            wfTestTimer = C_Timer.NewTicker(10, function()
-                if ShammyTime.PlayCenterRingProc then
-                    ShammyTime.PlayCenterRingProc(3245, true)
-                end
+            wfTestTimer = C_Timer.NewTicker(5, function()
+                SimulateTestProc()
             end)
             if ShammyTime.StartShamanisticFocusTest then ShammyTime.StartShamanisticFocusTest() end
-            print(C.green .. "ShammyTime: Test mode on — Windfury + Shamanistic Focus proc every 10s. Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
+            print(C.green .. "ShammyTime: Test mode on — Windfury proc every 5s (random hits/crits), Shamanistic Focus every 10s. Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
         end
     -- Global: scale (legacy main bar) and debug
     elseif cmd == "scale" then

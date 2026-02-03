@@ -59,7 +59,8 @@ local function GetStatsForRadial()
     local crits = session.crits or 0
     local procPct = (swings > 0 and procs > 0) and (procs / swings * 100) or 0
     local critPct = (count > 0 and crits > 0) and (crits / count * 100) or nil
-    local avg = (count > 0 and session.total) and math.floor(session.total / count + 0.5) or nil
+    -- Min/max/avg are per-PROC (combined damage of 1–2 hits per Windfury proc)
+    local avg = (procs > 0 and session.total) and math.floor(session.total / procs + 0.5) or nil
     return {
         min = session.min,
         max = session.max,
@@ -302,6 +303,8 @@ end
 -- Called when correlation window ends with a proc total (or from /wftest)
 -- Only show the new center + satellite rings; old radial (numbers in middle of screen) is no longer used.
 function ShammyTime_Windfury_ShowRadial(procTotal)
+    -- Commit the proc buffer so min/max/avg (per-proc combined total) include this proc before satellites update
+    if ShammyTime.FlushWindfuryProc then ShammyTime.FlushWindfuryProc() end
     if procTotal then
         ShammyTime.lastProcTotal = procTotal
     end

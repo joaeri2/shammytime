@@ -292,10 +292,13 @@ local timerTicker
 local windfuryStatsFrame
 
 -- Windfury proc stats: pull (this combat) and session (since login / last reset).
--- count = Windfury Attack hits; procs = proc events (1 per WF proc, whether 1 or 2 hits); swings = eligible white swings.
+-- All damage stats (min, max, total, avg) are per-PROC (sum of 1–2 hits per proc), not per hit.
+-- count = total Windfury hits; procs = proc events (1 per WF proc); swings = eligible white swings.
 local wfPull  = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
 local wfSession = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
 local lastWfHitTime = 0  -- used to group hits into one proc (0.4s window)
+-- Current proc buffer: accumulated until proc window closes, then flushed (min/max/total from sum).
+local wfProcBuffer = { total = 0, hits = 0, crits = 0 }
 -- Windfury popup: buffer damage for one proc (2 hits), then show total in floating text
 local wfPopupTotal = 0
 local wfPopupTimer = nil
@@ -515,8 +518,27 @@ local function RecordEligibleSwing()
     SaveWindfuryDB()
 end
 
--- Record one Windfury hit (amount, isCrit) into pull and session stats.
--- One proc = 1 or 2 hits; we count proc events (procs) once per burst using a 0.4s window; count = total hits.
+-- Flush current proc buffer into pull/session: min/max/total are per-PROC (sum of hits), not per hit.
+local function FlushWindfuryProc()
+    if not wfProcBuffer or wfProcBuffer.total <= 0 then return end
+    local procTotal = wfProcBuffer.total
+    local hits = wfProcBuffer.hits
+    local crits = wfProcBuffer.crits
+    wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
+    wfPopupTotal = 0  -- keep in sync so popup/timer don't use stale value
+    for _, st in ipairs({ wfPull, wfSession }) do
+        st.total = st.total + procTotal
+        st.count = (st.count or 0) + hits
+        if st.min == nil or procTotal < st.min then st.min = procTotal end
+        if st.max == nil or procTotal > st.max then st.max = procTotal end
+        if crits and crits > 0 then st.crits = (st.crits or 0) + crits end
+    end
+    ScheduleWindfuryUpdate()
+    SaveWindfuryDB()
+end
+
+-- Record one Windfury hit (amount, isCrit). Buffers hits; on proc end (timer or next proc) flushes combined total for min/max/total/avg.
+-- One proc = 1 or 2 hits; min/max/avg are the sum of those hits per proc.
 local WF_PROC_WINDOW = 0.4
 local function RecordWindfuryHit(amount, isCrit)
     if not amount or amount <= 0 then return end
@@ -524,41 +546,48 @@ local function RecordWindfuryHit(amount, isCrit)
     local now = GetTime()
     local isNewProc = (now - lastWfHitTime) > WF_PROC_WINDOW
     lastWfHitTime = now
+    -- If starting a new proc, flush the previous proc's combined total first
+    if isNewProc and wfProcBuffer.total > 0 then
+        FlushWindfuryProc()
+    end
+    wfProcBuffer.total = wfProcBuffer.total + amount
+    wfProcBuffer.hits = wfProcBuffer.hits + 1
+    if isCrit then wfProcBuffer.crits = wfProcBuffer.crits + 1 end
     for _, st in ipairs({ wfPull, wfSession }) do
         if isNewProc then st.procs = (st.procs or 0) + 1 end
-        st.total = st.total + amount
-        st.count = st.count + 1
-        if st.min == nil or amount < st.min then st.min = amount end
-        if st.max == nil or amount > st.max then st.max = amount end
-        if isCrit then st.crits = (st.crits or 0) + 1 end
     end
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
-    -- Floating popup: add to buffer and (re)start delay timer
+    -- Floating popup: when proc window closes, flush and show combined total
     if GetDB().wfPopupEnabled then
         wfPopupTotal = wfPopupTotal + amount
         if wfPopupTimer then wfPopupTimer:Cancel() end
         wfPopupTimer = C_Timer.NewTimer(0.4, function()
             wfPopupTimer = nil
-            if wfPopupTotal > 0 then
-                ShowWindfuryPopup(wfPopupTotal)
-                wfPopupTotal = 0
+            if wfProcBuffer.total > 0 then
+                local procTotal = wfProcBuffer.total
+                FlushWindfuryProc()
+                ShowWindfuryPopup(procTotal)
             end
+            wfPopupTotal = 0
         end)
     end
 end
 
--- Reset pull stats (call when entering combat).
+-- Reset pull stats (call when entering combat). Clear proc buffer so new pull starts clean.
 local function ResetWindfuryPull()
     wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
+    wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
+    wfPopupTotal = 0
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
 end
 
--- Reset session stats (and pull).
+-- Reset session stats (and pull). Also clear proc buffer so next hit starts fresh.
 local function ResetWindfurySession()
     wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
     wfSession.total, wfSession.count, wfSession.procs, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, 0, nil, nil, 0, 0
+    wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
 end
@@ -578,6 +607,8 @@ local function SimulateTestProc()
     RecordWindfuryHit(amount1, crit1)
     RecordWindfuryHit(amount2, crit2)
     local total = amount1 + amount2
+    FlushWindfuryProc()  -- commit this proc so min/max/avg reflect combined total
+    if wfPopupTimer then wfPopupTimer:Cancel() wfPopupTimer = nil end
     ShammyTime.lastProcTotal = total  -- so radial/satellites and GetWindfuryStats() show this proc
     if windfuryStatsFrame and windfuryStatsFrame.UpdateText then
         windfuryStatsFrame:UpdateText()
@@ -726,6 +757,7 @@ ShammyTime.GetDB = GetDB
 ShammyTime.ResetWindfurySession = ResetWindfurySession
 ShammyTime.ShowWindfuryRadial = ShowWindfuryRadial
 ShammyTime.HideWindfuryRadial = HideWindfuryRadial
+ShammyTime.FlushWindfuryProc = FlushWindfuryProc  -- commit current proc buffer so min/max/avg include this proc (e.g. when radial opens)
 ShammyTime.GetWindfuryStats = function()
     return wfPull, wfSession, ShammyTime.lastProcTotal or 0
 end
@@ -1495,9 +1527,9 @@ local function CreateWindfuryStatsFrame()
 
     function wf:UpdateText()
         local function val(st, kind)
-            if st.count == 0 then
+            -- No data = no procs completed (min/max/avg/total are per-proc; procs count proc events)
+            if (st.procs or 0) == 0 then
                 if kind == "procs" or kind == "crits" then return "0" end
-                -- Proc %: show 0% when we have swings but no procs; otherwise "–"
                 if kind == "procrate" then
                     local swings = st.swings or 0
                     return (swings > 0) and "0%" or "–"
@@ -1516,10 +1548,14 @@ local function CreateWindfuryStatsFrame()
                 if rate >= 1 then return "100%" end
                 return ("%.0f%%"):format(rate * 100)
             end
-            -- Min/Avg/Max = single-hit stats (not sums). Total = sum only.
+            -- Min/Avg/Max/Total = per-PROC (combined 1–2 hits per Windfury proc).
             if kind == "min" then return st.min and FormatNumberShort(st.min) or "–" end
             if kind == "max" then return st.max and FormatNumberShort(st.max) or "–" end
-            if kind == "avg" then return FormatNumberShort(math.floor(st.total / st.count + 0.5)) end
+            if kind == "avg" then
+                local procs = st.procs or 0
+                if procs <= 0 then return "–" end
+                return FormatNumberShort(math.floor(st.total / procs + 0.5))
+            end
             if kind == "total" then return FormatNumberShort(st.total) end
             if kind == "crits" then return tostring(st.crits or 0) end
             return "–"
@@ -1532,7 +1568,7 @@ local function CreateWindfuryStatsFrame()
             sf.pullVal:SetText(pullStr)
             sf.sessionVal:SetText(sessionStr)
             -- Show pull row whenever in a pull (count > 0) so both rows are visible in combat; hide when out of combat
-            if (wfPull.count or 0) > 0 then sf.pullVal:Show() else sf.pullVal:Hide() end
+            if (wfPull.procs or 0) > 0 then sf.pullVal:Show() else sf.pullVal:Hide() end
         end
     end
     wf:UpdateText()
@@ -1722,6 +1758,9 @@ local function PrintMainHelp()
     print(C.green .. "  SHAMANISTIC FOCUS" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st focus" .. C.r .. C.gray .. "  scale (proc indicator)" .. C.r)
     print(C.gray .. "    " .. C.gold .. "/st focus" .. C.r .. C.gray .. " for list" .. C.r)
     print("")
+    print(C.green .. "  IMBUE BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st imbue" .. C.r .. C.gray .. "  scale, layout (weapon imbues MH/OH)" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st imbue scale 0.5" .. C.r .. C.gray .. " bar size; " .. C.gold .. "/st imbue layout" .. C.r .. C.gray .. " move/resize icons" .. C.r)
+    print("")
     print(C.gray .. "  LEGACY (deprecating soon)" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st legacy" .. C.r .. C.gray .. "  reset, bar, popup, main" .. C.r)
     print(C.gray .. "    " .. C.gold .. "/st legacy" .. C.r .. C.gray .. " for list" .. C.r)
     print("")
@@ -1896,6 +1935,73 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             PrintFocusHelp()
         else
             PrintFocusHelp()
+        end
+    -- Imbue bar (weapon imbues): /st imbue [scale X | layout | margin X | gap X | offsety X | iconsize X]
+    elseif cmd == "imbue" or cmd == "imbuebar" then
+        local a = arg:lower()
+        local scaleArg = a:match("^scale%s+(%S+)$")
+        local marginArg = a:match("^margin%s+(%S+)$")
+        local gapArg = a:match("^gap%s+(%S+)$")
+        local offsetyArg = a:match("^offsety%s+([-%d%.]+)$")
+        local iconsizeArg = a:match("^iconsize%s+(%S+)$")
+        if scaleArg then
+            local num = tonumber(scaleArg)
+            if num and num >= 0.1 and num <= 2 then
+                db.imbueBarScale = num
+                if ShammyTime.ApplyImbueBarScale then ShammyTime.ApplyImbueBarScale() end
+                print(C.green .. "ShammyTime: Imbue bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue bar scale 0.1–2. " .. C.gold .. "/st imbue scale 0.4" .. C.r)
+            end
+        elseif marginArg then
+            local num = tonumber(marginArg)
+            if num and num >= 0 and num <= 400 then
+                db.imbueBarMargin = num
+                if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
+                print(C.green .. "ShammyTime: Imbue bar margin " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue bar margin 0–400. " .. C.gold .. "/st imbue margin 169" .. C.r)
+            end
+        elseif gapArg then
+            local num = tonumber(gapArg)
+            if num and num >= 0 and num <= 200 then
+                db.imbueBarGap = num
+                if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
+                print(C.green .. "ShammyTime: Imbue bar gap " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue bar gap 0–200. " .. C.gold .. "/st imbue gap 48" .. C.r)
+            end
+        elseif offsetyArg then
+            local num = tonumber(offsetyArg)
+            if num and num >= -200 and num <= 200 then
+                db.imbueBarOffsetY = num
+                if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
+                print(C.green .. "ShammyTime: Imbue bar offset Y " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue bar offsety -200–200. " .. C.gold .. "/st imbue offsety -52" .. C.r)
+            end
+        elseif iconsizeArg then
+            local num = tonumber(iconsizeArg)
+            if num and num >= 12 and num <= 64 then
+                db.imbueBarIconSize = num
+                if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
+                print(C.green .. "ShammyTime: Imbue bar icon size " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue bar iconsize 12–64. " .. C.gold .. "/st imbue iconsize 22" .. C.r)
+            end
+        elseif a == "layout" then
+            local m = db.imbueBarMargin or 169
+            local g = db.imbueBarGap or 48
+            local oy = db.imbueBarOffsetY or -52
+            local isz = db.imbueBarIconSize or 22
+            print(C.gray .. "ShammyTime: Imbue bar layout — margin " .. C.gold .. m .. C.r .. C.gray .. ", gap " .. C.gold .. g .. C.r .. C.gray .. ", offsety " .. C.gold .. oy .. C.r .. C.gray .. ", iconsize " .. C.gold .. isz .. C.r)
+            print(C.gray .. "  Change: " .. C.gold .. "/st imbue margin 180" .. C.r .. C.gray .. ", " .. C.gold .. "/st imbue gap 50" .. C.r .. C.gray .. ", " .. C.gold .. "/st imbue offsety -60" .. C.r .. C.gray .. ", " .. C.gold .. "/st imbue iconsize 24" .. C.r)
+        elseif a == "" then
+            local s = db.imbueBarScale or 0.4
+            print(C.gray .. "ShammyTime: Imbue bar scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.1–2). " .. C.gold .. "/st imbue scale 0.5" .. C.r)
+            print(C.gray .. "  Layout (move/resize icons): " .. C.gold .. "/st imbue layout" .. C.r)
+        else
+            print(C.gray .. "ShammyTime: Imbue bar — " .. C.gold .. "/st imbue scale 0.4" .. C.r .. C.gray .. " (size), " .. C.gold .. "/st imbue layout" .. C.r .. C.gray .. " (icon position/size)." .. C.r)
         end
     -- Legacy: /st legacy [reset|bar ...|popup ...|main ...]
     elseif cmd == "legacy" then

@@ -10,34 +10,43 @@ local M = ShammyTime_Media
 if not M then return end
 
 local TEX = M.TEX
-local centerFrame
-local totemBarFrame
+local centerFrame      -- main draggable center ring frame (created once)
+local totemBarFrame    -- separate draggable totem bar frame (created once)
 
--- How long to keep satellite numbers visible after proc before starting chain fade (seconds)
+-- ========== Timing constants ==========
+-- How long satellite numbers (MIN, AVG, MAX, etc.) stay visible after a proc before they start fading out.
 local WF_NUMBERS_HOLD_BEFORE_FADE = 2
--- How long "Windfury!" + total text stays fully visible after proc anim ends before fading (seconds)
+-- How long the center "Windfury!" + "TOTAL: xxx" text stays fully visible after the proc animation ends, before it fades.
 local WF_TEXT_HOLD_BEFORE_FADE = 1
--- Lightning pulses after main proc: delay after BOOM, then irregular blinks (electrical feel)
-local WF_LIGHTNING_DELAY_AFTER_BOOM = 0.55   -- pause after main anim before first lightning
+
+-- ========== Lightning pulse constants (energy layer only; runes are not pulsed) ==========
+-- Delay in seconds after the main "BOOM" proc animation before the first lightning blink.
+local WF_LIGHTNING_DELAY_AFTER_BOOM = 0.55
+-- Number of lightning blinks (energy layer brightens then dims).
 local WF_LIGHTNING_PULSE_COUNT = 3
--- Bounded randomness so each proc feels different but never crazy
+-- Random range for how bright the energy gets on each blink (0.28–0.55).
 local WF_LIGHTNING_ENERGY_PEAK_MIN, WF_LIGHTNING_ENERGY_PEAK_MAX = 0.28, 0.55
+-- (Unused: rune peaks were removed so lightning doesn't touch the rune ring.)
 local WF_LIGHTNING_RUNE_PEAK_MIN, WF_LIGHTNING_RUNE_PEAK_MAX = 0.22, 0.45
+-- Random duration for each blink: ramp-up and ramp-down time.
 local WF_LIGHTNING_UP_DUR_MIN, WF_LIGHTNING_UP_DUR_MAX = 0.03, 0.065
 local WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX = 0.07, 0.14
+-- Random gap in seconds between one blink finishing and the next starting.
 local WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX = 0.09, 0.19
 
--- Center ring (and all satellites, as children) scale; read/write via GetDB().wfRadialScale (0.5–2).
+-- Returns the user's saved scale for the center ring (0.5–2). Used when showing the ring and by /wfresize.
 local function GetRadialScale()
     local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
     return (db.wfRadialScale and db.wfRadialScale >= 0.5 and db.wfRadialScale <= 2) and db.wfRadialScale or 0.7
 end
 
+-- Returns the user's saved scale for the Windfury totem bar (0.5–2).
 local function GetTotemBarScale()
     local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
     return (db.wfTotemBarScale and db.wfTotemBarScale >= 0.5 and db.wfTotemBarScale <= 2) and db.wfTotemBarScale or 1.0
 end
 
+-- Formats a number for display (e.g. 1500 -> "1.5k", 2000000 -> "2.0m").
 local function FormatNum(n)
     if not n or n < 0 then return "0" end
     if n >= 1000000 then return ("%.1fm"):format(n / 1000000) end
@@ -45,6 +54,7 @@ local function FormatNum(n)
     return tostring(math.floor(n + 0.5))
 end
 
+-- Applies saved position to the center ring frame (so it appears where the user last left it).
 local function ApplyCenterPosition(f)
     local pos = ShammyTime.GetRadialPositionDB and ShammyTime.GetRadialPositionDB()
     if not pos or not pos.center then return end
@@ -56,6 +66,7 @@ local function ApplyCenterPosition(f)
     end
 end
 
+-- Saves the center ring's current position when the user stops dragging (per character).
 local function SaveCenterPosition(f)
     if not ShammyTime.GetRadialPositionDB then return end
     local pos = ShammyTime.GetRadialPositionDB()
@@ -69,6 +80,8 @@ local function SaveCenterPosition(f)
     }
 end
 
+-- Creates the main center ring frame once; subsequent calls return the same frame.
+-- Contains: ring subframe (textures + proc animation), text frame ("Windfury!", "TOTAL: xxx"), and behavior (drag, right-click reset).
 local function CreateCenterRingFrame()
     if centerFrame then return centerFrame end
 
@@ -82,6 +95,7 @@ local function CreateCenterRingFrame()
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
+    -- Drag: only when addon is not locked (lock is in main addon options).
     f:SetScript("OnDragStart", function(self)
         if ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked then return end
         self:StartMoving()
@@ -101,6 +115,7 @@ local function CreateCenterRingFrame()
         if ShammyTime.OnRadialHoverLeave then ShammyTime.OnRadialHoverLeave() end
         GameTooltip:Hide()
     end)
+    -- Right-click: reset Windfury stats (session/pull), clear "CRITICAL", set TOTAL to 0, refresh satellite numbers.
     f:SetScript("OnMouseDown", function(self, button)
         if button ~= "RightButton" then return end
         if ShammyTime and ShammyTime.ResetWindfurySession then
@@ -123,14 +138,14 @@ local function CreateCenterRingFrame()
     end)
     f:Hide()
 
-    -- Ring subframe: only this scales during proc so totem bar stays fixed; satellites parent here to move with ring
+    -- Ring subframe: holds all visual layers (shadow, bg, energy, border, runes). This frame scales during proc (pop effect); satellites are parented here so they move with the ring. Totem bar is a sibling, so it does not scale.
     local ringFrame = CreateFrame("Frame", nil, f)
     ringFrame:SetSize(260, 260)
     ringFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
     ringFrame:SetFrameLevel(1)
     f.ringFrame = ringFrame
 
-    -- 0. Shadow behind circle (wf_center_shadow.tga), custom for center ring: soft, scales with proc
+    -- Layer 0: Soft shadow behind the circle. Slightly larger than the ring; scales with the ring on proc.
     local ringShadowSize = 280
     local ringShadowOffsetY = -8
     ringFrame.shadow = ringFrame:CreateTexture(nil, "BACKGROUND", nil, -1)
@@ -140,34 +155,36 @@ local function CreateCenterRingFrame()
     ringFrame.shadow:SetTexCoord(0, 1, 0, 1)
     ringFrame.shadow:SetVertexColor(1, 1, 1, 0.26)
 
-    -- 1. BACKGROUND: wf_center_bg.tga (on ring so it scales with proc)
+    -- Layer 1: Background disc (wf_center_bg.tga). Always full opacity.
     ringFrame.bg = ringFrame:CreateTexture(nil, "BACKGROUND")
     ringFrame.bg:SetAllPoints(ringFrame)
     ringFrame.bg:SetTexture(TEX.CENTER_BG)
     ringFrame.bg:SetAlpha(1)
 
-    -- 2. ARTWORK: wf_center_energy.tga (low alpha, ADD blend)
+    -- Layer 2: Energy/glow (wf_center_energy.tga). Low alpha when idle; flashes bright on proc and is used by lightning pulses. ADD blend makes it glow.
     ringFrame.energy = ringFrame:CreateTexture(nil, "ARTWORK")
     ringFrame.energy:SetAllPoints(ringFrame)
     ringFrame.energy:SetTexture(TEX.CENTER_ENERGY)
     ringFrame.energy:SetAlpha(0.12)
     ringFrame.energy:SetBlendMode("ADD")
 
-    -- 3. BORDER: wf_center_border.tga
+    -- Layer 3: Ornate border ring (wf_center_border.tga). Always full opacity.
     ringFrame.border = ringFrame:CreateTexture(nil, "BORDER")
     ringFrame.border:SetAllPoints(ringFrame)
     ringFrame.border:SetTexture(TEX.CENTER_BORDER)
     ringFrame.border:SetAlpha(1)
 
-    -- 4. OVERLAY: wf_center_runes.tga (on ring so it scales and rotates with proc)
+    -- Layer 4: Rune circle overlay (wf_center_runes.tga). Hidden (alpha 0) when idle. On proc: flashes to full visibility, spins slightly, then fades out to 0 over a few seconds. No other system touches runes (e.g. lightning only affects energy).
+    -- Edit only these to change rune ring size and position (nothing else uses them):
+    local RUNE_RING_SIZE = 189
+    local RUNE_RING_OFFSET_X, RUNE_RING_OFFSET_Y = -2, 9
     ringFrame.runes = ringFrame:CreateTexture(nil, "OVERLAY")
     ringFrame.runes:SetTexture(TEX.CENTER_RUNES)
-    ringFrame.runes:SetAlpha(0.18)
-    local runesInset = 20  -- smaller inset = larger runes ring (more overlay on border)
-    ringFrame.runes:SetSize(260 - runesInset * 2, 260 - runesInset * 2)
-    ringFrame.runes:SetPoint("CENTER", 0, 12)  -- slightly up
+    ringFrame.runes:SetAlpha(0)
+    ringFrame.runes:SetSize(RUNE_RING_SIZE, RUNE_RING_SIZE)
+    ringFrame.runes:SetPoint("CENTER", RUNE_RING_OFFSET_X, RUNE_RING_OFFSET_Y)
 
-    -- Text as child of main frame so it stays crisp during proc (still scales with /wfresize)
+    -- Text frame: holds "Windfury!", "TOTAL: xxx", and optional "CRITICAL". Child of main frame so it doesn't get scaled by the ring's proc pop; it stays crisp. Still scales with /wfresize (whole frame scale).
     local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", f)
     textFrame:SetFrameStrata("DIALOG")
     textFrame:SetFrameLevel(10)
@@ -190,7 +207,7 @@ local function CreateCenterRingFrame()
     end)
     textFrame.fadeOutAnim = fadeOutAg
 
-    -- When crit: "CRITICAL" on top, "Windfury!" below; when not crit: just "Windfury!"
+    -- Optional "CRITICAL" line (shown when the proc included a crit). Sits above "Windfury!" when visible.
     f.criticalLine = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     f.criticalLine:SetPoint("CENTER", 0, 42)
     f.criticalLine:SetText("CRITICAL")
@@ -209,21 +226,19 @@ local function CreateCenterRingFrame()
     f.titleFlashColor = {1, 1, 1}  -- bright white flash
 
     f.total = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    f.total:SetPoint("CENTER", 0, 2)  -- moved down when crit (see PlayCenterRingProc)
+    f.total:SetPoint("CENTER", 0, 2)  -- Y is adjusted in PlayCenterRingProc when "CRITICAL" is shown so three lines fit
     f.total:SetText("TOTAL: 3245")
     f.total:SetTextColor(1, 1, 1)
     f.total:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
     f.totalRestColor = {1, 1, 1}
     f.totalFlashColor = {1, 1, 0.5}  -- bright yellow flash
 
-    -- Proc pulse: ring scale is driven by the same ticker as satellites (quick expand, slow retract).
-    -- Animation group only does energy, runes, rotation so the ring scale doesn't snap back.
-    local pop = 1.18
+    -- Proc pulse: the ring's *scale* (pop/breath) is driven by a separate ticker in PlayCenterRingProc, not by this animation group. This group only animates: energy alpha, rune alpha, rune rotation.
 
     local function BuildProcAnim(rf)
         local g = rf:CreateAnimationGroup()
 
-        -- Energy: instant flash to full, then long soften (lightning hit → fade)
+        -- Energy: instant flash to full brightness, then smooth fade back to dim (lightning-hit feel).
         local aFlash = g:CreateAnimation("Alpha")
         aFlash:SetTarget(rf.energy)
         aFlash:SetOrder(1)
@@ -239,35 +254,36 @@ local function CreateCenterRingFrame()
         aSoft:SetToAlpha(0.18)
         aSoft:SetSmoothing("OUT")
 
-        -- Runes: quick flash then fade (they "light up" with the strike)
+        -- Runes: instant flash from hidden to full visibility, then slow fade back to fully hidden (0). Duration of the fade is 3s; adjust for faster/slower fade-out.
         local runeFlash = g:CreateAnimation("Alpha")
         runeFlash:SetTarget(rf.runes)
         runeFlash:SetOrder(1)
         runeFlash:SetDuration(0.02)
-        runeFlash:SetFromAlpha(0.18)
-        runeFlash:SetToAlpha(0.5)
+        runeFlash:SetFromAlpha(0)
+        runeFlash:SetToAlpha(1)
 
         local runeSoft = g:CreateAnimation("Alpha")
         runeSoft:SetTarget(rf.runes)
         runeSoft:SetOrder(2)
-        runeSoft:SetDuration(0.3)
-        runeSoft:SetFromAlpha(0.5)
-        runeSoft:SetToAlpha(0.18)
+        runeSoft:SetDuration(3)
+        runeSoft:SetFromAlpha(1)
+        runeSoft:SetToAlpha(0)
         runeSoft:SetSmoothing("OUT")
 
-        -- Rune rotation: visible spin on proc
+        -- Rune rotation: small spin (degrees) when the proc plays; gives a "wake up" motion.
         local rot = g:CreateAnimation("Rotation")
         rot:SetTarget(rf.runes)
         rot:SetOrder(1)
         rot:SetDuration(0.7)
         rot:SetSmoothing("OUT")
-        rot:SetDegrees(180)
+        rot:SetDegrees(3)
 
         return g
     end
 
     ringFrame.procAnim = BuildProcAnim(ringFrame)
     local ag = ringFrame.procAnim
+    -- When the proc animation (energy + runes + rotation) finishes: stop scale ticker, reset ring scale to 1, reset satellite positions, then start timers for text fade and satellite number fade. Lightning pulses are started separately when the *scale* ticker ends (see PlayCenterRingProc).
     local function onProcAnimEnd()
         if ringFrame.satelliteTicker then
             ringFrame.satelliteTicker:Cancel()
@@ -306,7 +322,7 @@ local function CreateCenterRingFrame()
     ag:SetScript("OnFinished", onProcAnimEnd)
     ag:SetScript("OnStop", onProcAnimEnd)
 
-    -- Lightning pulses: small blinks on energy + runes after main proc (electricity/lightning feel)
+    -- Lightning pulses: after the main proc, the energy layer blinks a few times (brighten then dim). Only the energy texture is animated; the rune ring is left alone so its fade-out is not interrupted.
     local function randBetween(lo, hi)
         return lo + math.random() * (hi - lo)
     end
@@ -325,24 +341,13 @@ local function CreateCenterRingFrame()
         energyDown:SetDuration(0.1)
         energyDown:SetFromAlpha(0.5)
         energyDown:SetToAlpha(0.12)
-        local runesUp = g:CreateAnimation("Alpha")
-        runesUp:SetTarget(rf.runes)
-        runesUp:SetOrder(1)
-        runesUp:SetDuration(0.045)
-        runesUp:SetFromAlpha(0.18)
-        runesUp:SetToAlpha(0.42)
-        local runesDown = g:CreateAnimation("Alpha")
-        runesDown:SetTarget(rf.runes)
-        runesDown:SetOrder(2)
-        runesDown:SetDuration(0.1)
-        runesDown:SetFromAlpha(0.42)
-        runesDown:SetToAlpha(0.18)
         rf.lightningPulseGroup = g
-        rf.lightningPulseAnims = { energyUp = energyUp, energyDown = energyDown, runesUp = runesUp, runesDown = runesDown }
+        rf.lightningPulseAnims = { energyUp = energyUp, energyDown = energyDown }
         return g
     end
+    -- Called after the ring scale ticker finishes (see PlayCenterRingProc). Schedules WF_LIGHTNING_PULSE_COUNT blinks with random peak alpha and gaps; each blink uses the shared lightning pulse animation group.
     function ShammyTime.StartLightningPulses(rf)
-        if not rf or not rf.energy or not rf.runes then return end
+        if not rf or not rf.energy then return end
         if rf.lightningPulseTimer then
             rf.lightningPulseTimer:Cancel()
             rf.lightningPulseTimer = nil
@@ -354,21 +359,16 @@ local function CreateCenterRingFrame()
         local function runNextPulse()
             pulseIndex = pulseIndex + 1
             if pulseIndex > WF_LIGHTNING_PULSE_COUNT then return end
-            -- Falloff so later pulses are weaker (fading lightning)
+            -- Falloff: each successive pulse is a bit weaker (fading lightning effect).
             local falloff = 1 - (pulseIndex - 1) * 0.3
             if falloff < 0.35 then falloff = 0.35 end
             local ePeak = randBetween(WF_LIGHTNING_ENERGY_PEAK_MIN, WF_LIGHTNING_ENERGY_PEAK_MAX) * falloff
-            local rPeak = randBetween(WF_LIGHTNING_RUNE_PEAK_MIN, WF_LIGHTNING_RUNE_PEAK_MAX) * falloff
             local upDur = randBetween(WF_LIGHTNING_UP_DUR_MIN, WF_LIGHTNING_UP_DUR_MAX)
             local downDur = randBetween(WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX)
             anims.energyUp:SetToAlpha(ePeak)
             anims.energyUp:SetDuration(upDur)
             anims.energyDown:SetFromAlpha(ePeak)
             anims.energyDown:SetDuration(downDur)
-            anims.runesUp:SetToAlpha(rPeak)
-            anims.runesUp:SetDuration(upDur)
-            anims.runesDown:SetFromAlpha(rPeak)
-            anims.runesDown:SetDuration(downDur)
             g:SetScript("OnFinished", function()
                 if pulseIndex < WF_LIGHTNING_PULSE_COUNT then
                     local gap = randBetween(WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX)
@@ -383,7 +383,7 @@ local function CreateCenterRingFrame()
         runNextPulse()
     end
 
-    -- Text color flash (no scaling): instant flash to bright, then fade back
+    -- Called on proc: "Windfury!" and "TOTAL:" (and "CRITICAL" if shown) instantly switch to bright flash colors, then tick back to normal rest colors over 0.4s. No scaling or movement.
     function f:FlashText()
         -- Instant flash to bright color
         self.title:SetTextColor(unpack(self.titleFlashColor))
@@ -426,7 +426,7 @@ local function CreateCenterRingFrame()
         end)
     end
     centerFrame = f
-    -- Restore visibility after reload if radial was shown: show numbers so user sees it's not reset, then fade out
+    -- After addon load: if the radial was visible before reload (wfRadialShown), show the frame and text, restore "TOTAL" from last proc, show totem bar, update satellites, then (if not always-show-numbers) start the same fade timers as after a proc.
     local db = ShammyTime.GetDB and ShammyTime.GetDB()
     if db and db.wfRadialShown then
         f:Show()
@@ -457,12 +457,12 @@ local function CreateCenterRingFrame()
     return f
 end
 
--- Ensure center ring exists (for satellites that anchor to it)
+-- Ensures the center ring frame is created; used by other modules (e.g. satellites) that need to parent or anchor to it.
 function ShammyTime.EnsureCenterRingExists()
     return CreateCenterRingFrame()
 end
 
--- Standalone totem bar (separate from center ring; position saved per character)
+-- Applies saved position to the totem bar frame (per character).
 local function ApplyTotemBarPosition(barFrame)
     local pos = ShammyTime.GetRadialPositionDB and ShammyTime.GetRadialPositionDB()
     if not pos or not pos.totemBar then return end
@@ -474,6 +474,7 @@ local function ApplyTotemBarPosition(barFrame)
     end
 end
 
+-- Saves the totem bar position when the user stops dragging (per character).
 local function SaveTotemBarPosition(barFrame)
     if not ShammyTime.GetRadialPositionDB then return end
     local pos = ShammyTime.GetRadialPositionDB()
@@ -487,6 +488,7 @@ local function SaveTotemBarPosition(barFrame)
     }
 end
 
+-- Creates the Windfury totem bar frame once (the bar that shows WF totem art). Separate from the center ring; has its own position and scale (/st totem scale).
 local function CreateWindfuryTotemBarFrame()
     if totemBarFrame then return totemBarFrame end
     local barW = 286
@@ -527,20 +529,20 @@ function ShammyTime.EnsureWindfuryTotemBarFrame()
     return CreateWindfuryTotemBarFrame()
 end
 
--- Ring subframe: proc scale runs here; satellites parent to this so they move with the ring
+-- Returns the ring subframe (the one that scales on proc and holds shadow/bg/energy/border/runes). Satellites parent to this so they move with the ring.
 function ShammyTime.GetCenterRingFrame()
     local f = CreateCenterRingFrame()
     return f and f.ringFrame or nil
 end
 
--- Called when a Windfury proc is detected (from ShammyTime_Windfury.lua combat log)
--- forceShow: if true, show even when wfRadialEnabled is off (e.g. /wfproc test)
+-- Called when a Windfury proc is detected (from combat log in ShammyTime_Windfury.lua). Shows the center ring, totem bar, and "Windfury!" text; plays the proc animation (energy flash, rune flash+spin+fade, ring scale pop) and schedules lightning pulses and text/satellite fades.
+-- forceShow: if true, show and play even when wfRadialEnabled is off (e.g. /wfproc for testing).
 function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
     if not forceShow and not db.wfRadialEnabled then return end
     local f = CreateCenterRingFrame()
     f:Show()
-    -- Cancel any pending delayed fade so this proc gets a fresh hold
+    -- Cancel any pending text/satellite fade timers so this proc gets a full hold period
     if f.wfFadeDelayTimer then
         f.wfFadeDelayTimer:Cancel()
         f.wfFadeDelayTimer = nil
@@ -555,7 +557,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
     if barFrame then barFrame:Show() end
     if db.wfRadialShown == nil then db.wfRadialShown = false end
-    db.wfRadialShown = true  -- keep radial visible after proc
+    db.wfRadialShown = true
     f.total:SetText("TOTAL: " .. FormatNum(procTotal or 0))
     if ShammyTime.lastProcHadCrit then
         f.criticalLine:SetText("CRITICAL")
@@ -571,7 +573,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     end
     f:SetScale(GetRadialScale())
     local rf = f.ringFrame
-    -- Cancel any lightning pulses or delayed start from a previous proc
+    -- Cancel any lightning timers/anim from a previous proc so we start clean
     if rf.lightningStartTimer then
         rf.lightningStartTimer:Cancel()
         rf.lightningStartTimer = nil
@@ -582,19 +584,19 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     end
     if rf.lightningPulseGroup then rf.lightningPulseGroup:Stop() end
     rf.energy:SetAlpha(0.12)
-    rf.runes:SetAlpha(0.18)
+    rf.runes:SetAlpha(0)
     rf:SetScale(1)
     rf.procAnim:Stop()
     rf.procAnim:Play()
-    -- Drive ring scale + satellite positions: quick expand, slow retract (force/explosion feel)
+    -- Ring scale + satellite positions: ticker does a quick expand (pop), short hold, then slow retract. When the ticker finishes, we start the delayed lightning pulses.
     if rf.satelliteTicker then
         rf.satelliteTicker:Cancel()
         rf.satelliteTicker = nil
     end
-    local pop = 1.18
-    local expandDur = 0.03
-    local holdDur = 0.45
-    local retractDur = 0.55
+    local pop = 1.18           -- peak scale (e.g. 1.18 = 18% bigger)
+    local expandDur = 0.03    -- time to reach pop
+    local holdDur = 0.45      -- time held at pop
+    local retractDur = 0.55   -- time to return to scale 1
     local total = expandDur + holdDur + retractDur
     local start = GetTime()
     local interval = 0.02
@@ -620,7 +622,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
             end
             rf:SetScale(1)
             if ShammyTime.ResetSatellitePositions then ShammyTime.ResetSatellitePositions() end
-            -- Delay then lightning pulses (electrical feel: BOOM ... pause ... blink blink blink)
+            -- After a short delay, start the energy-layer lightning blinks (BOOM ... pause ... blink blink blink).
             if rf.lightningStartTimer then rf.lightningStartTimer:Cancel() end
             rf.lightningStartTimer = C_Timer.NewTimer(WF_LIGHTNING_DELAY_AFTER_BOOM, function()
                 rf.lightningStartTimer = nil
@@ -631,7 +633,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     f:FlashText()
 end
 
--- /wfcenter — toggle center ring frame and totem bar (positions saved separately per character)
+-- /wfcenter — Toggle the center ring and totem bar on/off. Positions are saved separately per character.
 SLASH_WFCENTER1 = "/wfcenter"
 SlashCmdList["WFCENTER"] = function()
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
@@ -669,13 +671,13 @@ SlashCmdList["WFCENTER"] = function()
     end
 end
 
--- /wfproc — play proc pulse (energy glow + scale breath + rune rotation)
+-- /wfproc — Play the proc animation without combat (test mode). Uses a dummy total (3245) and forceShow so the radial always appears.
 SLASH_WFPROC1 = "/wfproc"
 SlashCmdList["WFPROC"] = function()
-    ShammyTime.PlayCenterRingProc(3245, true)  -- forceShow so it always pops for testing
+    ShammyTime.PlayCenterRingProc(3245, true)
 end
 
--- /wfresize [0.5–2.0] — set circle scale only; totem bar: /st totem scale
+-- /wfresize [0.5–2.0] — Set the center ring (and satellites) scale. Totem bar scale is separate: /st totem scale.
 SLASH_WFRESIZE1 = "/wfresize"
 SlashCmdList["WFRESIZE"] = function(msg)
     msg = msg and strmatch(msg, "^%s*(%S+)") or nil

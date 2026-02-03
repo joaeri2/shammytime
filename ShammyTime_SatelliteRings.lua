@@ -72,7 +72,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     local f = CreateFrame("Frame", "ShammyTimeSatellite_" .. name, parentFrame)
     f.baseOffsetX = offsetX
     f.baseOffsetY = offsetY
-    f:SetFrameStrata("DIALOG")
+    f:SetFrameStrata("MEDIUM")
     f:SetFrameLevel(5)
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     f:SetScale(SATELLITE_SCALE)
@@ -125,7 +125,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
 
     -- Text as child of satellite so it scales with the ring when radial is resized
     local textFrame = CreateFrame("Frame", "ShammyTimeSatelliteText_" .. name, f)
-    textFrame:SetFrameStrata("DIALOG")
+    textFrame:SetFrameStrata("MEDIUM")
     textFrame:SetFrameLevel(10)
     textFrame:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     textFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
@@ -252,10 +252,12 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         self:Show()
         local val = self.currentValue
         local empty = (val == nil or val == "" or val == "0" or val == "0%" or val == "–")
-        if empty then
-            self.textFrame:Hide()
-        else
+        local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+        local showText = not empty and (db.wfAlwaysShowNumbers or ShammyTime.radialNumbersVisible)
+        if showText then
             self.textFrame:Show()
+        else
+            self.textFrame:Hide()
         end
     end
 
@@ -273,8 +275,12 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
             self.textFrame:Hide()
         else
             self.value:SetText(val)
-            if self:IsShown() then
+            local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+            local showText = (db.wfAlwaysShowNumbers or ShammyTime.radialNumbersVisible)
+            if showText and self:IsShown() then
                 self.textFrame:Show()
+            else
+                self.textFrame:Hide()
             end
         end
     end
@@ -387,13 +393,12 @@ local function EnsureAllSatellites()
     end
 end
 
--- Show all 6 satellites with placeholder values
+-- Show all 6 satellites (no placeholder values)
 local function ShowAllSatellites()
     EnsureAllSatellites()
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f then
-            f:SetValue(cfg.value)
             f:ShowSatellite()
         end
     end
@@ -413,6 +418,7 @@ local SATELLITE_FADE_DURATION = 0.7
 local SATELLITE_FADE_STAGGER = 0.2  -- next starts when previous has 500ms left
 
 function ShammyTime.StartSatelliteTextChainFade()
+    ShammyTime.radialNumbersVisible = false
     EnsureAllSatellites()
     for i, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
@@ -430,6 +436,7 @@ end
 
 -- Show all satellite text frames (for hover quick-peek)
 function ShammyTime.ShowAllSatelliteTexts()
+    ShammyTime.radialNumbersVisible = true
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f and f:IsShown() and f.textFrame then
@@ -442,6 +449,7 @@ end
 
 -- Hide all satellite text frames (after hover leave or chain fade)
 function ShammyTime.HideAllSatelliteTexts()
+    ShammyTime.radialNumbersVisible = false
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f and f.textFrame then
@@ -487,7 +495,14 @@ end
 -- Set alpha on all satellite frames (for fade-out-of-combat / fade-when-not-procced)
 function ShammyTime.SetSatelliteFadeAlpha(alpha)
     for _, f in pairs(satelliteFrames) do
-        if f and f.SetAlpha then f:SetAlpha(alpha) end
+        if f and f.SetAlpha then
+            -- If a previous fade animation is still running, stop it so satellites snap visible on proc.
+            if f._stFadeAg then
+                f._stFadeAg:Stop()
+                f._stFadeAg = nil
+            end
+            f:SetAlpha(alpha)
+        end
     end
 end
 
@@ -551,13 +566,14 @@ ShammyTime.UpdateSatelliteValues = UpdateSatelliteValues
 local originalPlayCenterRingProc = ShammyTime.PlayCenterRingProc
 ShammyTime.PlayCenterRingProc = function(procTotal, forceShow)
     local stats = (ShammyTime_Windfury_GetStats and ShammyTime_Windfury_GetStats()) or nil
+    ShammyTime.radialNumbersVisible = true
     -- Create and show satellites before playing proc so they exist when ring scale drives their position
     ShowAllSatellites()
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f then
             local val = GetSatelliteValueFromStats(cfg.statName or cfg.name, stats)
-            f:SetValue(val or cfg.value)
+            f:SetValue(val)
         end
     end
     local critRing = GetCritRing()

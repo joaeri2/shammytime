@@ -16,6 +16,17 @@ local wfWindowTotal = 0
 local wfWindowHits = 0
 local wfWindowTimer = nil
 
+-- Clear any in-flight Windfury proc window (used on stats reset)
+function ShammyTime.ResetWindfuryProcWindow()
+    if wfWindowTimer then
+        wfWindowTimer:Cancel()
+        wfWindowTimer = nil
+    end
+    wfExpectingDamage = false
+    wfWindowTotal = 0
+    wfWindowHits = 0
+end
+
 local function GetDB()
     return ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
 end

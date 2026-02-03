@@ -37,7 +37,7 @@ local WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX = 0.09, 0.19
 -- Returns the user's saved scale for the center ring (0.5–2). Used when showing the ring and by /st circle scale.
 local function GetRadialScale()
     local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
-    return (db.wfRadialScale and db.wfRadialScale >= 0.5 and db.wfRadialScale <= 2) and db.wfRadialScale or 0.7
+    return (db.wfRadialScale and db.wfRadialScale >= 0.5 and db.wfRadialScale <= 2) and db.wfRadialScale or 1
 end
 
 -- Returns the user's saved scale for the Windfury totem bar (0.5–2).
@@ -86,7 +86,8 @@ local function CreateCenterRingFrame()
     if centerFrame then return centerFrame end
 
     local f = CreateFrame("Frame", "ShammyTimeCenterRing", UIParent)
-    f:SetFrameStrata("DIALOG")
+    f.wfProcAnimPlaying = false
+    f:SetFrameStrata("MEDIUM")
     f:SetSize(260, 260)
     f:SetScale(GetRadialScale())
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -104,16 +105,14 @@ local function CreateCenterRingFrame()
         self:StopMovingOrSizing()
         SaveCenterPosition(self)
     end)
-    -- Right-click: show options menu (reset numbers); hover shows numbers (quick-peek)
+    -- Hover: show numbers (quick-peek). Reset hint is in the addon start message in chat.
     f:SetScript("OnEnter", function(self)
+        ShammyTime.circleHovered = true
         if ShammyTime.OnRadialHoverEnter then ShammyTime.OnRadialHoverEnter() end
-        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-        GameTooltip:SetText("Right-click to reset numbers")
-        GameTooltip:Show()
     end)
     f:SetScript("OnLeave", function()
+        ShammyTime.circleHovered = false
         if ShammyTime.OnRadialHoverLeave then ShammyTime.OnRadialHoverLeave() end
-        GameTooltip:Hide()
     end)
     -- Right-click: reset Windfury stats (session/pull), clear "CRITICAL", set TOTAL to 0, refresh satellite numbers.
     f:SetScript("OnMouseDown", function(self, button)
@@ -122,6 +121,9 @@ local function CreateCenterRingFrame()
             ShammyTime.ResetWindfurySession()
         end
         if ShammyTime then ShammyTime.lastProcTotal = 0 end
+        if ShammyTime and ShammyTime.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
+            ShammyTime.UpdateSatelliteValues(ShammyTime_Windfury_GetStats())
+        end
         if centerFrame then
             if centerFrame.criticalLine then centerFrame.criticalLine:Hide() end
             if centerFrame.total then
@@ -186,7 +188,7 @@ local function CreateCenterRingFrame()
 
     -- Text frame: holds "Windfury!", "TOTAL: xxx", and optional "CRITICAL". Child of main frame so it doesn't get scaled by the ring's proc pop; it stays crisp. Still scales with /st circle scale (whole frame scale).
     local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", f)
-    textFrame:SetFrameStrata("DIALOG")
+    textFrame:SetFrameStrata("MEDIUM")
     textFrame:SetFrameLevel(10)
     textFrame:SetSize(260, 260)
     textFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
@@ -350,6 +352,7 @@ local function CreateCenterRingFrame()
             if not center or not center:IsShown() then return end
             if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
         end)
+        center.wfProcAnimPlaying = false  -- animation done; fade logic can apply now
         if ShammyTime.OnWindfuryProcAnimEnd then ShammyTime.OnWindfuryProcAnimEnd() end
     end
     ag:SetScript("OnFinished", onProcAnimEnd)
@@ -534,7 +537,7 @@ local function CreateWindfuryTotemBarFrame()
     local barW = 286
     local barH = math.floor(barW * 277 / 996 + 0.5)
     local f = CreateFrame("Frame", "ShammyTimeWindfuryTotemBarFrame", UIParent)
-    f:SetFrameStrata("DIALOG")
+    f:SetFrameStrata("MEDIUM")
     f:SetSize(barW, barH)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
     ApplyTotemBarPosition(f)
@@ -581,7 +584,10 @@ end
 function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
     if not forceShow and not db.wfRadialEnabled then return end
+    -- Mark proc as recent so UpdateAllElementsFadeState (fade when not procced) gives the circle alpha 1 when it runs below.
+    if ShammyTime.NotifyWindfuryProcStarted then ShammyTime.NotifyWindfuryProcStarted() end
     local f = CreateCenterRingFrame()
+    f.wfProcAnimPlaying = true  -- block fade-out until animation finishes (circle stays visible in/out of combat)
     f:Show()
     -- Cancel any pending text/satellite fade timers so this proc gets a full hold period
     if f.wfFadeDelayTimer then
@@ -681,6 +687,12 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
         end
     end)
     f:FlashText()
+end
+
+-- True while the proc animation (energy + runes + scale pop) is playing; used so fade logic does not hide the circle until the animation finishes.
+function ShammyTime.IsWindfuryProcAnimationPlaying()
+    local c = _G.ShammyTimeCenterRing
+    return c and c.wfProcAnimPlaying
 end
 
 -- Circle/totem bar toggle and scale are handled via /st circle in ShammyTime.lua.

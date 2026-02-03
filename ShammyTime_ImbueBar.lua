@@ -40,6 +40,15 @@ local EMPTY_ICON = 135847  -- Frostbrand-style empty slot
 local imbueBarFrame
 local slots = {}  -- [1] = MH, [2] = OH
 local updateTicker
+-- Pulse when no imbues for 15 sec (remind player); pulse for 15 sec then stop. Removal = stay still (reset delay).
+local IMBUE_PULSE_DELAY = 15
+local IMBUE_PULSE_DURATION = 15   -- pulse for this long, then stop until they have imbue again
+local IMBUE_PULSE_MIN = 0.90
+local IMBUE_PULSE_MAX = 1.0
+local IMBUE_PULSE_PERIOD = 1.0    -- seconds per full cycle (90% <-> 100%, like Shamanistic Focus)
+local noImbueSince = nil          -- when we first had no imbues; nil when we have an imbue
+local hadImbueLastCheck = false   -- true if previous tick had imbue (so removal = stay still)
+local imbuePulseCooldown = false  -- true after we pulsed for 15 sec; reset when they get an imbue
 
 local function GetLayout()
     return SLOT_MARGIN, SLOT_GAP, SLOT_OFFSET_Y, ICON_SIZE
@@ -100,22 +109,23 @@ local function RenderImbueSlot(slotFrame, data)
             timerText:Show()
         end
     else
-        -- Empty slot: no placeholder for off-hand; main hand shows dimmed empty icon
+        -- Empty slot: clear texture and alpha so no stale icon blinks during bar fade-in
         if iconShadow then iconShadow:Hide() end
-        SetSlotTexture(icon, EMPTY_ICON)
-        icon:SetVertexColor(0.45, 0.42, 0.38)
-        icon:SetAlpha(isOffHand and 0 or ICON_ALPHA_EMPTY)
-        if icon.SetDesaturated then icon:SetDesaturated(true) end
-        if isOffHand then
-            icon:Hide()
-        else
-            icon:Show()
-        end
+        icon:SetTexture(nil)
+        icon:SetAlpha(0)
+        icon:Hide()
         if timerText then
             timerText:SetText("")
             timerText:Hide()
         end
     end
+end
+
+local function HasAnyImbue()
+    local perHand = GetWeaponImbuePerHand and GetWeaponImbuePerHand()
+    if not perHand then return false end
+    return (perHand.mainHand and perHand.mainHand.expirationTime and (perHand.mainHand.expirationTime - GetTime()) > 0)
+        or (perHand.offHand and perHand.offHand.expirationTime and (perHand.offHand.expirationTime - GetTime()) > 0)
 end
 
 local function UpdateImbueBar()
@@ -124,18 +134,80 @@ local function UpdateImbueBar()
     if not perHand then return end
     RenderImbueSlot(slots[1], perHand.mainHand)
     RenderImbueSlot(slots[2], perHand.offHand)
+
+    -- No-imbue pulse: only if no imbue for 15 sec (never applied / expired); pulse 15 sec then stop. Removal = stay still.
+    local hasImbue = HasAnyImbue()
+    if hasImbue then
+        noImbueSince = nil
+        hadImbueLastCheck = true
+        imbuePulseCooldown = false
+        if imbueBarFrame.stopImbuePulseTicker then imbueBarFrame.stopImbuePulseTicker() end
+    else
+        local now = GetTime()
+        if hadImbueLastCheck then
+            -- Just removed imbue: stay still, restart 15 sec delay
+            noImbueSince = now
+            hadImbueLastCheck = false
+            if imbueBarFrame.stopImbuePulseTicker then imbueBarFrame.stopImbuePulseTicker() end
+        else
+            if noImbueSince == nil then
+                noImbueSince = now
+            end
+            if not imbuePulseCooldown and (now - noImbueSince) >= IMBUE_PULSE_DELAY then
+                if imbueBarFrame.startImbuePulse and not imbueBarFrame.imbuePulseTicker then
+                    imbueBarFrame.startImbuePulse(now + IMBUE_PULSE_DURATION)
+                end
+            end
+            hadImbueLastCheck = false
+        end
+    end
 end
 
 local function CreateImbueBarFrame()
     if imbueBarFrame then return imbueBarFrame end
 
     local f = CreateFrame("Frame", "ShammyTimeImbueBarFrame", UIParent)
-    f:SetFrameStrata("DIALOG")
+    f:SetFrameStrata("MEDIUM")
     f:SetSize(BAR_W, BAR_H)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, -260)
     ApplyImbueBarPosition(f)
     local scale = (GetDB and GetDB().imbueBarScale) or DEFAULT_IMBUE_BAR_SCALE
     f:SetScale(scale)
+    f.baseScale = scale
+    f.imbuePulseTicker = nil
+    -- Content frame: bar + slots live here; we pulse its scale (0.9–1.0) so the bar stays in place (no diagonal movement).
+    local content = CreateFrame("Frame", nil, f)
+    content:SetPoint("CENTER", f, "CENTER", 0, 0)
+    content:SetSize(BAR_W, BAR_H)
+    f.content = content
+    local function stopImbuePulseTicker()
+        if f.imbuePulseTicker then
+            f.imbuePulseTicker:Cancel()
+            f.imbuePulseTicker = nil
+        end
+        f.content:SetScale(1)
+    end
+    local function startImbuePulse(pulseEndTime)
+        stopImbuePulseTicker()
+        f.imbuePulseTicker = C_Timer.NewTicker(1/60, function()
+            if not f.imbuePulseTicker then return end
+            local now = GetTime()
+            if pulseEndTime and now >= pulseEndTime then
+                f.imbuePulseTicker:Cancel()
+                f.imbuePulseTicker = nil
+                imbuePulseCooldown = true
+                f.content:SetScale(1)
+                return
+            end
+            local t = now % IMBUE_PULSE_PERIOD
+            local phase = t / IMBUE_PULSE_PERIOD
+            local pulseScale = (phase <= 0.5) and (IMBUE_PULSE_MAX - (IMBUE_PULSE_MAX - IMBUE_PULSE_MIN) * 2 * phase)
+                or (IMBUE_PULSE_MIN + (IMBUE_PULSE_MAX - IMBUE_PULSE_MIN) * 2 * (phase - 0.5))
+            f.content:SetScale(pulseScale)
+        end)
+    end
+    f.stopImbuePulseTicker = stopImbuePulseTicker
+    f.startImbuePulse = startImbuePulse
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(not (GetDB and GetDB().locked))
@@ -151,26 +223,26 @@ local function CreateImbueBarFrame()
 
     local M = ShammyTime_Media
     local barTex = (M and M.TEX and M.TEX.IMBUE_BAR) or "Interface\\Tooltips\\UI-Tooltip-Background"
-    f.bg = f:CreateTexture(nil, "BACKGROUND")
-    f.bg:SetAllPoints(f)
+    f.bg = content:CreateTexture(nil, "BACKGROUND")
+    f.bg:SetAllPoints(content)
     f.bg:SetTexture(barTex)
     f.bg:SetAlpha(1)
 
-    local baseLevel = f:GetFrameLevel() + 2
+    local baseLevel = content:GetFrameLevel() + 2
     local margin, gap, offsetY, iconSize = GetLayout()
     local slotW = math.floor((BAR_W - 2 * margin - gap) / 2 + 0.5)
 
     for i = 1, 2 do
-        local sf = CreateFrame("Frame", ("ShammyTimeImbueBarSlot%d"):format(i), f)
+        local sf = CreateFrame("Frame", ("ShammyTimeImbueBarSlot%d"):format(i), content)
         sf.slotIndex = i
         sf:SetSize(slotW, SLOT_H)
         sf:SetFrameLevel(baseLevel)
         if i == 1 then
-            sf:SetPoint("LEFT", f, "LEFT", margin, 0)
+            sf:SetPoint("LEFT", content, "LEFT", margin, 0)
         else
             sf:SetPoint("LEFT", slots[1], "RIGHT", gap, 0)
         end
-        sf:SetPoint("TOP", f, "TOP", 0, offsetY)
+        sf:SetPoint("TOP", content, "TOP", 0, offsetY)
         sf:SetAlpha(SLOT_FRAME_ALPHA)
         sf:EnableMouse(false)
 
@@ -227,26 +299,37 @@ function ShammyTime.EnsureImbueBarFrame()
     return CreateImbueBarFrame()
 end
 
+-- Refresh slot content (call when bar is about to fade in so removed imbue doesn't blink)
+function ShammyTime.RefreshImbueBar()
+    if imbueBarFrame and imbueBarFrame:IsShown() then
+        UpdateImbueBar()
+    end
+end
+
 -- Apply saved scale (called when user changes /st imbue scale X)
 function ShammyTime.ApplyImbueBarScale()
     if not imbueBarFrame then return end
     local scale = (GetDB and GetDB().imbueBarScale) or DEFAULT_IMBUE_BAR_SCALE
-    imbueBarFrame:SetScale(scale)
+    imbueBarFrame.baseScale = scale
+    if not imbueBarFrame.imbuePulseTicker then
+        imbueBarFrame:SetScale(scale)
+    end
 end
 
 -- Reapply layout (margin, gap, offsetY, iconSize) so you can move/resize icons without /reload
 function ShammyTime.ApplyImbueBarLayout()
-    if not imbueBarFrame or not slots[1] or not slots[2] then return end
+    if not imbueBarFrame or not imbueBarFrame.content or not slots[1] or not slots[2] then return end
     local margin, gap, offsetY, iconSize = GetLayout()
     local slotW = math.floor((BAR_W - 2 * margin - gap) / 2 + 0.5)
+    local content = imbueBarFrame.content
     slots[1]:ClearAllPoints()
-    slots[1]:SetPoint("LEFT", imbueBarFrame, "LEFT", margin, 0)
-    slots[1]:SetPoint("TOP", imbueBarFrame, "TOP", 0, offsetY)
+    slots[1]:SetPoint("LEFT", content, "LEFT", margin, 0)
+    slots[1]:SetPoint("TOP", content, "TOP", 0, offsetY)
     slots[1]:SetSize(slotW, SLOT_H)
     slots[1].icon:SetSize(iconSize, iconSize)
     slots[2]:ClearAllPoints()
     slots[2]:SetPoint("LEFT", slots[1], "RIGHT", gap, 0)
-    slots[2]:SetPoint("TOP", imbueBarFrame, "TOP", 0, offsetY)
+    slots[2]:SetPoint("TOP", content, "TOP", 0, offsetY)
     slots[2]:SetSize(slotW, SLOT_H)
     slots[2].icon:SetSize(iconSize, iconSize)
     UpdateImbueBar()

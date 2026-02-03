@@ -11,8 +11,12 @@ if not M then return end
 
 local TEX = M.TEX
 local FOCUSED_BUFF_SPELL_ID = 43339  -- "Focused" (Shamanistic Focus proc), TBC
-local FOCUS_FADE_IN_DURATION = 0.18
+local FOCUS_FADE_IN_DURATION = 0.06  -- fast off→on so proc feels instant
 local FOCUS_FADE_OUT_DURATION = 0.6
+local FOCUS_HOLD_AFTER_OFF = 3.0  -- seconds to hold "on" art after proc ends before fading to off
+local FOCUS_PULSE_MIN = 0.90   -- scale 90%
+local FOCUS_PULSE_MAX = 1.0   -- scale 100%
+local FOCUS_PULSE_PERIOD = 1.0 -- seconds per full cycle (100% -> 80% -> 100%)
 
 local focusFrame
 local lastFocusedActive = false
@@ -22,6 +26,8 @@ local FOCUS_TEST_HOLD = 4  -- seconds "on" before fading out
 local focusTestTimer = nil
 local focusTestFadeOutTimer = nil
 local focusTestActive = false
+local focusOverlayFadingOff = false  -- true while overlay is fading on->off; prevents interruption
+local focusOverlayFadingOn = false   -- true while overlay is fading off->on; prevents restart
 
 local DEFAULTS = {
     point = "CENTER",
@@ -65,7 +71,7 @@ local function CreateFocusFrame()
     local iconSize = 80
     local padW, padH = 16, 24
     local f = CreateFrame("Frame", "ShammyTimeShamanisticFocus", UIParent)
-    f:SetFrameStrata("DIALOG")
+    f:SetFrameStrata("MEDIUM")
     f:SetSize(iconSize + padW, iconSize + padH)
     f:SetClipsChildren(false)
     f:SetScale(db.scale or 0.8)
@@ -103,6 +109,8 @@ local function CreateFocusFrame()
     focusShadow:SetVertexColor(FOCUS_SHADOW_TINT[1], FOCUS_SHADOW_TINT[2], FOCUS_SHADOW_TINT[3], FOCUS_SHADOW_TINT[4])
     focusShadow:Show()
     f.focusShadow = focusShadow
+    f.baseIconSize = iconSize
+    f.baseShadowSize = FOCUS_SHADOW_SIZE
 
     -- Base: "off" image always visible
     local focusOff = f:CreateTexture(nil, "ARTWORK")
@@ -134,8 +142,41 @@ local function CreateFocusFrame()
             f.focusAlphaTicker = nil
         end
     end
+    -- Pulse ticker: texture size 100% <-> 80% while proc is active (no frame movement)
+    f.focusPulseTicker = nil
+    local function stopPulseTicker()
+        if f.focusPulseTicker then
+            f.focusPulseTicker:Cancel()
+            f.focusPulseTicker = nil
+        end
+        local sz = f.baseIconSize
+        local ss = f.baseShadowSize
+        f.focusOff:SetSize(sz, sz)
+        f.focusOn:SetSize(sz, sz)
+        f.focusShadow:SetSize(ss, ss)
+    end
+    local function startPulse()
+        stopPulseTicker()
+        local baseIcon = f.baseIconSize
+        local baseShadow = f.baseShadowSize
+        f.focusPulseTicker = C_Timer.NewTicker(1/60, function()
+            local t = GetTime() % FOCUS_PULSE_PERIOD
+            local phase = t / FOCUS_PULSE_PERIOD
+            -- Triangle wave: 1.0 -> 0.8 -> 1.0 over one period
+            local pulseScale = (phase <= 0.5) and (FOCUS_PULSE_MAX - (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * phase)
+                or (FOCUS_PULSE_MIN + (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * (phase - 0.5))
+            local iconSz = baseIcon * pulseScale
+            local shadowSz = baseShadow * pulseScale
+            f.focusOff:SetSize(iconSz, iconSz)
+            f.focusOn:SetSize(iconSz, iconSz)
+            f.focusShadow:SetSize(shadowSz, shadowSz)
+        end)
+    end
     local function fadeInOn()
         stopAlphaTicker()
+        stopPulseTicker()
+        focusOverlayFadingOff = false  -- cancel any in-progress fade-out
+        focusOverlayFadingOn = true
         local startAlpha = focusOn:GetAlpha()
         local startTime = GetTime()
         f.focusAlphaTicker = C_Timer.NewTicker(1/60, function()
@@ -143,13 +184,17 @@ local function CreateFocusFrame()
             if t >= 1 then
                 focusOn:SetAlpha(1)
                 stopAlphaTicker()
+                focusOverlayFadingOn = false
+                startPulse()
                 return
             end
             focusOn:SetAlpha(startAlpha + (1 - startAlpha) * t)
         end)
     end
-    local function fadeOutOn()
+    local function fadeOutOn(onComplete)
         stopAlphaTicker()
+        stopPulseTicker()
+        focusOverlayFadingOn = false  -- cancel any in-progress fade-in
         local startAlpha = focusOn:GetAlpha()
         local startTime = GetTime()
         f.focusAlphaTicker = C_Timer.NewTicker(1/60, function()
@@ -157,6 +202,7 @@ local function CreateFocusFrame()
             if t >= 1 then
                 focusOn:SetAlpha(0)
                 stopAlphaTicker()
+                if onComplete then onComplete() end
                 return
             end
             focusOn:SetAlpha(startAlpha * (1 - t))
@@ -164,30 +210,104 @@ local function CreateFocusFrame()
     end
     f.fadeInOn = fadeInOn
     f.fadeOutOn = fadeOutOn
+    f.startPulse = startPulse
     f.stopAlphaTicker = stopAlphaTicker
+    f.stopPulseTicker = stopPulseTicker
 
     focusFrame = f
     return f
 end
 
-local function UpdateFocus()
+-- Simple light logic: ON when buff is on, OFF when buff is off, with smooth animations.
+-- hasBuffOverride: hint from main addon, but we always verify with HasFocusedBuff() for ground truth.
+local function UpdateFocus(hasBuffOverride)
     local f = CreateFocusFrame()
-    -- Only update alpha; never touch frame position so user's placement is kept
-    local hasFocused = HasFocusedBuff()
-
-    if hasFocused and not lastFocusedActive then
-        f.stopAlphaTicker()
-        f.focusOn:SetAlpha(0)
-        f.fadeInOn()
-    elseif not hasFocused and lastFocusedActive then
-        f.stopAlphaTicker()
-        f.focusOn:SetAlpha(1)
-        f.fadeOutOn()
-    elseif not hasFocused then
-        f.stopAlphaTicker()
-        f.focusOn:SetAlpha(0)
+    
+    -- Always check the REAL buff state - this is ground truth
+    local buffIsOn = HasFocusedBuff()
+    
+    -- Only trust override if we're NOT already in a fade-off sequence
+    -- (fade-off means we saw the buff end via UNIT_AURA, so we have fresher info than the override)
+    if hasBuffOverride == true and not buffIsOn and not focusOverlayFadingOff then
+        buffIsOn = true
     end
-    lastFocusedActive = hasFocused
+    
+    local currentAlpha = f.focusOn:GetAlpha() or 0
+    
+    -- BUFF IS ON: show "on" overlay
+    if buffIsOn then
+        -- Cancel any fade-out in progress
+        if focusOverlayFadingOff then
+            focusOverlayFadingOff = false
+            f.stopAlphaTicker()
+            f.stopPulseTicker()
+        end
+        ShammyTime.focusFadeHoldUntil = nil
+        
+        -- If already fading in, let it continue
+        if focusOverlayFadingOn then
+            lastFocusedActive = true
+            return
+        end
+        
+        -- If already at full alpha and pulsing, do nothing
+        if currentAlpha >= 0.99 and f.focusPulseTicker then
+            -- Already showing "on" and pulsing, nothing to do
+        elseif currentAlpha >= 0.99 then
+            -- At full alpha but not pulsing, start pulse
+            f.startPulse()
+        else
+            -- Need to show "on" - fade in from current alpha
+            f.fadeInOn()
+        end
+        lastFocusedActive = true
+        return
+    end
+    
+    -- BUFF IS OFF: show "off" overlay (fade out if needed)
+    
+    -- If we're already fading out, let it continue
+    if focusOverlayFadingOff then
+        lastFocusedActive = false
+        return
+    end
+    
+    -- If we were fading in but buff went off, cancel and fade out
+    if focusOverlayFadingOn then
+        focusOverlayFadingOn = false
+        f.stopAlphaTicker()
+        f.stopPulseTicker()
+        -- Start fade out from current position
+        focusOverlayFadingOff = true
+        f.fadeOutOn(function()
+            focusOverlayFadingOff = false
+            ShammyTime.focusFadeHoldUntil = GetTime() + FOCUS_HOLD_AFTER_OFF
+            if ShammyTime.RequestFocusFadeUpdate then
+                ShammyTime.RequestFocusFadeUpdate(FOCUS_HOLD_AFTER_OFF)
+            end
+        end)
+        lastFocusedActive = false
+        return
+    end
+    
+    -- If buff just ended (was on, now off), start the fade-out animation
+    if lastFocusedActive or currentAlpha > 0.01 then
+        f.stopAlphaTicker()
+        f.stopPulseTicker()
+        focusOverlayFadingOff = true
+        f.fadeOutOn(function()
+            focusOverlayFadingOff = false
+            -- After overlay fade completes, hold the "off" art visible before frame fades
+            ShammyTime.focusFadeHoldUntil = GetTime() + FOCUS_HOLD_AFTER_OFF
+            if ShammyTime.RequestFocusFadeUpdate then
+                ShammyTime.RequestFocusFadeUpdate(FOCUS_HOLD_AFTER_OFF)
+            end
+        end)
+        lastFocusedActive = false
+        return
+    end
+    
+    lastFocusedActive = false
 end
 
 -- Test mode: proc every 10s, quick fade in then hold then slow fade out (like real life)
@@ -202,15 +322,20 @@ function ShammyTime.StartShamanisticFocusTest()
     local function doProc()
         if not focusFrame or not focusTestActive then return end
         focusFrame.stopAlphaTicker()
+        focusFrame.stopPulseTicker()
         focusFrame.focusOn:SetAlpha(0)
         focusFrame.fadeInOn()
         if focusTestFadeOutTimer then focusTestFadeOutTimer:Cancel() end
+        -- After hold, fade "on" to "off" (same as real proc)
         focusTestFadeOutTimer = C_Timer.NewTimer(FOCUS_TEST_HOLD, function()
             focusTestFadeOutTimer = nil
             if focusFrame and focusTestActive then
                 focusFrame.stopAlphaTicker()
-                focusFrame.focusOn:SetAlpha(1)
-                focusFrame.fadeOutOn()
+                focusFrame.stopPulseTicker()
+                focusOverlayFadingOff = true
+                focusFrame.fadeOutOn(function()
+                    focusOverlayFadingOff = false
+                end)
             end
         end)
     end
@@ -229,6 +354,14 @@ function ShammyTime.StopShamanisticFocusTest()
         focusTestFadeOutTimer:Cancel()
         focusTestFadeOutTimer = nil
     end
+    -- Clean up any in-progress fade state from test
+    focusOverlayFadingOff = false
+    focusOverlayFadingOn = false
+    if focusFrame then
+        focusFrame.stopAlphaTicker()
+        focusFrame.stopPulseTicker()
+    end
+    -- Sync to real buff state
     UpdateFocus()
 end
 
@@ -273,3 +406,5 @@ end)
 
 ShammyTime.HasFocusedBuff = HasFocusedBuff
 ShammyTime.GetShamanisticFocusFrame = function() return focusFrame end
+-- Called from main addon after setting focus frame alpha. Pass hasBuff when main addon already computed it so "on" art shows even if UNIT_AURA order lags.
+ShammyTime.UpdateShamanisticFocusVisual = UpdateFocus

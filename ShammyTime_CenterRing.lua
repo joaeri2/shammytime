@@ -17,6 +17,15 @@ local totemBarFrame
 local WF_NUMBERS_HOLD_BEFORE_FADE = 2
 -- How long "Windfury!" + total text stays fully visible after proc anim ends before fading (seconds)
 local WF_TEXT_HOLD_BEFORE_FADE = 1
+-- Lightning pulses after main proc: delay after BOOM, then irregular blinks (electrical feel)
+local WF_LIGHTNING_DELAY_AFTER_BOOM = 0.55   -- pause after main anim before first lightning
+local WF_LIGHTNING_PULSE_COUNT = 3
+-- Bounded randomness so each proc feels different but never crazy
+local WF_LIGHTNING_ENERGY_PEAK_MIN, WF_LIGHTNING_ENERGY_PEAK_MAX = 0.28, 0.55
+local WF_LIGHTNING_RUNE_PEAK_MIN, WF_LIGHTNING_RUNE_PEAK_MAX = 0.22, 0.45
+local WF_LIGHTNING_UP_DUR_MIN, WF_LIGHTNING_UP_DUR_MAX = 0.03, 0.065
+local WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX = 0.07, 0.14
+local WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX = 0.09, 0.19
 
 -- Center ring (and all satellites, as children) scale; read/write via GetDB().wfRadialScale (0.5–2).
 local function GetRadialScale()
@@ -297,6 +306,83 @@ local function CreateCenterRingFrame()
     ag:SetScript("OnFinished", onProcAnimEnd)
     ag:SetScript("OnStop", onProcAnimEnd)
 
+    -- Lightning pulses: small blinks on energy + runes after main proc (electricity/lightning feel)
+    local function randBetween(lo, hi)
+        return lo + math.random() * (hi - lo)
+    end
+    local function BuildLightningPulseGroup(rf)
+        if rf.lightningPulseGroup then return rf.lightningPulseGroup end
+        local g = rf:CreateAnimationGroup()
+        local energyUp = g:CreateAnimation("Alpha")
+        energyUp:SetTarget(rf.energy)
+        energyUp:SetOrder(1)
+        energyUp:SetDuration(0.045)
+        energyUp:SetFromAlpha(0.12)
+        energyUp:SetToAlpha(0.5)
+        local energyDown = g:CreateAnimation("Alpha")
+        energyDown:SetTarget(rf.energy)
+        energyDown:SetOrder(2)
+        energyDown:SetDuration(0.1)
+        energyDown:SetFromAlpha(0.5)
+        energyDown:SetToAlpha(0.12)
+        local runesUp = g:CreateAnimation("Alpha")
+        runesUp:SetTarget(rf.runes)
+        runesUp:SetOrder(1)
+        runesUp:SetDuration(0.045)
+        runesUp:SetFromAlpha(0.18)
+        runesUp:SetToAlpha(0.42)
+        local runesDown = g:CreateAnimation("Alpha")
+        runesDown:SetTarget(rf.runes)
+        runesDown:SetOrder(2)
+        runesDown:SetDuration(0.1)
+        runesDown:SetFromAlpha(0.42)
+        runesDown:SetToAlpha(0.18)
+        rf.lightningPulseGroup = g
+        rf.lightningPulseAnims = { energyUp = energyUp, energyDown = energyDown, runesUp = runesUp, runesDown = runesDown }
+        return g
+    end
+    function ShammyTime.StartLightningPulses(rf)
+        if not rf or not rf.energy or not rf.runes then return end
+        if rf.lightningPulseTimer then
+            rf.lightningPulseTimer:Cancel()
+            rf.lightningPulseTimer = nil
+        end
+        if rf.lightningPulseGroup then rf.lightningPulseGroup:Stop() end
+        local g = BuildLightningPulseGroup(rf)
+        local anims = rf.lightningPulseAnims
+        local pulseIndex = 0
+        local function runNextPulse()
+            pulseIndex = pulseIndex + 1
+            if pulseIndex > WF_LIGHTNING_PULSE_COUNT then return end
+            -- Falloff so later pulses are weaker (fading lightning)
+            local falloff = 1 - (pulseIndex - 1) * 0.3
+            if falloff < 0.35 then falloff = 0.35 end
+            local ePeak = randBetween(WF_LIGHTNING_ENERGY_PEAK_MIN, WF_LIGHTNING_ENERGY_PEAK_MAX) * falloff
+            local rPeak = randBetween(WF_LIGHTNING_RUNE_PEAK_MIN, WF_LIGHTNING_RUNE_PEAK_MAX) * falloff
+            local upDur = randBetween(WF_LIGHTNING_UP_DUR_MIN, WF_LIGHTNING_UP_DUR_MAX)
+            local downDur = randBetween(WF_LIGHTNING_DOWN_DUR_MIN, WF_LIGHTNING_DOWN_DUR_MAX)
+            anims.energyUp:SetToAlpha(ePeak)
+            anims.energyUp:SetDuration(upDur)
+            anims.energyDown:SetFromAlpha(ePeak)
+            anims.energyDown:SetDuration(downDur)
+            anims.runesUp:SetToAlpha(rPeak)
+            anims.runesUp:SetDuration(upDur)
+            anims.runesDown:SetFromAlpha(rPeak)
+            anims.runesDown:SetDuration(downDur)
+            g:SetScript("OnFinished", function()
+                if pulseIndex < WF_LIGHTNING_PULSE_COUNT then
+                    local gap = randBetween(WF_LIGHTNING_GAP_MIN, WF_LIGHTNING_GAP_MAX)
+                    rf.lightningPulseTimer = C_Timer.NewTimer(gap, function()
+                        rf.lightningPulseTimer = nil
+                        runNextPulse()
+                    end)
+                end
+            end)
+            g:Play()
+        end
+        runNextPulse()
+    end
+
     -- Text color flash (no scaling): instant flash to bright, then fade back
     function f:FlashText()
         -- Instant flash to bright color
@@ -485,6 +571,16 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     end
     f:SetScale(GetRadialScale())
     local rf = f.ringFrame
+    -- Cancel any lightning pulses or delayed start from a previous proc
+    if rf.lightningStartTimer then
+        rf.lightningStartTimer:Cancel()
+        rf.lightningStartTimer = nil
+    end
+    if rf.lightningPulseTimer then
+        rf.lightningPulseTimer:Cancel()
+        rf.lightningPulseTimer = nil
+    end
+    if rf.lightningPulseGroup then rf.lightningPulseGroup:Stop() end
     rf.energy:SetAlpha(0.12)
     rf.runes:SetAlpha(0.18)
     rf:SetScale(1)
@@ -524,6 +620,12 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
             end
             rf:SetScale(1)
             if ShammyTime.ResetSatellitePositions then ShammyTime.ResetSatellitePositions() end
+            -- Delay then lightning pulses (electrical feel: BOOM ... pause ... blink blink blink)
+            if rf.lightningStartTimer then rf.lightningStartTimer:Cancel() end
+            rf.lightningStartTimer = C_Timer.NewTimer(WF_LIGHTNING_DELAY_AFTER_BOOM, function()
+                rf.lightningStartTimer = nil
+                if ShammyTime.StartLightningPulses then ShammyTime.StartLightningPulses(rf) end
+            end)
         end
     end)
     f:FlashText()

@@ -292,9 +292,10 @@ local timerTicker
 local windfuryStatsFrame
 
 -- Windfury proc stats: pull (this combat) and session (since login / last reset).
--- count = Windfury Attack hits; swings = eligible white swings (SWING_DAMAGE from player; WF hits don't proc WF).
-local wfPull  = { total = 0, count = 0, min = nil, max = nil, crits = 0, swings = 0 }
-local wfSession = { total = 0, count = 0, min = nil, max = nil, crits = 0, swings = 0 }
+-- count = Windfury Attack hits; procs = proc events (1 per WF proc, whether 1 or 2 hits); swings = eligible white swings.
+local wfPull  = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
+local wfSession = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
+local lastWfHitTime = 0  -- used to group hits into one proc (0.4s window)
 -- Windfury popup: buffer damage for one proc (2 hits), then show total in floating text
 local wfPopupTotal = 0
 local wfPopupTimer = nil
@@ -321,7 +322,7 @@ function ShammyTime.GetRadialPositionDB()
     db.wfRadialPos = db.wfRadialPos or {}
     local key = GetRadialPositionKey()
     if not db.wfRadialPos[key] then
-        db.wfRadialPos[key] = { center = nil, totemBar = nil }
+        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil }
     end
     return db.wfRadialPos[key]
 end
@@ -451,6 +452,7 @@ local function SaveWindfuryDB()
     db.wfSession = {
         total = wfSession.total,
         count = wfSession.count,
+        procs = wfSession.procs or 0,
         min = wfSession.min,
         max = wfSession.max,
         crits = wfSession.crits or 0,
@@ -459,6 +461,7 @@ local function SaveWindfuryDB()
     db.wfLastPull = {
         total = wfPull.total,
         count = wfPull.count,
+        procs = wfPull.procs or 0,
         min = wfPull.min,
         max = wfPull.max,
         crits = wfPull.crits or 0,
@@ -472,6 +475,7 @@ local function RestoreWindfuryDB()
     if db.wfSession then
         wfSession.total = db.wfSession.total or 0
         wfSession.count = db.wfSession.count or 0
+        wfSession.procs = db.wfSession.procs or 0
         wfSession.min = db.wfSession.min
         wfSession.max = db.wfSession.max
         wfSession.crits = db.wfSession.crits or 0
@@ -480,6 +484,7 @@ local function RestoreWindfuryDB()
     if db.wfLastPull then
         wfPull.total = db.wfLastPull.total or 0
         wfPull.count = db.wfLastPull.count or 0
+        wfPull.procs = db.wfLastPull.procs or 0
         wfPull.min = db.wfLastPull.min
         wfPull.max = db.wfLastPull.max
         wfPull.crits = db.wfLastPull.crits or 0
@@ -511,11 +516,16 @@ local function RecordEligibleSwing()
 end
 
 -- Record one Windfury hit (amount, isCrit) into pull and session stats.
--- Buffers damage for floating popup: after 0.4s with no new hit, show total (one proc = up to 2 hits).
+-- One proc = 1 or 2 hits; we count proc events (procs) once per burst using a 0.4s window; count = total hits.
+local WF_PROC_WINDOW = 0.4
 local function RecordWindfuryHit(amount, isCrit)
     if not amount or amount <= 0 then return end
     if isCrit then ShammyTime.lastProcHadCrit = true end  -- for "Windfury! CRITICAL!" / popup
+    local now = GetTime()
+    local isNewProc = (now - lastWfHitTime) > WF_PROC_WINDOW
+    lastWfHitTime = now
     for _, st in ipairs({ wfPull, wfSession }) do
+        if isNewProc then st.procs = (st.procs or 0) + 1 end
         st.total = st.total + amount
         st.count = st.count + 1
         if st.min == nil or amount < st.min then st.min = amount end
@@ -540,15 +550,15 @@ end
 
 -- Reset pull stats (call when entering combat).
 local function ResetWindfuryPull()
-    wfPull.total, wfPull.count, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, nil, nil, 0, 0
+    wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
 end
 
 -- Reset session stats (and pull).
 local function ResetWindfurySession()
-    wfPull.total, wfPull.count, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, nil, nil, 0, 0
-    wfSession.total, wfSession.count, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, nil, nil, 0, 0
+    wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
+    wfSession.total, wfSession.count, wfSession.procs, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, 0, nil, nil, 0, 0
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
 end
@@ -568,6 +578,10 @@ local function SimulateTestProc()
     RecordWindfuryHit(amount1, crit1)
     RecordWindfuryHit(amount2, crit2)
     local total = amount1 + amount2
+    ShammyTime.lastProcTotal = total  -- so radial/satellites and GetWindfuryStats() show this proc
+    if windfuryStatsFrame and windfuryStatsFrame.UpdateText then
+        windfuryStatsFrame:UpdateText()
+    end
     if ShammyTime.PlayCenterRingProc then ShammyTime.PlayCenterRingProc(total, true) end
 end
 
@@ -768,6 +782,26 @@ local function GetWeaponImbueFromEnchantInfo()
     local remainingSec = (type(remaining) == "number" and remaining / 1000) or 0
     local expirationTime = GetTime() + remainingSec
     return icon, expirationTime, name, spellId
+end
+
+-- Returns main hand and off hand weapon imbue data for the imbue bar (left = MH, right = OH).
+-- Returns: { mainHand = { icon, expirationTime, name, spellId } or nil, offHand = { ... } or nil }
+function ShammyTime.GetWeaponImbuePerHand()
+    local out = { mainHand = nil, offHand = nil }
+    if not GetWeaponEnchantInfo then return out end
+    local hasMH, expMH, _, enchantIdMH, hasOH, expOH, _, enchantIdOH = GetWeaponEnchantInfo()
+    local function makeSlot(hasEnchant, expMs, enchantId)
+        if not hasEnchant or not expMs or expMs <= 0 or not enchantId then return nil end
+        local spellId = WEAPON_IMBUE_ENCHANT_TO_SPELL[enchantId]
+        local name = (spellId and GetSpellInfo and GetSpellInfo(spellId)) or "Weapon Imbue"
+        local icon = WEAPON_IMBUE_ENCHANT_ICONS[enchantId] or WEAPON_IMBUE_ICON_ID
+        local remainingSec = (type(expMs) == "number" and expMs / 1000) or 0
+        local expirationTime = GetTime() + remainingSec
+        return { icon = icon, expirationTime = expirationTime, name = name, spellId = spellId }
+    end
+    out.mainHand = makeSlot(hasMH, expMH, enchantIdMH)
+    out.offHand = makeSlot(hasOH, expOH, enchantIdOH)
+    return out
 end
 
 -- Returns first weapon imbue on player: icon, expirationTime, name, spellId; or nil if none.
@@ -1357,7 +1391,7 @@ local function CreateMainFrame()
 end
 
 -- Windfury stats: same layout/design as totem bar — row of slots (Procs, Proc %, Crits, Min, Avg, Max, Total), each with Pull/Session values.
--- Procs = Windfury proc hits (WF Attack damage events; parry/dodge/miss not counted).
+-- Procs = number of proc events (1 per WF proc, whether it hits 1 or 2 times).
 local WF_STAT_LABELS = { "Procs", "Proc %", "Crits", "Min", "Avg", "Max", "Total" }
 local function CreateWindfuryStatsFrame()
     if windfuryStatsFrame then return windfuryStatsFrame end
@@ -1470,13 +1504,15 @@ local function CreateWindfuryStatsFrame()
                 end
                 return "–"
             end
-            -- Procs = Windfury proc hits (WF Attack damage events; parry/dodge/miss not counted)
-            if kind == "procs" then return tostring(st.count) end
-            -- Proc rate = WF proc hits / eligible white swings (WF hits don't proc WF)
+            -- Procs = number of proc events (1 per WF proc, whether 1 or 2 hits)
+            if kind == "procs" then return tostring(st.procs or 0) end
+            -- Proc % = proc events / eligible white swings
             if kind == "procrate" then
                 local swings = st.swings or 0
                 if swings <= 0 then return "–" end
-                local rate = st.count / swings
+                local procs = st.procs or 0
+                if procs <= 0 then return "0%" end
+                local rate = procs / swings
                 if rate >= 1 then return "100%" end
                 return ("%.0f%%"):format(rate * 100)
             end
@@ -1496,7 +1532,7 @@ local function CreateWindfuryStatsFrame()
             sf.pullVal:SetText(pullStr)
             sf.sessionVal:SetText(sessionStr)
             -- Show pull row whenever in a pull (count > 0) so both rows are visible in combat; hide when out of combat
-            if wfPull.count > 0 then sf.pullVal:Show() else sf.pullVal:Hide() end
+            if (wfPull.count or 0) > 0 then sf.pullVal:Show() else sf.pullVal:Hide() end
         end
     end
     wf:UpdateText()

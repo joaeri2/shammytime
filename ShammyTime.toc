@@ -10,6 +10,7 @@ ShammyTime.lua
 ShammyTime_Media.lua
 ShammyTime_CenterRing.lua
 ShammyTime_WindfuryTotemBar.lua
+ShammyTime_ImbueBar.lua
 ShammyTime_SatelliteRings.lua
 ShammyTime_Windfury.lua
 ShammyTime_ShamanisticFocus.lua

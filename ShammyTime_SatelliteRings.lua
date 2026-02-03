@@ -77,8 +77,15 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     f:SetScale(SATELLITE_SCALE)
     f:SetPoint("CENTER", parentFrame, "CENTER", offsetX, offsetY)
-    f:EnableMouse(false)  -- no drag on satellites; only center is movable
+    f:EnableMouse(true)   -- hover for quick-peek numbers (no RegisterForDrag)
+    f:EnableMouseWheel(false)
     f:Hide()
+    f:SetScript("OnEnter", function()
+        if ShammyTime.OnRadialHoverEnter then ShammyTime.OnRadialHoverEnter() end
+    end)
+    f:SetScript("OnLeave", function()
+        if ShammyTime.OnRadialHoverLeave then ShammyTime.OnRadialHoverLeave() end
+    end)
 
     if textures.full then
         -- Full-design: single texture (no layers)
@@ -125,6 +132,19 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     textFrame:Hide()
     f.textFrame = textFrame
 
+    -- Fade-out animation for chain fade (next satellite starts when previous has 500ms left)
+    local fadeOutAg = textFrame:CreateAnimationGroup()
+    local aOut = fadeOutAg:CreateAnimation("Alpha")
+    aOut:SetFromAlpha(1)
+    aOut:SetToAlpha(0)
+    aOut:SetDuration(0.7)
+    aOut:SetSmoothing("OUT")
+    fadeOutAg:SetScript("OnFinished", function()
+        textFrame:SetAlpha(1)
+        textFrame:Hide()
+    end)
+    textFrame.fadeOutAnim = fadeOutAg
+
     local lx = textLabelX ~= nil and textLabelX or (SATELLITE_FONT.labelX or 0)
     local ly = textLabelY ~= nil and textLabelY or (SATELLITE_FONT.labelY or 8)
     local vx = textValueX ~= nil and textValueX or (SATELLITE_FONT.valueX or 0)
@@ -144,6 +164,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f.value:SetFont(SATELLITE_FONT.path, SATELLITE_FONT.valueSize, SATELLITE_FONT.outline or "")
     f.valueRestColor = {1, 1, 1}
     f.valueFlashColor = {1, 1, 0.5}
+    f.currentValue = nil  -- used to hide text when 0/empty
 
     -- Proc pulse animation (same style as center ring)
     local pop = 1.18
@@ -225,10 +246,16 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         self:FlashText()
     end
 
-    -- Show satellite
+    -- Show satellite (ring always; text only if value is non-empty)
     function f:ShowSatellite()
         self:Show()
-        self.textFrame:Show()
+        local val = self.currentValue
+        local empty = (val == nil or val == "" or val == "0" or val == "0%" or val == "–")
+        if empty then
+            self.textFrame:Hide()
+        else
+            self.textFrame:Show()
+        end
     end
 
     -- Hide satellite
@@ -237,9 +264,18 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         self.textFrame:Hide()
     end
 
-    -- Set value text
+    -- Set value text; if 0 or empty, hide text so satellite shows ring only (no numbers)
     function f:SetValue(val)
-        self.value:SetText(val or "0")
+        self.currentValue = val
+        local empty = (val == nil or val == "" or val == "0" or val == "0%" or val == "–")
+        if empty then
+            self.textFrame:Hide()
+        else
+            self.value:SetText(val)
+            if self:IsShown() then
+                self.textFrame:Show()
+            end
+        end
     end
 
     satelliteFrames[name] = f
@@ -367,6 +403,51 @@ local function HideAllSatellites()
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f then f:HideSatellite() end
+    end
+end
+
+-- Chain fade: order left (195°) → around → top (27°) → end (345°) = SATELLITE_CONFIG order
+-- Next satellite starts when previous has 500ms left (stagger = 700 - 500 = 200ms)
+local SATELLITE_FADE_DURATION = 0.7
+local SATELLITE_FADE_STAGGER = 0.2  -- next starts when previous has 500ms left
+
+function ShammyTime.StartSatelliteTextChainFade()
+    EnsureAllSatellites()
+    for i, cfg in ipairs(SATELLITE_CONFIG) do
+        local f = satelliteFrames[cfg.name]
+        if f and f.textFrame and f.textFrame:IsShown() and f.textFrame.fadeOutAnim then
+            local delay = (i - 1) * SATELLITE_FADE_STAGGER
+            C_Timer.After(delay, function()
+                if not f or not f.textFrame or not f.textFrame.fadeOutAnim then return end
+                f.textFrame.fadeOutAnim:Stop()
+                f.textFrame:SetAlpha(1)
+                f.textFrame.fadeOutAnim:Play()
+            end)
+        end
+    end
+end
+
+-- Show all satellite text frames (for hover quick-peek)
+function ShammyTime.ShowAllSatelliteTexts()
+    for _, cfg in ipairs(SATELLITE_CONFIG) do
+        local f = satelliteFrames[cfg.name]
+        if f and f:IsShown() and f.textFrame then
+            if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
+            f.textFrame:SetAlpha(1)
+            f.textFrame:Show()
+        end
+    end
+end
+
+-- Hide all satellite text frames (after hover leave or chain fade)
+function ShammyTime.HideAllSatelliteTexts()
+    for _, cfg in ipairs(SATELLITE_CONFIG) do
+        local f = satelliteFrames[cfg.name]
+        if f and f.textFrame then
+            if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
+            f.textFrame:SetAlpha(1)
+            f.textFrame:Hide()
+        end
     end
 end
 

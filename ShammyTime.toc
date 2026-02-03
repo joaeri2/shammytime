@@ -12,4 +12,5 @@ ShammyTime_CenterRing.lua
 ShammyTime_WindfuryTotemBar.lua
 ShammyTime_SatelliteRings.lua
 ShammyTime_Windfury.lua
+ShammyTime_ShamanisticFocus.lua
 AssetTest.lua

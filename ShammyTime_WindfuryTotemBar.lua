@@ -35,7 +35,7 @@ local SLOT_OFFSETS = {
     { x = 4, y = 0 },  -- slot 3 (Water)
     { x = 0, y = 0 },  -- slot 4 (Air, rightmost)
 }
--- Bar position (whole bar up/down): ShammyTime_CenterRing.lua line ~88: SetPoint(..., 0, 65)  -- lower = bar further down
+-- Bar position: ShammyTimeWindfuryTotemBarFrame is separate from center; drag to move, position saved per character.
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Shadow behind icon: wf_center_shadow.tga (circular, fades at edges)
 local ICON_SHADOW_SIZE = 50   -- total size (icon is ~22; larger = more soft edge visible)
@@ -129,26 +129,24 @@ end
 
 local function CreateWindfuryTotemSlots()
     if windfurySlots[1] then return end
-    local center = ShammyTime.EnsureCenterRingExists and ShammyTime.EnsureCenterRingExists()
-    if not center or not center.totemBar then return end
+    local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
+    if not barFrame then return end
 
-    local bar = center.totemBar
-    windfurySlots.parent = center
-    -- Slot frames sit above the center frame (and its textures); Texture has no GetFrameLevel()
-    local baseLevel = center:GetFrameLevel() + 2
+    windfurySlots.parent = barFrame
+    local baseLevel = barFrame:GetFrameLevel() + 2
 
     for i = 1, 4 do
         local slot = DISPLAY_ORDER[i]
         local off = SLOT_OFFSETS[i] or { x = 0, y = 0 }
-        local sf = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%d"):format(i), center)
+        local sf = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%d"):format(i), barFrame)
         sf:SetSize(SLOT_W, SLOT_H)
         sf:SetFrameLevel(baseLevel)
         if i == 1 then
-            sf:SetPoint("LEFT", bar, "LEFT", SLOT_MARGIN + off.x, off.y)
+            sf:SetPoint("LEFT", barFrame, "LEFT", SLOT_MARGIN + off.x, off.y)
         else
             sf:SetPoint("LEFT", windfurySlots[i - 1], "RIGHT", SLOT_GAP + off.x, off.y)
         end
-        sf:SetPoint("TOP", bar, "TOP", off.x, SLOT_OFFSET_Y + off.y)
+        sf:SetPoint("TOP", barFrame, "TOP", off.x, SLOT_OFFSET_Y + off.y)
         sf:SetAlpha(SLOT_FRAME_ALPHA)
         sf:EnableMouse(false)
 
@@ -229,6 +227,12 @@ local function OnEvent(_, event)
     if event == "PLAYER_TOTEM_UPDATE" then
         CreateWindfuryTotemSlots()
         UpdateWindfuryTotemBar()
+        -- Show only the totem bar when placing totems (not the center ring / Windfury! text)
+        local db = ShammyTime.GetDB and ShammyTime.GetDB()
+        if db and db.wfRadialEnabled then
+            local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
+            if barFrame then barFrame:Show() end
+        end
     end
 end
 
@@ -250,23 +254,19 @@ if ShammyTime.EnsureCenterRingExists then
     C_Timer.After(0, Init)
 end
 
--- /wftotempos — print layout constants and current screen x,y coords for bar + slots (so you can adjust positioning)
+-- /wftotempos — print layout constants and current screen x,y coords for bar + slots
 SLASH_WFTOTEMPOS1 = "/wftotempos"
 SlashCmdList["WFTOTEMPOS"] = function()
-    local center = ShammyTime.EnsureCenterRingExists and ShammyTime.EnsureCenterRingExists()
-    if not center then
-        print("ShammyTime: Center ring not created. Show the Windfury radial first (/wfcenter).")
+    local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
+    if not barFrame then
+        print("ShammyTime: Totem bar not created. Place a totem or show radial (/wfcenter) then try again.")
         return
     end
     print("|cff00ff00ShammyTime totem bar layout|r")
     print(string.format("  Constants (edit in ShammyTime_WindfuryTotemBar.lua): SLOT_MARGIN=%d, SLOT_GAP=%d, SLOT_W=%d, SLOT_H=%d, SLOT_OFFSET_Y=%d", SLOT_MARGIN, SLOT_GAP, SLOT_W, SLOT_H, SLOT_OFFSET_Y))
-    print("  Bar Y offset: ShammyTime_CenterRing.lua line ~88  SetPoint(..., 0, 34)  (lower = bar further down)")
-    local bar = center.totemBar
-    if center.GetCenter then
-        local bx, by = center:GetCenter()
-        if bx then
-            print(string.format("  Center frame (screen): x=%.1f  y=%.1f  (bar is below this)", bx, by))
-        end
+    if barFrame.GetCenter and barFrame:GetCenter() then
+        local bx, by = barFrame:GetCenter()
+        print(string.format("  Totem bar frame (screen): x=%.1f  y=%.1f", bx, by))
     end
     for i = 1, 4 do
         local sf = windfurySlots[i]

@@ -57,6 +57,9 @@ M.TEX = {
     GLOW       = M.MEDIA .. "glow_soft.tga",
     RING_RUNES = M.MEDIA .. "ring_runes.tga",
     ASSET_TEST = M.MEDIA .. "wf_asset_test.tga",
+    -- Shamanistic Focus proc indicator (light on / light off)
+    FOCUS_ON  = M.MEDIA .. "shamanistic_focus_on.tga",
+    FOCUS_OFF = M.MEDIA .. "shamanistic_focus_off.tga",
 }
 
 -- Optional font (use GameFontNormal etc. if not set)

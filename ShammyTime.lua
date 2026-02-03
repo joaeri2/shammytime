@@ -264,7 +264,10 @@ local DEFAULTS = {
     wfPopupHold = 2.0,    -- seconds visible before fading (0.5–4)
     wfPopupLocked = false,
     wfRadialEnabled = true,  -- show radial UI on Windfury proc (in addition to text popup option)
-    wfRadialScale = 0.7,    -- scale for center + all satellite rings as one (0.5–2)
+    wfRadialScale = 0.7,    -- scale for center ring + satellites (circle only) (0.5–2)
+    wfTotemBarScale = 1.0,  -- scale for Windfury totem bar only (0.5–2)
+    wfRadialShown = false,  -- persist: center + totem bar visible (restored after reload; set when /wfcenter on, proc, or placing totem)
+    wfAlwaysShowNumbers = false,  -- if false (default): numbers fade after proc, show on hover; if true: numbers always visible
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -296,6 +299,9 @@ local wfSession = { total = 0, count = 0, min = nil, max = nil, crits = 0, swing
 local wfPopupTotal = 0
 local wfPopupTimer = nil
 local wfPopupFrame = nil
+local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
+local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
+local wfTestTimer = nil  -- /st test: Windfury + Shamanistic Focus proc every 10s (toggle off by /st test again)
 
 local function GetDB()
     ShammyTimeDB = ShammyTimeDB or {}
@@ -303,6 +309,21 @@ local function GetDB()
         if ShammyTimeDB[k] == nil then ShammyTimeDB[k] = v end
     end
     return ShammyTimeDB
+end
+
+-- Per-character position for Windfury radial (center ring + totem bar placed separately)
+local function GetRadialPositionKey()
+    return (GetRealmName() or "") .. "\001" .. (UnitName("player") or "")
+end
+
+function ShammyTime.GetRadialPositionDB()
+    local db = GetDB()
+    db.wfRadialPos = db.wfRadialPos or {}
+    local key = GetRadialPositionKey()
+    if not db.wfRadialPos[key] then
+        db.wfRadialPos[key] = { center = nil, totemBar = nil }
+    end
+    return db.wfRadialPos[key]
 end
 
 local function ApplyScale()
@@ -553,6 +574,112 @@ local function HideWindfuryRadial()
         if center.textFrame then center.textFrame:Hide() end
     end
     if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
+end
+
+-- Hover: smooth fade-in left-to-right (satellites then center), fade-out uses same animation as after-hold
+local HOVER_FADE_IN_DURATION = 0.22
+local HOVER_STAGGER = 0.07  -- delay between starting each element (left-to-right)
+
+local function CancelHoverFadeIn()
+    for _, ag in pairs(wfRadialHoverAnims) do
+        if ag and ag.Stop then ag:Stop() end
+    end
+    wfRadialHoverAnims = {}
+end
+
+-- Animate one frame's alpha from startAlpha -> 1 over duration (startAlpha defaults to 0; use current alpha to avoid blink on re-enter)
+local function FadeInFrame(frame, duration, startAlpha)
+    if not frame or not frame.CreateAnimationGroup then return end
+    startAlpha = (startAlpha == nil or startAlpha < 0) and 0 or math.min(1, startAlpha)
+    frame:SetAlpha(startAlpha)
+    local ag = frame:CreateAnimationGroup()
+    local a = ag:CreateAnimation("Alpha")
+    a:SetFromAlpha(startAlpha)
+    a:SetToAlpha(1)
+    a:SetDuration(duration)
+    a:SetSmoothing("OUT")
+    ag:SetScript("OnFinished", function()
+        frame:SetAlpha(1)
+        wfRadialHoverAnims[frame] = nil
+    end)
+    ag:SetScript("OnStop", function()
+        wfRadialHoverAnims[frame] = nil
+    end)
+    wfRadialHoverAnims[frame] = ag
+    ag:Play()
+end
+
+-- Show numbers with smooth fade-in: satellites left-to-right, then Windfury/total in center
+-- If all numbers already visible (mouse kept over), do nothing. If a frame is already fading in, don't restart.
+-- When re-entering after leave stopped anims, fade from current alpha to 1 (no reset to 0 = no blink).
+local function StartRadialNumbersFadeIn()
+    local center = _G.ShammyTimeCenterRing
+    if not center or not center:IsShown() then return end
+    if center.textFrame and center.textFrame.fadeOutAnim then center.textFrame.fadeOutAnim:Stop() end
+    if center.textFrame then center.textFrame:Show() end
+    local config = ShammyTime.SATELLITE_CONFIG or {}
+    local elements = {}
+    for _, cfg in ipairs(config) do
+        local f = ShammyTime.GetSatelliteFrame and ShammyTime.GetSatelliteFrame(cfg.name)
+        if f and f:IsShown() and f.textFrame and f.currentValue and f.currentValue ~= "" and f.currentValue ~= "0" and f.currentValue ~= "0%" and f.currentValue ~= "–" then
+            if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
+            f.textFrame:Show()
+            elements[#elements + 1] = f.textFrame
+        end
+    end
+    elements[#elements + 1] = center.textFrame
+    -- If mouse is kept over and all numbers already visible, don't start any animation
+    local allVisible = true
+    for _, textFrame in ipairs(elements) do
+        if textFrame and textFrame.GetAlpha and textFrame:GetAlpha() < 0.99 then
+            allVisible = false
+            break
+        end
+    end
+    if allVisible then return end
+    for i, textFrame in ipairs(elements) do
+        C_Timer.After((i - 1) * HOVER_STAGGER, function()
+            if not textFrame or not textFrame.SetAlpha then return end
+            -- If this frame is already fading in, don't restart (prevents blink)
+            local ag = wfRadialHoverAnims[textFrame]
+            if ag and ag.IsPlaying and ag:IsPlaying() then return end
+            -- If already fully visible, nothing to do
+            if textFrame:GetAlpha() >= 0.99 then return end
+            -- Fade from current alpha to 1 so re-entering after leave doesn't reset to 0 and blink
+            local fromAlpha = textFrame:GetAlpha()
+            FadeInFrame(textFrame, HOVER_FADE_IN_DURATION, fromAlpha)
+        end)
+    end
+end
+
+-- Fade out numbers (same as after-hold: center fade + satellite chain)
+local function StartRadialNumbersFadeOut()
+    local db = GetDB()
+    if db.wfAlwaysShowNumbers then return end
+    local center = _G.ShammyTimeCenterRing
+    if center and center.textFrame and center.textFrame:IsShown() and center.textFrame.fadeOutAnim then
+        center.textFrame.fadeOutAnim:Stop()
+        center.textFrame:SetAlpha(1)
+        center.textFrame.fadeOutAnim:Play()
+    end
+    if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
+end
+
+function ShammyTime.OnRadialHoverEnter()
+    if wfRadialHideNumbersTimer then
+        wfRadialHideNumbersTimer:Cancel()
+        wfRadialHideNumbersTimer = nil
+    end
+    StartRadialNumbersFadeIn()
+end
+
+function ShammyTime.OnRadialHoverLeave()
+    if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel() end
+    CancelHoverFadeIn()
+    wfRadialHideNumbersTimer = C_Timer.NewTimer(0.15, function()
+        wfRadialHideNumbersTimer = nil
+        StartRadialNumbersFadeOut()
+    end)
 end
 
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
@@ -1516,32 +1643,66 @@ local function DebugWeaponImbue()
 end
 
 local function PrintMainHelp()
-    print(C.gold .. "ShammyTime — Commands" .. C.r)
-    print(C.gray .. "  You can type " .. C.gold .. "/st" .. C.r .. C.gray .. " or " .. C.gold .. "/shammytime" .. C.r .. C.gray .. "." .. C.r)
     print("")
-    print(C.gold .. "  Main bar" .. C.r .. C.gray .. " (totems, Lightning Shield, weapon imbue):" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "lock" .. C.r .. C.gray .. " — Lock the bar so it can't be moved" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "unlock" .. C.r .. C.gray .. " — Unlock so you can drag the bar (same as " .. C.gold .. "move" .. C.r .. C.gray .. ")" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "scale" .. C.r .. C.gray .. " — Make the bar bigger or smaller. Size: 0.5 to 2, default is 1." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "debug" .. C.r .. C.gray .. " — Show technical info (for troubleshooting)" .. C.r)
+    print(C.gold .. "═══════════════════════════════════════" .. C.r)
+    print(C.gold .. "  ShammyTime" .. C.r .. C.gray .. "  —  " .. C.r .. C.gold .. "/st" .. C.r .. C.gray .. " or " .. C.r .. C.gold .. "/shammytime" .. C.r)
+    print(C.gold .. "═══════════════════════════════════════" .. C.r)
     print("")
-    print(C.gold .. "  Windfury bar" .. C.r .. C.gray .. " (proc stats when you have Windfury Weapon):" .. C.r)
-    print(C.gray .. "    Type " .. C.gold .. "/st wf" .. C.r .. C.gray .. " to see all Windfury options." .. C.r)
+    print(C.green .. "  GLOBAL (affects everything)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. "   — Lock all bars (no drag)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st unlock" .. C.r .. C.gray .. " — Unlock so you can drag" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Windfury + Shamanistic Focus proc every 10s (toggle; run again to stop)" .. C.r)
+    print("")
+    print(C.green .. "  CIRCLE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st radial" .. C.r .. C.gray .. "  on|off, scale, numbers" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st radial" .. C.r .. C.gray .. " for list" .. C.r)
+    print("")
+    print(C.green .. "  TOTEM BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st totem" .. C.r .. C.gray .. "  scale" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st totem" .. C.r .. C.gray .. " for list" .. C.r)
+    print("")
+    print(C.green .. "  SHAMANISTIC FOCUS" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st focus" .. C.r .. C.gray .. "  scale (proc indicator)" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st focus" .. C.r .. C.gray .. " for list" .. C.r)
+    print("")
+    print(C.gray .. "  LEGACY (deprecating soon)" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st legacy" .. C.r .. C.gray .. "  reset, bar, popup, main" .. C.r)
+    print(C.gray .. "    " .. C.gold .. "/st legacy" .. C.r .. C.gray .. " for list" .. C.r)
+    print("")
+    print(C.gold .. "═══════════════════════════════════════" .. C.r)
+    print("")
 end
 
-local function PrintWindfuryHelp()
-    print(C.gold .. "ShammyTime — Windfury bar options" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "reset" .. C.r .. C.gray .. " — Clear all Windfury stats (same as right-clicking the bar)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "lock" .. C.r .. C.gray .. " | " .. C.gold .. "unlock" .. C.r .. C.gray .. " — Lock or unlock the Windfury bar" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "scale 1.2" .. C.r .. C.gray .. " — Windfury bar size (0.5 to 2)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "enable" .. C.r .. C.gray .. " | " .. C.gold .. "disable" .. C.r .. C.gray .. " — Turn the Windfury tracker on or off" .. C.r)
+local function PrintRadialHelp()
     print("")
-    print(C.gold .. "  Windfury radial" .. C.r .. C.gray .. " — " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. " ; " .. C.gold .. "/st wf radial scale 0.8" .. C.r .. C.gray .. " resizes all rings together ; " .. C.gold .. "/wfresize 0.8" .. C.r .. C.gray .. " same ; " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays animation" .. C.r)
-    print(C.gold .. "  Windfury total popup" .. C.r .. C.gray .. " (damage text when Windfury procs):" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "popup on" .. C.r .. C.gray .. " | " .. C.gold .. "popup off" .. C.r .. C.gray .. " — Show or hide the popup" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "popup lock" .. C.r .. C.gray .. " | " .. C.gold .. "popup unlock" .. C.r .. C.gray .. " — Lock position or unlock to drag the popup" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "popup scale 1.3" .. C.r .. C.gray .. " — Popup text size, like ingame crits (0.5 to 2)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "popup hold 2" .. C.r .. C.gray .. " — Seconds the popup stays visible before fading (0.5 to 4)" .. C.r)
+    print(C.green .. "ShammyTime — Circle (" .. C.gold .. "/st radial" .. C.r .. C.green .. ")" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "on" .. C.r .. C.gray .. "  / " .. C.gold .. "off" .. C.r .. C.gray .. "     — Show or hide circle" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Size (0.5–2). Shortcut: " .. C.gold .. "/wfresize 0.8" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "numbers on" .. C.r .. C.gray .. "  — Numbers always visible" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "numbers off" .. C.r .. C.gray .. "  — Numbers fade; show on hover (default)" .. C.r)
+    print(C.gray .. "  Toggle UI: " .. C.gold .. "/wfcenter" .. C.r .. C.gray .. "  |  One-shot test: " .. C.gold .. "/wftest" .. C.r)
+    print("")
+end
+
+local function PrintTotemHelp()
+    print("")
+    print(C.green .. "ShammyTime — Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.green .. ")" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "scale 1" .. C.r .. C.gray .. "  — Size (0.5–2, default 1)" .. C.r)
+    print("")
+end
+
+local function PrintFocusHelp()
+    print("")
+    print(C.green .. "ShammyTime — Shamanistic Focus (" .. C.gold .. "/st focus" .. C.r .. C.green .. ")" .. C.r)
+    print(C.gray .. "  Proc indicator (light on/off when Shamanistic Focus is active)." .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "scale 1" .. C.r .. C.gray .. "  — Size (0.5–2, default 1)" .. C.r)
+    print("")
+end
+
+local function PrintLegacyHelp()
+    print("")
+    print(C.gray .. "ShammyTime — Legacy (" .. C.gold .. "/st legacy" .. C.r .. C.gray .. ") — deprecating soon" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "reset" .. C.r .. C.gray .. "     — Clear Windfury stats" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "bar lock|unlock|scale 1|on|off" .. C.r .. C.gray .. "  — Stats bar" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "popup on|off|lock|unlock|scale 1|hold 2" .. C.r .. C.gray .. "  — Damage popup" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "main lock|unlock|scale 1|debug" .. C.r .. C.gray .. "  — Main totem bar" .. C.r)
+    print("")
 end
 
 SLASH_SHAMMYTIME1 = "/shammytime"
@@ -1553,152 +1714,238 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
     if not cmd then cmd = msg end
     cmd = cmd and cmd:lower() or ""
     arg = arg and arg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+
+    -- Global: lock / unlock (all bars)
     if cmd == "lock" then
         db.locked = true
-        print(C.green .. "ShammyTime: Main bar is now locked." .. C.r)
+        db.wfLocked = true
+        db.wfPopupLocked = true
+        print(C.green .. "ShammyTime: All bars locked." .. C.r)
     elseif cmd == "unlock" or cmd == "move" then
         db.locked = false
-        print(C.green .. "ShammyTime: Main bar unlocked — you can drag it to move." .. C.r)
+        db.wfLocked = false
+        db.wfPopupLocked = false
+        print(C.green .. "ShammyTime: All bars unlocked — you can drag to move." .. C.r)
+    -- Global: test mode — Windfury proc every 10s + Shamanistic Focus proc every 10s (toggle)
+    elseif cmd == "test" then
+        if wfTestTimer then
+            wfTestTimer:Cancel()
+            wfTestTimer = nil
+            if ShammyTime.StopShamanisticFocusTest then ShammyTime.StopShamanisticFocusTest() end
+            print(C.green .. "ShammyTime: Test mode off." .. C.r)
+        else
+            wfTestTimer = C_Timer.NewTicker(10, function()
+                if ShammyTime.PlayCenterRingProc then
+                    ShammyTime.PlayCenterRingProc(3245, true)
+                end
+            end)
+            if ShammyTime.StartShamanisticFocusTest then ShammyTime.StartShamanisticFocusTest() end
+            print(C.green .. "ShammyTime: Test mode on — Windfury + Shamanistic Focus proc every 10s. Run " .. C.gold .. "/st test" .. C.r .. C.green .. " again to stop." .. C.r)
+        end
+    -- Global: scale (legacy main bar) and debug
     elseif cmd == "scale" then
         if arg == "" then
-            print(C.gray .. "ShammyTime: Main bar scale is " .. C.gold .. ("%.2f"):format(db.scale or 1) .. C.r .. C.gray .. ". Use " .. C.gold .. "/st scale" .. C.r .. C.gray .. " with a number from 0.5 to 2 (default is 1)." .. C.r)
+            print(C.gray .. "ShammyTime: Main bar scale " .. C.gold .. ("%.2f"):format(db.scale or 1) .. C.r .. C.gray .. ". " .. C.gold .. "/st legacy main scale 1" .. C.r .. C.gray .. " (0.5–2)." .. C.r)
         else
             local num = tonumber(arg)
             if num and num >= 0.5 and num <= 2 then
                 db.scale = num
                 ApplyScale()
-                print(C.green .. "ShammyTime: Main bar scale set to " .. ("%.2f"):format(num) .. "." .. C.r)
+                print(C.green .. "ShammyTime: Main bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Scale must be a number between 0.5 and 2 (default is 1)." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st scale 1.2" .. C.r)
+                print(C.red .. "ShammyTime: Scale 0.5–2. " .. C.gold .. "/st legacy main scale 1" .. C.r)
             end
         end
     elseif cmd == "debug" then
         DebugWeaponImbue()
-    elseif cmd == "wf" then
-        local subcmd, subarg = arg:match("^(%S+)%s*(.*)$")
-        subcmd = subcmd and subcmd:lower() or ""
-        subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-        if subcmd == "reset" then
-            ResetWindfurySession()
-            print(C.green .. "ShammyTime: Windfury stats reset." .. C.r)
-        elseif subcmd == "lock" then
-            db.wfLocked = true
-            print(C.green .. "ShammyTime: Windfury bar is now locked." .. C.r)
-        elseif subcmd == "unlock" then
-            db.wfLocked = false
-            print(C.green .. "ShammyTime: Windfury bar unlocked — you can drag it to move." .. C.r)
-        elseif subcmd == "scale" then
-            if subarg == "" then
-                print(C.gray .. "ShammyTime: Windfury bar scale is " .. C.gold .. ("%.2f"):format(db.wfScale or 1) .. C.r .. C.gray .. ". Use " .. C.gold .. "/st wf scale" .. C.r .. C.gray .. " with a number from 0.5 to 2 (default is 1)." .. C.r)
+    -- Circle: /st radial [on|off|scale X|numbers on|off]
+    elseif cmd == "radial" then
+        local a = arg:lower()
+        local scaleArg = a:match("^scale%s+(%S+)$")
+        local numArg = a:match("^numbers%s+(%S+)$")
+        if a == "on" or a == "enable" or a == "1" then
+            db.wfRadialEnabled = true
+            ShowWindfuryRadial()
+            print(C.green .. "ShammyTime: Circle on." .. C.r)
+        elseif a == "off" or a == "disable" or a == "0" then
+            db.wfRadialEnabled = false
+            HideWindfuryRadial()
+            print(C.green .. "ShammyTime: Circle off." .. C.r)
+        elseif scaleArg then
+            local num = tonumber(scaleArg)
+            if num and num >= 0.5 and num <= 2 then
+                db.wfRadialScale = num
+                local center = _G.ShammyTimeCenterRing
+                if center then center:SetScale(num) end
+                print(C.green .. "ShammyTime: Circle scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                local num = tonumber(subarg)
+                print(C.red .. "ShammyTime: Circle scale 0.5–2. " .. C.gold .. "/st radial scale 0.8" .. C.r)
+            end
+        elseif numArg == "on" or numArg == "enable" or numArg == "1" then
+            db.wfAlwaysShowNumbers = true
+            print(C.green .. "ShammyTime: Circle numbers always on." .. C.r)
+        elseif numArg == "off" or numArg == "disable" or numArg == "0" then
+            db.wfAlwaysShowNumbers = false
+            print(C.green .. "ShammyTime: Circle numbers fade; show on hover." .. C.r)
+        elseif a == "numbers" then
+            print(C.gray .. "ShammyTime: Circle numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "always on" .. C.r) or (C.gray .. "fade; show on hover" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st radial numbers on|off" .. C.r)
+        elseif a == "" then
+            print(C.gray .. "ShammyTime: Circle " .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ", scale " .. C.gold .. ("%.2f"):format(db.wfRadialScale or 0.7) .. C.r .. C.gray .. ", numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "on" .. C.r) or (C.gray .. "hover" .. C.r)) .. C.r)
+            PrintRadialHelp()
+        else
+            PrintRadialHelp()
+        end
+    -- Totem bar: /st totem [scale X]
+    elseif cmd == "totem" then
+        local a = arg:lower()
+        local scaleArg = a:match("^scale%s+(%S+)$")
+        if scaleArg then
+            local num = tonumber(scaleArg)
+            if num and num >= 0.5 and num <= 2 then
+                db.wfTotemBarScale = num
+                local bar = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
+                if bar then bar:SetScale(num) end
+                print(C.green .. "ShammyTime: Totem bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st totem scale 1" .. C.r)
+            end
+        elseif a == "" then
+            print(C.gray .. "ShammyTime: Totem bar scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2)." .. C.r)
+            PrintTotemHelp()
+        else
+            PrintTotemHelp()
+        end
+    -- Shamanistic Focus: /st focus [scale X]
+    elseif cmd == "focus" then
+        local a = arg:lower()
+        local scaleArg = a:match("^scale%s+(%S+)$")
+        ShammyTimeDB = ShammyTimeDB or {}
+        ShammyTimeDB.focusFrame = ShammyTimeDB.focusFrame or {}
+        local focusDb = ShammyTimeDB.focusFrame
+        if scaleArg then
+            local num = tonumber(scaleArg)
+            if num and num >= 0.5 and num <= 2 then
+                focusDb.scale = num
+                if ShammyTime.ApplyShamanisticFocusScale then ShammyTime.ApplyShamanisticFocusScale() end
+                print(C.green .. "ShammyTime: Shamanistic Focus scale " .. ("%.2f"):format(num) .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Shamanistic Focus scale 0.5–2. " .. C.gold .. "/st focus scale 1" .. C.r)
+            end
+        elseif a == "" then
+            local s = focusDb.scale
+            if s == nil then s = 1 end
+            print(C.gray .. "ShammyTime: Shamanistic Focus scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.5–2)." .. C.r)
+            PrintFocusHelp()
+        else
+            PrintFocusHelp()
+        end
+    -- Legacy: /st legacy [reset|bar ...|popup ...|main ...]
+    elseif cmd == "legacy" then
+        local sub, subarg = arg:match("^(%S+)%s*(.*)$")
+        sub = sub and sub:lower() or ""
+        subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+        if sub == "reset" then
+            ResetWindfurySession()
+            print(C.green .. "ShammyTime: Statistics reset." .. C.r)
+        elseif sub == "bar" then
+            local b, val = subarg:match("^(%S+)%s*(.*)$")
+            b = b and b:lower() or ""
+            val = val and val:gsub("^%s+", ""):gsub("%s+$", "") or ""
+            if b == "lock" then
+                db.wfLocked = true
+                print(C.green .. "ShammyTime: Legacy stats bar locked." .. C.r)
+            elseif b == "unlock" then
+                db.wfLocked = false
+                print(C.green .. "ShammyTime: Legacy stats bar unlocked." .. C.r)
+            elseif b == "on" or b == "enable" or b == "1" then
+                db.windfuryTrackerEnabled = true
+                if windfuryStatsFrame then windfuryStatsFrame:Show() end
+                print(C.green .. "ShammyTime: Legacy tracker on." .. C.r)
+            elseif b == "off" or b == "disable" or b == "0" then
+                db.windfuryTrackerEnabled = false
+                if windfuryStatsFrame then windfuryStatsFrame:Hide() end
+                print(C.green .. "ShammyTime: Legacy tracker off." .. C.r)
+            elseif b == "scale" then
+                local num = tonumber(val)
                 if num and num >= 0.5 and num <= 2 then
                     db.wfScale = num
                     ApplyScale()
-                    print(C.green .. "ShammyTime: Windfury bar scale set to " .. ("%.2f"):format(num) .. "." .. C.r)
+                    print(C.green .. "ShammyTime: Legacy bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
                 else
-                    print(C.red .. "ShammyTime: Windfury scale must be between 0.5 and 2 (default is 1)." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf scale 1.2" .. C.r)
-                end
-            end
-        elseif subcmd == "disable" or subcmd == "off" then
-            db.windfuryTrackerEnabled = false
-            if windfuryStatsFrame then windfuryStatsFrame:Hide() end
-            print(C.green .. "ShammyTime: Windfury tracker is now off." .. C.r)
-        elseif subcmd == "enable" or subcmd == "on" then
-            db.windfuryTrackerEnabled = true
-            if windfuryStatsFrame then windfuryStatsFrame:Show() end
-            print(C.green .. "ShammyTime: Windfury tracker is now on." .. C.r)
-        elseif subcmd == "radial" then
-            local radialArg = (subarg or ""):lower()
-            local radialScaleArg = radialArg:match("^scale%s+(%S+)$")
-            if radialArg == "on" or radialArg == "enable" or radialArg == "1" then
-                db.wfRadialEnabled = true
-                ShowWindfuryRadial()
-                print(C.green .. "ShammyTime: Windfury radial proc UI is now on." .. C.r)
-            elseif radialArg == "off" or radialArg == "disable" or radialArg == "0" then
-                db.wfRadialEnabled = false
-                HideWindfuryRadial()
-                print(C.green .. "ShammyTime: Windfury radial proc UI is now off." .. C.r)
-            elseif radialScaleArg then
-                local num = tonumber(radialScaleArg)
-                if num and num >= 0.5 and num <= 2 then
-                    db.wfRadialScale = num
-                    local center = _G.ShammyTimeCenterRing
-                    if center then center:SetScale(num) end
-                    print(C.green .. "ShammyTime: Windfury radial scale set to " .. ("%.2f"):format(num) .. " (all rings resize together)." .. C.r)
-                else
-                    print(C.red .. "ShammyTime: Radial scale must be between 0.5 and 2." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf radial scale 0.8" .. C.r)
+                    print(C.red .. "ShammyTime: Scale 0.5–2. " .. C.gold .. "/st legacy bar scale 1" .. C.r)
                 end
             else
-                print(C.gray .. "ShammyTime: Windfury radial is " .. C.r .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". Use " .. C.gold .. "/st wf radial on|off" .. C.r .. C.gray .. ". " .. C.gold .. "/st wf radial scale 0.8" .. C.r .. C.gray .. " resizes all rings together. " .. C.gold .. "/wftest" .. C.r .. C.gray .. " plays the animation." .. C.r)
+                print(C.gray .. "ShammyTime: " .. C.gold .. "/st legacy bar lock|unlock|on|off|scale 1" .. C.r)
             end
-        elseif subcmd == "popup" then
-            local popupSub, popupArg = subarg:match("^(%S+)%s*(.*)$")
-            popupSub = popupSub and popupSub:lower() or ""
-            popupArg = popupArg and popupArg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-            if popupSub == "on" or popupSub == "enable" or popupSub == "1" then
+        elseif sub == "popup" then
+            local p, pval = subarg:match("^(%S+)%s*(.*)$")
+            p = p and p:lower() or ""
+            pval = pval and pval:gsub("^%s+", ""):gsub("%s+$", "") or ""
+            if p == "on" or p == "enable" or p == "1" then
                 db.wfPopupEnabled = true
-                print(C.green .. "ShammyTime: Windfury total popup is now on." .. C.r)
-            elseif popupSub == "off" or popupSub == "disable" or popupSub == "0" then
+                print(C.green .. "ShammyTime: Damage popup on." .. C.r)
+            elseif p == "off" or p == "disable" or p == "0" then
                 db.wfPopupEnabled = false
-                print(C.green .. "ShammyTime: Windfury total popup is now off." .. C.r)
-            elseif popupSub == "lock" then
+                print(C.green .. "ShammyTime: Damage popup off." .. C.r)
+            elseif p == "lock" then
                 db.wfPopupLocked = true
-                print(C.green .. "ShammyTime: Windfury total popup position is now locked." .. C.r)
-            elseif popupSub == "unlock" then
+                print(C.green .. "ShammyTime: Popup locked." .. C.r)
+            elseif p == "unlock" then
                 db.wfPopupLocked = false
-                print(C.green .. "ShammyTime: Windfury total popup unlocked — drag the popup when it appears to move it." .. C.r)
-            elseif popupSub == "scale" then
-                if popupArg == "" then
-                    print(C.gray .. "ShammyTime: Windfury popup scale is " .. C.gold .. ("%.2f"):format(db.wfPopupScale or 1.3) .. C.r .. C.gray .. ". Use " .. C.gold .. "/st wf popup scale 1.3" .. C.r .. C.gray .. " (0.5 to 2, larger = like ingame crits)." .. C.r)
+                print(C.green .. "ShammyTime: Popup unlocked." .. C.r)
+            elseif p == "scale" then
+                local num = tonumber(pval)
+                if num and num >= 0.5 and num <= 2 then
+                    db.wfPopupScale = num
+                    print(C.green .. "ShammyTime: Popup scale " .. ("%.2f"):format(num) .. "." .. C.r)
                 else
-                    local num = tonumber(popupArg)
-                    if num and num >= 0.5 and num <= 2 then
-                        db.wfPopupScale = num
-                        print(C.green .. "ShammyTime: Windfury total popup scale set to " .. ("%.2f"):format(num) .. "." .. C.r)
-                    else
-                        print(C.red .. "ShammyTime: Popup scale must be between 0.5 and 2." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf popup scale 1.3" .. C.r)
-                    end
+                    print(C.red .. "ShammyTime: Popup scale 0.5–2." .. C.r)
                 end
-            elseif popupSub == "hold" or popupSub == "time" or popupSub == "dissipation" then
-                if popupArg == "" then
-                    print(C.gray .. "ShammyTime: Windfury popup hold is " .. C.gold .. ("%.1f"):format(db.wfPopupHold or 2) .. C.r .. C.gray .. " s. Use " .. C.gold .. "/st wf popup hold 2" .. C.r .. C.gray .. " (0.5 to 4 s, how long before fading)." .. C.r)
+            elseif p == "hold" or p == "time" then
+                local num = tonumber(pval)
+                if num and num >= 0.5 and num <= 4 then
+                    db.wfPopupHold = num
+                    print(C.green .. "ShammyTime: Popup hold " .. ("%.1f"):format(num) .. " s." .. C.r)
                 else
-                    local num = tonumber(popupArg)
-                    if num and num >= 0.5 and num <= 4 then
-                        db.wfPopupHold = num
-                        print(C.green .. "ShammyTime: Windfury total popup will stay visible for " .. ("%.1f"):format(num) .. " s before fading." .. C.r)
-                    else
-                        print(C.red .. "ShammyTime: Popup hold must be between 0.5 and 4 seconds." .. C.r .. C.gray .. " Example: " .. C.gold .. "/st wf popup hold 2" .. C.r)
-                    end
+                    print(C.red .. "ShammyTime: Popup hold 0.5–4 s." .. C.r)
                 end
-            elseif popupSub == "" then
-                local popupOn = db.wfPopupEnabled
-                local popupLocked = db.wfPopupLocked
-                print(C.gold .. "ShammyTime — Windfury total popup" .. C.r)
-                print(C.gray .. "  Show: " .. C.r .. (popupOn and (C.green .. "On" .. C.r) or (C.red .. "Off" .. C.r)) .. C.gray .. "  |  Position: " .. C.r .. (popupLocked and (C.green .. "Locked" .. C.r) or (C.gray .. "Unlocked (drag to move)" .. C.r)) .. C.gray .. "  |  Scale: " .. C.gold .. ("%.2f"):format(db.wfPopupScale or 1.3) .. C.r .. C.gray .. "  |  Hold: " .. C.gold .. ("%.1f"):format(db.wfPopupHold or 2) .. " s" .. C.r)
-                print(C.gray .. "  Defaults: scale 1.3, hold 2 s, position center. Popup works even if Windfury bar is disabled." .. C.r)
-                print("")
-                print(C.gray .. "  " .. C.gold .. "/st wf popup on|off" .. C.r .. C.gray .. " — Show or hide" .. C.r)
-                print(C.gray .. "  " .. C.gold .. "/st wf popup lock|unlock" .. C.r .. C.gray .. " — Lock position or unlock to drag" .. C.r)
-                print(C.gray .. "  " .. C.gold .. "/st wf popup scale 1.3" .. C.r .. C.gray .. " — Text size (0.5 to 2)" .. C.r)
-                print(C.gray .. "  " .. C.gold .. "/st wf popup hold 2" .. C.r .. C.gray .. " — Seconds visible before fading (0.5 to 4)" .. C.r)
             else
-                local popupOn = db.wfPopupEnabled
-                print(C.gray .. "ShammyTime: Windfury total popup is " .. C.r .. (popupOn and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". Use " .. C.gold .. "/st wf popup" .. C.r .. C.gray .. " for all popup options." .. C.r)
+                print(C.gray .. "ShammyTime: " .. C.gold .. "/st legacy popup on|off|lock|unlock|scale 1|hold 2" .. C.r)
             end
-        elseif subcmd == "" then
-            local on = db.windfuryTrackerEnabled
-            local popupOn = db.wfPopupEnabled
-            print(C.gold .. "ShammyTime — Windfury tracker" .. C.r)
-            print(C.gray .. "  Tracker: " .. C.r .. (on and (C.green .. "On" .. C.r) or (C.red .. "Off" .. C.r)) .. C.gray .. "  |  Damage popup: " .. C.r .. (popupOn and (C.green .. "On" .. C.r) or (C.red .. "Off" .. C.r)))
-            print("")
-            PrintWindfuryHelp()
+        elseif sub == "main" then
+            local m, mval = subarg:match("^(%S+)%s*(.*)$")
+            m = m and m:lower() or ""
+            mval = mval and mval:gsub("^%s+", ""):gsub("%s+$", "") or ""
+            if m == "lock" then
+                db.locked = true
+                print(C.green .. "ShammyTime: Main bar locked." .. C.r)
+            elseif m == "unlock" then
+                db.locked = false
+                print(C.green .. "ShammyTime: Main bar unlocked." .. C.r)
+            elseif m == "scale" then
+                local num = tonumber(mval)
+                if num and num >= 0.5 and num <= 2 then
+                    db.scale = num
+                    ApplyScale()
+                    print(C.green .. "ShammyTime: Main bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
+                else
+                    print(C.red .. "ShammyTime: Main bar scale 0.5–2." .. C.r)
+                end
+            elseif m == "debug" then
+                DebugWeaponImbue()
+            else
+                print(C.gray .. "ShammyTime: " .. C.gold .. "/st legacy main lock|unlock|scale 1|debug" .. C.r)
+            end
+        elseif sub == "" then
+            PrintLegacyHelp()
         else
-            print(C.gray .. "ShammyTime: Unknown Windfury option. Options:" .. C.r)
-            PrintWindfuryHelp()
+            print(C.gray .. "ShammyTime: Unknown legacy option. " .. C.gold .. "/st legacy" .. C.r .. C.gray .. " for list." .. C.r)
+            PrintLegacyHelp()
         end
     else
+        if cmd ~= "" then
+            print(C.gray .. "ShammyTime: Unknown command. Use " .. C.gold .. "/st" .. C.r .. C.gray .. " for menu." .. C.r)
+        end
         PrintMainHelp()
     end
 end

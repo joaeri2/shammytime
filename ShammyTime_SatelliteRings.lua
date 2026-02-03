@@ -370,26 +370,34 @@ local function HideAllSatellites()
     end
 end
 
--- Called every frame during center ring proc: move satellites outward/inward with ring scale (rubber-band)
+-- Ring proc peak scale (must match CenterRing pop) for satellite "pop out" scaling
+local PROC_POP_SCALE = 1.18
+
+-- Called every frame during center ring proc: move satellites outward + scale up 10% (rubber-band + pop toward player)
 function ShammyTime.OnRingProcScaleUpdate(scale)
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
+    -- Satellite visual scale: 1.0 at rest, 1.1 at proc peak (10% bigger = coming at you)
+    local scaleFactor = 1 + 0.1 * (scale - 1) / (PROC_POP_SCALE - 1)
+    local satelliteScale = SATELLITE_SCALE * scaleFactor
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX then
             local x = f.baseOffsetX * scale
             local y = f.baseOffsetY * scale
             f:SetPoint("CENTER", centerFrame, "CENTER", x, y)
+            f:SetScale(satelliteScale)
         end
     end
 end
 
--- Reset satellite positions to base (scale 1) when proc animation finishes or stops
+-- Reset satellite positions and scale to base when proc animation finishes or stops
 function ShammyTime.ResetSatellitePositions()
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX then
             f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX, f.baseOffsetY)
+            f:SetScale(SATELLITE_SCALE)
         end
     end
 end

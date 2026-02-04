@@ -255,7 +255,17 @@ local DEFAULTS = {
     wfTotemBarEnabled = true,   -- show Windfury totem bar (on/off via /st show totem)
     wfFocusEnabled = true,      -- show Shamanistic Focus (on/off via /st show focus)
     wfImbueBarEnabled = true,   -- show imbue bar (on/off via /st show imbue)
+    wfShieldEnabled = true,    -- show Lightning/Water Shield indicator (on/off via /st show shield)
+    shieldScale = 0.2,         -- scale for shield indicator (0.05–2; /st shield scale X)
+    shieldCount = nil,         -- override shield charge count (nil = auto from buff; 1–9 = fixed display)
+    shieldCountX = 0,          -- X offset for shield count text (default 0)
+    shieldCountY = -50,        -- Y offset for shield count text (default -50 = TIMER_OFFSET_BOTTOM)
     wfRadialScale = 1.0,    -- scale for center ring + satellites (circle only) (0.5–2)
+    wfSatelliteGap = nil,  -- gap in pixels between center ring edge and outer bubble edges (nil/0 = touch; positive = space, negative = overlap)
+    wfCenterSize = nil,    -- center circle diameter in pixels (nil = 200)
+    wfCenterTextTitleY = nil,    -- "Windfury!" line Y offset from center (nil = 13)
+    wfCenterTextTotalY = nil,    -- "TOTAL: xxx" line Y offset (nil = 0)
+    wfCenterTextCriticalY = nil, -- "CRITICAL" line Y offset (nil = 31)
     wfTotemBarScale = 1.0,  -- scale for Windfury totem bar only (0.5–2)
     wfRadialShown = false,  -- persist: center + satellites visible (restored after reload; set when /st circle toggle on or on Windfury proc; totem bar is separate)
     wfAlwaysShowNumbers = false,  -- if false (default): numbers fade after proc, show on hover; if true: numbers always visible
@@ -266,6 +276,21 @@ local DEFAULTS = {
     wfNoTotemsFadeDelay = 5,     -- seconds with no totems before totem bar fades out
     wfImbueFadeWhenLongDuration = true,  -- when on: imbue bar fades unless ≤ threshold left (default 2 min)
     wfImbueFadeThresholdSec = 120,       -- show imbue bar when any imbue has this many seconds or less left
+    -- Per-element text sizes (used by /st font); defaults = current in-game sizes; range typically 6–28
+    fontCircleTitle = 20,
+    fontCircleTotal = 14,
+    fontCircleCritical = 20,
+    fontSatelliteLabel = 8,
+    fontSatelliteValue = 13,
+    fontTotemTimer = 7,
+    fontImbueTimer = 20,
+    -- Outer bubbles: global text position (nil = use built-in 0, 8, 0, -6)
+    wfSatelliteLabelX = nil,
+    wfSatelliteLabelY = nil,
+    wfSatelliteValueX = nil,
+    wfSatelliteValueY = nil,
+    -- Per-bubble overrides: key = bubble name (air, stone, fire, grass, water, grass_2), value = { labelSize, valueSize, labelX, labelY, valueX, valueY }
+    wfSatelliteOverrides = nil,
 }
 
 -- State: previous totem presence per slot (to detect "just gone")
@@ -329,7 +354,7 @@ function ShammyTime.GetRadialPositionDB()
     db.wfRadialPos = db.wfRadialPos or {}
     local key = GetRadialPositionKey()
     if not db.wfRadialPos[key] then
-        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil }
+        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil }
     end
     return db.wfRadialPos[key]
 end
@@ -356,6 +381,8 @@ local function ResetAllToDefaults()
     db.wfTotemBarEnabled = true
     db.wfFocusEnabled = true
     db.wfImbueBarEnabled = true
+    db.wfShieldEnabled = true
+    db.shieldScale = 0.2
     db.wfFadeOutOfCombat = false
     db.wfFadeWhenNotProcced = false
     db.wfFocusFadeWhenNotProcced = false
@@ -364,7 +391,7 @@ local function ResetAllToDefaults()
     -- Always use a fresh table so we never index corrupted saved data (e.g. wfRadialPos as number)
     db.wfRadialPos = {}
     local key = GetRadialPositionKey()
-    db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil }
+    db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil }
     db.wfSession = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
     db.wfLastPull = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
     db.imbueBarScale = 0.4
@@ -747,6 +774,15 @@ end
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
 ShammyTime.lastProcTotal = 0
 ShammyTime.GetDB = GetDB
+
+-- Center circle size (diameter in pixels); used by CenterRing and SatelliteRings for tangent spacing
+function ShammyTime.GetCenterSize()
+    local db = GetDB()
+    local s = db.wfCenterSize
+    if s and s > 0 then return s end
+    return 200
+end
+
 ShammyTime.ResetWindfurySession = ResetWindfurySession
 ShammyTime.ShowWindfuryRadial = ShowWindfuryRadial
 ShammyTime.HideWindfuryRadial = HideWindfuryRadial
@@ -770,6 +806,10 @@ local function ApplyElementMouseState()
     if ShammyTime.EnsureImbueBarFrame then
         local imbueBar = ShammyTime.EnsureImbueBarFrame()
         if imbueBar then imbueBar:EnableMouse(visible(imbueBar) and useMouse or false) end
+    end
+    if ShammyTime.EnsureShieldFrame then
+        local shieldFrame = ShammyTime.EnsureShieldFrame()
+        if shieldFrame then shieldFrame:EnableMouse(visible(shieldFrame) and useMouse or false) end
     end
     if ShammyTime.SetSatellitesEnableMouse then
         ShammyTime.SetSatellitesEnableMouse(visible(center) and useMouse or false)
@@ -807,6 +847,13 @@ local function ApplyElementVisibility()
         local imbueBar = ShammyTime.EnsureImbueBarFrame()
         if imbueBar then
             if db.wfImbueBarEnabled then imbueBar:Show() else imbueBar:Hide() end
+        end
+    end
+    -- Lightning/Water Shield indicator (standalone)
+    if ShammyTime.EnsureShieldFrame then
+        local shieldFrame = ShammyTime.EnsureShieldFrame()
+        if shieldFrame then
+            if db.wfShieldEnabled then shieldFrame:Show() else shieldFrame:Hide() end
         end
     end
     ApplyElementMouseState()
@@ -919,6 +966,8 @@ function UpdateAllElementsFadeState()
         local procAnimPlaying = ShammyTime.IsWindfuryProcAnimationPlaying and ShammyTime.IsWindfuryProcAnimationPlaying()
         -- Lock fade-out as soon as we're not procced (not just when alpha < 0.01) so we never briefly restore to 1 during fade = no blink
         if not procAnimPlaying and not wfProcced then circleFadeOutStarted = true end
+        -- Reset circleFadeOutStarted when circle should be shown (e.g. when fade rules are turned off and wfRadialShown is true)
+        if wfProcced then circleFadeOutStarted = false end
         local circleAlpha = procAnimPlaying and 1 or (circleFadeOutStarted and 0 or (wfProcced and alphaWf or 0))
         local circleFadeOut = circleAlpha < 1
         -- Hover hold: pause fade-out if still visible; never revive once fully faded
@@ -1132,6 +1181,7 @@ local function GetElementalShieldAura()
     end
     return nil
 end
+ShammyTime.GetElementalShieldAura = GetElementalShieldAura
 
 -- Get weapon imbue from GetWeaponEnchantInfo (primary on Classic/TBC – direct API for temp weapon enchants).
 -- Returns: icon, expirationTime, name, spellId. Uses enchant ID (4th/8th return) to pick correct icon/name per imbue.
@@ -1485,31 +1535,131 @@ local function PrintMainHelp()
     print(C.gold .. "  ShammyTime" .. C.r .. C.gray .. "  —  " .. C.r .. C.gold .. "/st" .. C.r .. C.gray .. " or " .. C.r .. C.gold .. "/shammytime" .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
     print("")
-    print(C.green .. "  GLOBAL (affects everything)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. "   — Lock all bars (no drag)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st unlock" .. C.r .. C.gray .. " — Unlock so you can drag" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Global test: circle + Windfury + Shamanistic Focus (run again to stop)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings and positions to defaults" .. C.r)
+    print(C.green .. "  SIMPLE (quick settings)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. " / " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "  — Lock or unlock all bars (drag when unlocked)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st fade" .. C.r .. C.gray .. "  — Fade elements out of combat / when not procced. " .. C.gold .. "/st fade all on|off" .. C.r .. C.gray .. " turns all fade rules on or off." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st show" .. C.r .. C.gray .. "  — Turn circle, totem bar, Shamanistic Focus, or imbue bar on/off. " .. C.gold .. "/st show circle off" .. C.r .. C.gray .. " etc." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st scale 0.8" .. C.r .. C.gray .. "  — Resize Windfury circles as a whole (0.5–2)." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Test mode: show proc/fade behavior (run again to stop)." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings and positions to defaults." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — Print all current settings to chat (copy for defaults)." .. C.r)
     print("")
-    print(C.green .. "  CIRCLE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st circle" .. C.r .. C.gray .. "  on|off, scale, numbers, toggle" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st circle" .. C.r .. C.gray .. " for list" .. C.r)
-    print("")
-    print(C.green .. "  TOTEM BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st totem" .. C.r .. C.gray .. "  scale, pos" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st totem" .. C.r .. C.gray .. " for list" .. C.r)
-    print("")
-    print(C.green .. "  SHAMANISTIC FOCUS" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st focus" .. C.r .. C.gray .. "  scale (proc indicator)" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st focus" .. C.r .. C.gray .. " for list" .. C.r)
-    print("")
-    print(C.green .. "  IMBUE BAR" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st imbue" .. C.r .. C.gray .. "  scale, layout (weapon imbues MH/OH)" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st imbue scale 0.5" .. C.r .. C.gray .. " bar size; " .. C.gold .. "/st imbue layout" .. C.r .. C.gray .. " move/resize icons" .. C.r)
-    print("")
-    print(C.green .. "  SHOW / HIDE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st show" .. C.r .. C.gray .. "  turn circle, totem, focus, imbue on or off" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st show" .. C.r .. C.gray .. " for list; " .. C.gold .. "/st show circle off" .. C.r .. C.gray .. " to hide an element" .. C.r)
-    print("")
-    print(C.green .. "  FADE" .. C.r .. C.gray .. "  —  " .. C.gold .. "/st fade" .. C.r .. C.gray .. "  combat, procced (dim elements out of combat / when not procced)" .. C.r)
-    print(C.gray .. "    " .. C.gold .. "/st fade" .. C.r .. C.gray .. " for list" .. C.r)
-    print("")
+    print(C.green .. "  ADVANCED (text, positions, per-element options)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st adv" .. C.r .. C.gray .. "  — Hierarchical options per element. Each has subcategories." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "  — Totem bar: scale, font." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st adv bubbles" .. C.r .. C.gray .. "  — Windfury circles: center (size, text, font), outer (gap, font, position)." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "  — Lightning/Water Shield: scale, count override, number position." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st adv focus" .. C.r .. C.gray .. "  — Shamanistic Focus: scale." .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st adv imbue" .. C.r .. C.gray .. "  — Imbue bar: scale, layout (margin, gap, offset, icon size)." .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
+    print("")
+end
+
+local function PrintAllSettings()
+    local db = GetDB()
+    print("")
+    print(C.gold .. "——— ShammyTime: all current settings (for defaults) ———" .. C.r)
+    print(C.gray .. "Show/hide elements:" .. C.r)
+    print("  wfRadialEnabled = " .. tostring(db.wfRadialEnabled))
+    print("  wfTotemBarEnabled = " .. tostring(db.wfTotemBarEnabled))
+    print("  wfFocusEnabled = " .. tostring(db.wfFocusEnabled))
+    print("  wfImbueBarEnabled = " .. tostring(db.wfImbueBarEnabled))
+    print("  wfShieldEnabled = " .. tostring(db.wfShieldEnabled))
+    print("  locked = " .. tostring(db.locked))
+    print("  wfRadialShown = " .. tostring(db.wfRadialShown))
+    print("  windfuryTrackerEnabled = " .. tostring(db.windfuryTrackerEnabled))
+    print(C.gray .. "Fade:" .. C.r)
+    print("  wfFadeOutOfCombat = " .. tostring(db.wfFadeOutOfCombat))
+    print("  wfFadeWhenNotProcced = " .. tostring(db.wfFadeWhenNotProcced))
+    print("  wfFocusFadeWhenNotProcced = " .. tostring(db.wfFocusFadeWhenNotProcced))
+    print("  wfFadeWhenNoTotems = " .. tostring(db.wfFadeWhenNoTotems))
+    print("  wfNoTotemsFadeDelay = " .. tostring(db.wfNoTotemsFadeDelay))
+    print("  wfImbueFadeWhenLongDuration = " .. tostring(db.wfImbueFadeWhenLongDuration))
+    print("  wfImbueFadeThresholdSec = " .. tostring(db.wfImbueFadeThresholdSec))
+    print(C.gray .. "Bubbles (Windfury circles) — center:" .. C.r)
+    print("  wfRadialScale = " .. tostring(db.wfRadialScale))
+    print("  wfCenterSize = " .. tostring(db.wfCenterSize))
+    print("  wfCenterTextTitleY = " .. tostring(db.wfCenterTextTitleY))
+    print("  wfCenterTextTotalY = " .. tostring(db.wfCenterTextTotalY))
+    print("  wfCenterTextCriticalY = " .. tostring(db.wfCenterTextCriticalY))
+    print("  wfAlwaysShowNumbers = " .. tostring(db.wfAlwaysShowNumbers))
+    print(C.gray .. "Bubbles — outer (gap; label/value position X Y in pixels from center of each circle, X +right -left, Y +up -down):" .. C.r)
+    print("  wfSatelliteGap = " .. tostring(db.wfSatelliteGap))
+    print("  wfSatelliteLabelX = " .. tostring(db.wfSatelliteLabelX) .. "  -- label pos X (nil = 0)")
+    print("  wfSatelliteLabelY = " .. tostring(db.wfSatelliteLabelY) .. "  -- label pos Y (nil = 8)")
+    print("  wfSatelliteValueX = " .. tostring(db.wfSatelliteValueX) .. "  -- value pos X (nil = 0)")
+    print("  wfSatelliteValueY = " .. tostring(db.wfSatelliteValueY) .. "  -- value pos Y (nil = -6)")
+    if db.wfSatelliteOverrides and next(db.wfSatelliteOverrides) then
+        for bn, ov in pairs(db.wfSatelliteOverrides) do
+            if type(ov) == "table" then
+                print("  wfSatelliteOverrides[" .. tostring(bn) .. "] = { labelSize=" .. tostring(ov.labelSize) .. ", valueSize=" .. tostring(ov.valueSize) .. ", labelX=" .. tostring(ov.labelX) .. ", labelY=" .. tostring(ov.labelY) .. ", valueX=" .. tostring(ov.valueX) .. ", valueY=" .. tostring(ov.valueY) .. " }")
+            end
+        end
+    else
+        print("  wfSatelliteOverrides = " .. tostring(db.wfSatelliteOverrides))
+    end
+    print(C.gray .. "Font sizes:" .. C.r)
+    print("  fontCircleTitle = " .. tostring(db.fontCircleTitle))
+    print("  fontCircleTotal = " .. tostring(db.fontCircleTotal))
+    print("  fontCircleCritical = " .. tostring(db.fontCircleCritical))
+    print("  fontSatelliteLabel = " .. tostring(db.fontSatelliteLabel))
+    print("  fontSatelliteValue = " .. tostring(db.fontSatelliteValue))
+    print("  fontTotemTimer = " .. tostring(db.fontTotemTimer))
+    print("  fontImbueTimer = " .. tostring(db.fontImbueTimer))
+    print(C.gray .. "Totem bar:" .. C.r)
+    print("  wfTotemBarScale = " .. tostring(db.wfTotemBarScale))
+    print(C.gray .. "Imbue bar:" .. C.r)
+    print("  imbueBarScale = " .. tostring(db.imbueBarScale))
+    print("  imbueBarMargin = " .. tostring(db.imbueBarMargin))
+    print("  imbueBarGap = " .. tostring(db.imbueBarGap))
+    print("  imbueBarOffsetY = " .. tostring(db.imbueBarOffsetY))
+    print("  imbueBarIconSize = " .. tostring(db.imbueBarIconSize))
+    -- Helper to get actual frame position (point, relativeTo, relativePoint, x, y)
+    local function GetFramePos(frameName)
+        local frame = _G[frameName]
+        if not frame or not frame.GetPoint then return nil end
+        local point, relTo, relPoint, x, y = frame:GetPoint(1)
+        if not point then return nil end
+        local relToName = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+        return {
+            point = point,
+            relativeTo = relToName,
+            relativePoint = relPoint,
+            x = x and math.floor(x + 0.5) or 0,
+            y = y and math.floor(y + 0.5) or 0,
+        }
+    end
+    local function PrintFramePos(label, frameName, savedPos)
+        local actual = GetFramePos(frameName)
+        if actual then
+            local src = savedPos and "(saved)" or "(current)"
+            print("  " .. label .. ": " .. src .. " point=\"" .. actual.point .. "\", relativeTo=\"" .. actual.relativeTo .. "\", relativePoint=\"" .. actual.relativePoint .. "\", x=" .. actual.x .. ", y=" .. actual.y)
+        elseif savedPos then
+            print("  " .. label .. ": (saved) point=\"" .. tostring(savedPos.point) .. "\", relativeTo=\"" .. tostring(savedPos.relativeTo) .. "\", relativePoint=\"" .. tostring(savedPos.relativePoint) .. "\", x=" .. tostring(savedPos.x) .. ", y=" .. tostring(savedPos.y))
+        else
+            print("  " .. label .. ": (not loaded)")
+        end
+    end
+    print(C.gray .. "Frame positions (actual current offsets; move frames with /st unlock then drag):" .. C.r)
+    local posKey = GetRadialPositionKey and GetRadialPositionKey() or ""
+    local pos = (db.wfRadialPos and posKey and db.wfRadialPos[posKey]) or {}
+    PrintFramePos("center (Windfury circle)", "ShammyTimeCenterRing", pos.center)
+    PrintFramePos("totemBar", "ShammyTimeWindfuryTotemBarFrame", pos.totemBar)
+    PrintFramePos("imbueBar", "ShammyTimeImbueBarFrame", pos.imbueBar)
+    PrintFramePos("shieldFrame", "ShammyTimeShieldFrame", pos.shieldFrame)
+    ShammyTimeDB = ShammyTimeDB or {}
+    local focusDb = ShammyTimeDB.focusFrame
+    PrintFramePos("focusFrame (Shamanistic Focus)", "ShammyTimeShamanisticFocus", focusDb)
+    print(C.gray .. "Lightning/Water Shield indicator:" .. C.r)
+    print("  wfShieldEnabled = " .. tostring(db.wfShieldEnabled))
+    print("  shieldScale = " .. tostring(db.shieldScale) .. "  -- size (0.05–2); /st adv shield size X")
+    print("  shieldCount = " .. tostring(db.shieldCount) .. "  -- override charge count (nil = auto; 1–9 = fixed); /st adv shield count X")
+    print("  shieldCountX = " .. tostring(db.shieldCountX) .. "  -- number X offset; /st adv shield numx X")
+    print("  shieldCountY = " .. tostring(db.shieldCountY) .. "  -- number Y offset; /st adv shield numy Y")
+    print(C.gray .. "Shamanistic Focus:" .. C.r)
+    local focusScale = (focusDb and focusDb.scale) or 0.8
+    print("  scale = " .. tostring(focusScale) .. "  -- /st adv focus scale X")
+    print(C.gold .. "——— Copy above to share or use as new defaults ———" .. C.r)
     print("")
 end
 
@@ -1517,26 +1667,30 @@ local function PrintCircleHelp()
     print("")
     print(C.green .. "ShammyTime — Circle (" .. C.gold .. "/st circle" .. C.r .. C.green .. ")" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "on" .. C.r .. C.gray .. "  / " .. C.gold .. "off" .. C.r .. C.gray .. "     — Show or hide circle" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Size (0.5–2)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Overall scale (0.5–2)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "size 200" .. C.r .. C.gray .. "  — Center circle diameter (pixels)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "gap 0" .. C.r .. C.gray .. "  — Space between center edge and outer bubbles (0=touch, + = apart, − = overlap)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "text title 13" .. C.r .. C.gray .. "  — Y offset of \"Windfury!\" (pixels from center)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "text total 0" .. C.r .. C.gray .. "  — Y offset of \"TOTAL: xxx\"" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "text critical 31" .. C.r .. C.gray .. "  — Y offset of \"CRITICAL\"" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "numbers on|off" .. C.r .. C.gray .. "  — Numbers always visible or fade on hover" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "toggle" .. C.r .. C.gray .. "  — Show/hide circle and totem bar" .. C.r)
     print(C.gray .. "  Test: " .. C.gold .. "/st test" .. C.r .. C.gray .. " (global; affects circle, Windfury, focus)" .. C.r)
     print("")
 end
 
-local function PrintTotemHelp()
+local function PrintFontHelp()
     print("")
-    print(C.green .. "ShammyTime — Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.green .. ")" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "scale 1" .. C.r .. C.gray .. "  — Size (0.5–2, default 1)" .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "pos" .. C.r .. C.gray .. "  — Print layout coords (for editing)" .. C.r)
-    print("")
-end
-
-local function PrintFocusHelp()
-    print("")
-    print(C.green .. "ShammyTime — Shamanistic Focus (" .. C.gold .. "/st focus" .. C.r .. C.green .. ")" .. C.r)
-    print(C.gray .. "  Proc indicator (light on/off when Shamanistic Focus is active)." .. C.r)
-    print(C.gray .. "  • " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. "  — Size (0.5–2, default 0.8)" .. C.r)
+    print(C.green .. "ShammyTime — Font sizes (" .. C.gold .. "/st font" .. C.r .. C.green .. ")" .. C.r)
+    print(C.gray .. "  Set text size per element (6–28). Defaults unchanged until you set." .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "circle title 20" .. C.r .. C.gray .. "  — Center ring \"Windfury!\"" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "circle total 14" .. C.r .. C.gray .. "  — Center ring \"TOTAL: xxx\"" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "circle critical 20" .. C.r .. C.gray .. "  — Center \"CRITICAL\" line" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "satellite label 8" .. C.r .. C.gray .. "  — Satellite labels (MIN, CRIT%, etc.)" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "satellite value 13" .. C.r .. C.gray .. "  — Satellite numbers" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "totem 7" .. C.r .. C.gray .. "  — Totem bar timers" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "imbue 20" .. C.r .. C.gray .. "  — Imbue bar timers" .. C.r)
+    print(C.gray .. "  Bubbles (Windfury circles): " .. C.gold .. "/st bubbles center" .. C.r .. C.gray .. ", " .. C.gold .. "outer" .. C.r)
     print("")
 end
 
@@ -1548,6 +1702,7 @@ local function PrintShowHelp()
     print(C.gray .. "  • " .. C.gold .. "totem on|off" .. C.r .. C.gray .. "  — Windfury totem bar" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "focus on|off" .. C.r .. C.gray .. "  — Shamanistic Focus" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "imbue on|off" .. C.r .. C.gray .. "  — Weapon imbue bar" .. C.r)
+    print(C.gray .. "  • " .. C.gold .. "shield on|off" .. C.r .. C.gray .. "  — Lightning/Water Shield indicator" .. C.r)
     print("")
 end
 
@@ -1566,6 +1721,19 @@ local function PrintFadeHelp()
     print("")
 end
 
+local function PrintAdvHelp()
+    print("")
+    print(C.green .. "ShammyTime — Advanced (" .. C.gold .. "/st adv" .. C.r .. C.green .. ")" .. C.r)
+    print(C.gray .. "  Fine‑tune sizes, positions, and layout per element. Use " .. C.gold .. "/st test" .. C.r .. C.gray .. " to see effects." .. C.r)
+    print("")
+    print(C.gray .. "  " .. C.gold .. "totembar" .. C.r .. C.gray .. "  — Windfury totem bar: scale, timer font." .. C.r)
+    print(C.gray .. "  " .. C.gold .. "bubbles" .. C.r .. C.gray .. "   — Windfury circles: " .. C.gold .. "center" .. C.r .. C.gray .. " (size, text, font) or " .. C.gold .. "outer" .. C.r .. C.gray .. " (gap, font, position)." .. C.r)
+    print(C.gray .. "  " .. C.gold .. "shield" .. C.r .. C.gray .. "    — Lightning/Water Shield: scale, count override, number X/Y position." .. C.r)
+    print(C.gray .. "  " .. C.gold .. "focus" .. C.r .. C.gray .. "     — Shamanistic Focus: scale." .. C.r)
+    print(C.gray .. "  " .. C.gold .. "imbue" .. C.r .. C.gray .. "     — Weapon imbue bar: scale, layout (margin, gap, offset, icon size)." .. C.r)
+    print("")
+end
+
 SLASH_SHAMMYTIME1 = "/shammytime"
 SLASH_SHAMMYTIME2 = "/st"
 SlashCmdList["SHAMMYTIME"] = function(msg)
@@ -1575,6 +1743,29 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
     if not cmd then cmd = msg end
     cmd = cmd and cmd:lower() or ""
     arg = arg and arg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+
+    -- Advanced: route /st adv <element> [rest] to /st <mapped> [rest]
+    while cmd == "adv" or cmd == "advanced" do
+        local elem, rest2 = arg:match("^(%S+)%s*(.*)$")
+        elem = elem and elem:lower() or ""
+        rest2 = rest2 and rest2:gsub("^%s+", ""):gsub("%s+$", "") or ""
+        if elem == "" then
+            PrintAdvHelp()
+            return
+        end
+        local mapped
+        if elem == "totembar" or elem == "totem" then mapped = "totem"
+        elseif elem == "bubbles" then mapped = "bubbles"
+        elseif elem == "shield" then mapped = "shield"
+        elseif elem == "focus" then mapped = "focus"
+        elseif elem == "imbue" then mapped = "imbue"
+        else
+            print(C.red .. "ShammyTime: Unknown advanced element '" .. elem .. "'. Use: totembar, bubbles, shield, focus, imbue." .. C.r)
+            PrintAdvHelp()
+            return
+        end
+        cmd, arg = mapped, rest2
+    end
 
     -- Global: lock / unlock (all bars)
     if cmd == "lock" then
@@ -1591,6 +1782,8 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         if ResetAllToDefaults() then
             print(C.green .. "ShammyTime: All settings and positions reset to defaults." .. C.r)
         end
+    elseif cmd == "print" or cmd == "defaults" or cmd == "export" then
+        PrintAllSettings()
     -- Global test: Windfury proc + Shamanistic Focus (one proc immediately, then every 10s). Run /st test again to stop.
     elseif cmd == "test" then
         if wfTestTimer then
@@ -1631,16 +1824,35 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if on then db.wfImbueBarEnabled = true; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Imbue bar shown." .. C.r)
             elseif off then db.wfImbueBarEnabled = false; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Imbue bar hidden." .. C.r)
             else print(C.gray .. "ShammyTime: Imbue bar " .. (db.wfImbueBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st show imbue on|off" .. C.r) end
+        elseif sub == "shield" then
+            if on then db.wfShieldEnabled = true; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Lightning/Water Shield indicator shown." .. C.r)
+            elseif off then db.wfShieldEnabled = false; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Lightning/Water Shield indicator hidden." .. C.r)
+            else print(C.gray .. "ShammyTime: Shield " .. (db.wfShieldEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st show shield on|off" .. C.r) end
         elseif sub == "" or sub == "list" then
             local c = db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local t = db.wfTotemBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local f = db.wfFocusEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local i = db.wfImbueBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
-            print(C.gray .. "ShammyTime: Show — circle " .. c .. C.gray .. ", totem " .. t .. C.gray .. ", focus " .. f .. C.gray .. ", imbue " .. i .. C.gray .. ". " .. C.gold .. "/st show <element> on|off" .. C.r)
+            local sh = db.wfShieldEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
+            print(C.gray .. "ShammyTime: Show — circle " .. c .. C.gray .. ", totem " .. t .. C.gray .. ", focus " .. f .. C.gray .. ", imbue " .. i .. C.gray .. ", shield " .. sh .. C.gray .. ". " .. C.gold .. "/st show <element> on|off" .. C.r)
             PrintShowHelp()
         else
-            print(C.red .. "ShammyTime: Unknown element " .. (C.gold .. "'" .. sub .. "'" .. C.r) .. C.red .. ". Use circle, totem, focus, imbue. " .. C.gold .. "/st show" .. C.r .. C.red .. " for list." .. C.r)
+            print(C.red .. "ShammyTime: Unknown element " .. (C.gold .. "'" .. sub .. "'" .. C.r) .. C.red .. ". Use circle, totem, focus, imbue, shield. " .. C.gold .. "/st show" .. C.r .. C.red .. " for list." .. C.r)
             PrintShowHelp()
+        end
+    -- Scale (simple): resize Windfury circles as a whole (0.5–2). Other elements: /st totem scale, /st focus scale, /st imbue scale.
+    elseif cmd == "scale" then
+        local num = tonumber(arg:match("^(%S+)"))
+        if num and num >= 0.5 and num <= 2 then
+            db.wfRadialScale = num
+            local center = _G.ShammyTimeCenterRing
+            if center then center:SetScale(num) end
+            print(C.green .. "ShammyTime: Windfury circles scale " .. ("%.2f"):format(num) .. " (overall size)." .. C.r)
+        elseif arg and arg:gsub("^%s+", ""):gsub("%s+$", "") ~= "" then
+            print(C.red .. "ShammyTime: Scale 0.5–2. " .. C.gold .. "/st scale 0.8" .. C.r .. C.red .. " — Resizes the Windfury bubbles. Totem/focus/imbue: /st totem scale, /st focus scale, /st imbue scale." .. C.r)
+        else
+            local s = db.wfRadialScale or 1
+            print(C.gray .. "ShammyTime: Windfury circles scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.5–2). " .. C.gold .. "/st scale 0.8" .. C.r .. C.gray .. " to change. Totem/focus/imbue have their own scale." .. C.r)
         end
     -- Fade: /st fade [combat on|off | procced on|off]
     elseif cmd == "fade" then
@@ -1764,10 +1976,13 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.red .. "ShammyTime: Unknown fade option " .. (C.gold .. "'" .. sub .. "'" .. C.r) .. C.red .. ". " .. C.gold .. "/st fade" .. C.r .. C.red .. " for list." .. C.r)
             PrintFadeHelp()
         end
-    -- Circle: /st circle [on|off|scale X|numbers on|off|toggle]
+    -- Circle: /st circle [on|off|scale X|size N|gap N|text title|total|critical N|numbers on|off|toggle]
     elseif cmd == "circle" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
+        local sizeArg = a:match("^size%s+(%S+)$")
+        local gapArg = a:match("^gap%s+([-%d%.]+)$")
+        local textWhich, textVal = a:match("^text%s+(%S+)%s+([-%d%.]+)$")
         local numArg = a:match("^numbers%s+(%S+)$")
         if a == "on" or a == "enable" or a == "1" then
             db.wfRadialEnabled = true
@@ -1786,6 +2001,48 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 print(C.green .. "ShammyTime: Circle scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
                 print(C.red .. "ShammyTime: Circle scale 0.5–2. " .. C.gold .. "/st circle scale 0.8" .. C.r)
+            end
+        elseif sizeArg then
+            local num = tonumber(sizeArg)
+            if num and num > 0 then
+                db.wfCenterSize = num
+                if ShammyTime.ApplyCenterRingSize then ShammyTime.ApplyCenterRingSize() end
+                print(C.green .. "ShammyTime: Center circle size " .. num .. " px." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Enter a positive number. " .. C.gold .. "/st circle size 200" .. C.r)
+            end
+        elseif gapArg then
+            local num = tonumber(gapArg)
+            if num then
+                db.wfSatelliteGap = num
+                if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
+                if num == 0 then
+                    print(C.green .. "ShammyTime: Outer bubbles touch center ring edge (gap 0)." .. C.r)
+                elseif num > 0 then
+                    print(C.green .. "ShammyTime: Gap between center edge and outer bubbles " .. num .. " px." .. C.r)
+                else
+                    print(C.green .. "ShammyTime: Outer bubbles overlap center by " .. (-num) .. " px." .. C.r)
+                end
+            else
+                print(C.red .. "ShammyTime: Enter a number. " .. C.gold .. "/st circle gap 0" .. C.r .. C.red .. " = touch; positive = space; negative = overlap." .. C.r)
+            end
+        elseif textWhich and textVal then
+            local which = textWhich:lower()
+            local val = tonumber(textVal)
+            if which == "title" and val then
+                db.wfCenterTextTitleY = val
+                if ShammyTime.ApplyCenterRingTextPosition then ShammyTime.ApplyCenterRingTextPosition() end
+                print(C.green .. "ShammyTime: Center text \"Windfury!\" Y = " .. val .. "." .. C.r)
+            elseif which == "total" and val then
+                db.wfCenterTextTotalY = val
+                if ShammyTime.ApplyCenterRingTextPosition then ShammyTime.ApplyCenterRingTextPosition() end
+                print(C.green .. "ShammyTime: Center text \"TOTAL\" Y = " .. val .. "." .. C.r)
+            elseif which == "critical" and val then
+                db.wfCenterTextCriticalY = val
+                if ShammyTime.ApplyCenterRingTextPosition then ShammyTime.ApplyCenterRingTextPosition() end
+                print(C.green .. "ShammyTime: Center text \"CRITICAL\" Y = " .. val .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Use " .. C.gold .. "/st circle text title 13" .. C.r .. C.red .. ", " .. C.gold .. "text total 0" .. C.r .. C.red .. ", or " .. C.gold .. "text critical 31" .. C.r)
             end
         elseif numArg == "on" or numArg == "enable" or numArg == "1" then
             db.wfAlwaysShowNumbers = true
@@ -1807,12 +2064,19 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 print(C.green .. "ShammyTime: Circle shown." .. C.r)
             end
         elseif a == "" then
-            print(C.gray .. "ShammyTime: Circle " .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ", scale " .. C.gold .. ("%.2f"):format(db.wfRadialScale or 1) .. C.r .. C.gray .. ", numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "on" .. C.r) or (C.gray .. "hover" .. C.r)) .. C.r)
+            local sz = db.wfCenterSize
+            local szStr = (sz and sz > 0) and tostring(sz) or "200"
+            local g = db.wfSatelliteGap
+            local gStr = (g ~= nil) and tostring(g) or "0 (touch)"
+            local tTitle = (db.wfCenterTextTitleY ~= nil) and tostring(db.wfCenterTextTitleY) or "13"
+            local tTotal = (db.wfCenterTextTotalY ~= nil) and tostring(db.wfCenterTextTotalY) or "0"
+            local tCrit = (db.wfCenterTextCriticalY ~= nil) and tostring(db.wfCenterTextCriticalY) or "31"
+            print(C.gray .. "ShammyTime: Circle " .. (db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ", scale " .. C.gold .. ("%.2f"):format(db.wfRadialScale or 1) .. C.r .. C.gray .. ", size " .. C.gold .. szStr .. C.r .. C.gray .. ", gap " .. C.gold .. gStr .. C.r .. C.gray .. ", text(title " .. tTitle .. ", total " .. tTotal .. ", critical " .. tCrit .. "), numbers " .. (db.wfAlwaysShowNumbers and (C.green .. "on" .. C.r) or (C.gray .. "hover" .. C.r)) .. C.r)
             PrintCircleHelp()
         else
             PrintCircleHelp()
         end
-    -- Totem bar: /st totem [scale X]
+    -- Totem bar: /st totem [scale X] (via /st adv totembar)
     elseif cmd == "totem" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
@@ -1824,17 +2088,21 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if bar then bar:SetScale(num) end
                 print(C.green .. "ShammyTime: Totem bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st totem scale 1" .. C.r)
+                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st adv totembar scale 1" .. C.r)
             end
         elseif a == "pos" then
             if ShammyTime.PrintTotemBarPos then ShammyTime.PrintTotemBarPos() end
         elseif a == "" then
-            print(C.gray .. "ShammyTime: Totem bar scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2). Use " .. C.gold .. "/st totem pos" .. C.r .. C.gray .. " for layout." .. C.r)
-            PrintTotemHelp()
+            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv totembar scale 1" .. C.r .. C.gray .. " — Change size." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st show totem on|off" .. C.r .. C.gray .. " — Show/hide." .. C.r)
         else
-            PrintTotemHelp()
+            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "scale 1" .. C.r .. C.gray .. " — size (0.5–2)" .. C.r)
+            print(C.gray .. "  Position frame by dragging when " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "." .. C.r)
         end
-    -- Shamanistic Focus: /st focus [scale X]
+    -- Shamanistic Focus: /st focus [scale X] (via /st adv focus)
     elseif cmd == "focus" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
@@ -1848,17 +2116,21 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyShamanisticFocusScale then ShammyTime.ApplyShamanisticFocusScale() end
                 print(C.green .. "ShammyTime: Shamanistic Focus scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Shamanistic Focus scale 0.5–2. " .. C.gold .. "/st focus scale 0.8" .. C.r)
+                print(C.red .. "ShammyTime: Shamanistic Focus scale 0.5–2. " .. C.gold .. "/st adv focus scale 0.8" .. C.r)
             end
         elseif a == "" then
             local s = focusDb.scale
             if s == nil then s = 0.8 end
-            print(C.gray .. "ShammyTime: Shamanistic Focus scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.5–2)." .. C.r)
-            PrintFocusHelp()
+            print(C.gray .. "ShammyTime: Shamanistic Focus (" .. C.gold .. "/st adv focus" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.5–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv focus scale 0.8" .. C.r .. C.gray .. " — Change size." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st show focus on|off" .. C.r .. C.gray .. " — Show/hide." .. C.r)
         else
-            PrintFocusHelp()
+            print(C.gray .. "ShammyTime: Shamanistic Focus (" .. C.gold .. "/st adv focus" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "scale 0.8" .. C.r .. C.gray .. " — size (0.5–2)" .. C.r)
+            print(C.gray .. "  Position frame by dragging when " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "." .. C.r)
         end
-    -- Imbue bar (weapon imbues): /st imbue [scale X | layout | margin X | gap X | offsety X | iconsize X]
+    -- Imbue bar (weapon imbues): /st imbue [scale X | layout | margin X | gap X | offsety X | iconsize X] (via /st adv imbue)
     elseif cmd == "imbue" or cmd == "imbuebar" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
@@ -1873,7 +2145,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyImbueBarScale then ShammyTime.ApplyImbueBarScale() end
                 print(C.green .. "ShammyTime: Imbue bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Imbue bar scale 0.1–2. " .. C.gold .. "/st imbue scale 0.4" .. C.r)
+                print(C.red .. "ShammyTime: Imbue bar scale 0.1–2. " .. C.gold .. "/st adv imbue scale 0.4" .. C.r)
             end
         elseif marginArg then
             local num = tonumber(marginArg)
@@ -1882,7 +2154,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
                 print(C.green .. "ShammyTime: Imbue bar margin " .. num .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Imbue bar margin 0–400. " .. C.gold .. "/st imbue margin 169" .. C.r)
+                print(C.red .. "ShammyTime: Imbue bar margin 0–400. " .. C.gold .. "/st adv imbue margin 169" .. C.r)
             end
         elseif gapArg then
             local num = tonumber(gapArg)
@@ -1891,7 +2163,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
                 print(C.green .. "ShammyTime: Imbue bar gap " .. num .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Imbue bar gap 0–200. " .. C.gold .. "/st imbue gap 48" .. C.r)
+                print(C.red .. "ShammyTime: Imbue bar gap 0–200. " .. C.gold .. "/st adv imbue gap 48" .. C.r)
             end
         elseif offsetyArg then
             local num = tonumber(offsetyArg)
@@ -1900,7 +2172,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
                 print(C.green .. "ShammyTime: Imbue bar offset Y " .. num .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Imbue bar offsety -200–200. " .. C.gold .. "/st imbue offsety -52" .. C.r)
+                print(C.red .. "ShammyTime: Imbue bar offsety -200–200. " .. C.gold .. "/st adv imbue offsety -52" .. C.r)
             end
         elseif iconsizeArg then
             local num = tonumber(iconsizeArg)
@@ -1909,21 +2181,310 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
                 print(C.green .. "ShammyTime: Imbue bar icon size " .. num .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Imbue bar iconsize 12–64. " .. C.gold .. "/st imbue iconsize 22" .. C.r)
+                print(C.red .. "ShammyTime: Imbue bar iconsize 12–64. " .. C.gold .. "/st adv imbue iconsize 22" .. C.r)
             end
         elseif a == "layout" then
             local m = db.imbueBarMargin or 169
             local g = db.imbueBarGap or 48
             local oy = db.imbueBarOffsetY or -52
             local isz = db.imbueBarIconSize or 22
-            print(C.gray .. "ShammyTime: Imbue bar layout — margin " .. C.gold .. m .. C.r .. C.gray .. ", gap " .. C.gold .. g .. C.r .. C.gray .. ", offsety " .. C.gold .. oy .. C.r .. C.gray .. ", iconsize " .. C.gold .. isz .. C.r)
-            print(C.gray .. "  Change: " .. C.gold .. "/st imbue margin 180" .. C.r .. C.gray .. ", " .. C.gold .. "/st imbue gap 50" .. C.r .. C.gray .. ", " .. C.gold .. "/st imbue offsety -60" .. C.r .. C.gray .. ", " .. C.gold .. "/st imbue iconsize 24" .. C.r)
+            print(C.gray .. "ShammyTime: Imbue bar layout:" .. C.r)
+            print(C.gray .. "  margin " .. C.gold .. m .. C.r .. C.gray .. ", gap " .. C.gold .. g .. C.r .. C.gray .. ", offsety " .. C.gold .. oy .. C.r .. C.gray .. ", iconsize " .. C.gold .. isz .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue margin 180" .. C.r .. C.gray .. " — Icon left margin." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue gap 50" .. C.r .. C.gray .. " — Gap between icons." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue offsety -60" .. C.r .. C.gray .. " — Vertical offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue iconsize 24" .. C.r .. C.gray .. " — Icon size." .. C.r)
         elseif a == "" then
             local s = db.imbueBarScale or 0.4
-            print(C.gray .. "ShammyTime: Imbue bar scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.1–2). " .. C.gold .. "/st imbue scale 0.5" .. C.r)
-            print(C.gray .. "  Layout (move/resize icons): " .. C.gold .. "/st imbue layout" .. C.r)
+            print(C.gray .. "ShammyTime: Imbue bar (" .. C.gold .. "/st adv imbue" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.1–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue scale 0.5" .. C.r .. C.gray .. " — Change size." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue layout" .. C.r .. C.gray .. " — Icon positions/sizes." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st show imbue on|off" .. C.r .. C.gray .. " — Show/hide." .. C.r)
         else
-            print(C.gray .. "ShammyTime: Imbue bar — " .. C.gold .. "/st imbue scale 0.4" .. C.r .. C.gray .. " (size), " .. C.gold .. "/st imbue layout" .. C.r .. C.gray .. " (icon position/size)." .. C.r)
+            print(C.gray .. "ShammyTime: Imbue bar (" .. C.gold .. "/st adv imbue" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "scale 0.4" .. C.r .. C.gray .. " — size (0.1–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "layout" .. C.r .. C.gray .. " — icon margin, gap, offsety, iconsize" .. C.r)
+            print(C.gray .. "  Position frame by dragging when " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "." .. C.r)
+        end
+    -- Lightning/Water Shield indicator: /st shield [scale X | size X | count X | numx X | numy Y]
+    elseif cmd == "shield" then
+        local a = arg:lower():gsub("^%s+", ""):gsub("%s+$", "")
+        local scaleArg = a:match("^scale%s+(%S+)$") or a:match("^size%s+(%S+)$")
+        local countArg = a:match("^count%s+(%S+)$")
+        local numxArg = a:match("^numx%s+(%S+)$")
+        local numyArg = a:match("^numy%s+(%S+)$")
+        if scaleArg then
+            local num = tonumber(scaleArg)
+            if num and num >= 0.05 and num <= 2 then
+                db.shieldScale = num
+                if ShammyTime.ApplyShieldScale then ShammyTime.ApplyShieldScale() end
+                print(C.green .. "ShammyTime: Shield indicator size " .. ("%.2f"):format(num) .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Shield size 0.05–2. " .. C.gold .. "/st shield size 0.2" .. C.r .. C.gray .. " or " .. C.gold .. "/st shield scale 0.2" .. C.r)
+            end
+        elseif countArg then
+            if countArg == "auto" or countArg == "nil" or countArg == "off" then
+                db.shieldCount = nil
+                if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
+                print(C.green .. "ShammyTime: Shield count set to auto (from buff)." .. C.r)
+            else
+                local num = tonumber(countArg)
+                if num and num >= 1 and num <= 9 then
+                    db.shieldCount = math.floor(num)
+                    if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
+                    print(C.green .. "ShammyTime: Shield count override set to " .. db.shieldCount .. "." .. C.r)
+                else
+                    print(C.red .. "ShammyTime: Shield count 1–9, or 'auto'. " .. C.gold .. "/st shield count 3" .. C.r .. C.gray .. " or " .. C.gold .. "/st shield count auto" .. C.r)
+                end
+            end
+        elseif numxArg then
+            local num = tonumber(numxArg)
+            if num and num >= -200 and num <= 200 then
+                db.shieldCountX = num
+                if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
+                print(C.green .. "ShammyTime: Shield number X offset set to " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Shield numx -200 to 200. " .. C.gold .. "/st shield numx 10" .. C.r)
+            end
+        elseif numyArg then
+            local num = tonumber(numyArg)
+            if num and num >= -200 and num <= 200 then
+                db.shieldCountY = num
+                if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
+                print(C.green .. "ShammyTime: Shield number Y offset set to " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Shield numy -200 to 200. " .. C.gold .. "/st shield numy -50" .. C.r)
+            end
+        elseif a == "" then
+            local s = db.shieldScale or 0.2
+            local cnt = db.shieldCount
+            local nx = db.shieldCountX or 0
+            local ny = db.shieldCountY or -50
+            print(C.gray .. "ShammyTime: Lightning/Water Shield (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  size " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.05–2). Drag to move when unlocked." .. C.r)
+            print(C.gray .. "  count " .. C.gold .. (cnt and tostring(cnt) or "auto") .. C.r .. C.gray .. " (1–9 = fixed, auto = from buff)" .. C.r)
+            print(C.gray .. "  numx " .. C.gold .. nx .. C.r .. C.gray .. ", numy " .. C.gold .. ny .. C.r .. C.gray .. " (number position offset)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv shield size 0.25" .. C.r .. C.gray .. "  — Change size." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv shield count 3" .. C.r .. C.gray .. "  — Override charge count (or 'auto')." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv shield numx 10" .. C.r .. C.gray .. "  — Number X offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv shield numy -50" .. C.r .. C.gray .. "  — Number Y offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st show shield on|off" .. C.r .. C.gray .. "  — Show/hide. " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — All settings." .. C.r)
+        else
+            print(C.gray .. "ShammyTime: Shield options (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "size 0.2" .. C.r .. C.gray .. " — scale (0.05–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "count 3" .. C.r .. C.gray .. " or " .. C.gold .. "auto" .. C.r .. C.gray .. " — override charge display" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "numx 10" .. C.r .. C.gray .. " — number X position (-200 to 200)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "numy -50" .. C.r .. C.gray .. " — number Y position (-200 to 200)" .. C.r)
+            print(C.gray .. "  Position frame by dragging when " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "." .. C.r)
+        end
+    -- Font sizes: /st font [circle title|total|critical N | satellite label|value N | totem N | imbue N]
+    elseif cmd == "font" then
+        local sub, subarg = arg:match("^(%S+)%s*(.*)$")
+        sub = sub and sub:lower() or ""
+        subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+        local num = tonumber(subarg:match("%s+(%S+)$")) or tonumber(subarg:match("^(%S+)$"))
+        local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+        if sub == "circle" then
+            local which = subarg:match("^(%S+)") and subarg:match("^(%S+)"):lower() or ""
+            local val = clamp(num)
+            if which == "title" and val then
+                db.fontCircleTitle = val
+                if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end
+                print(C.green .. "ShammyTime: Circle title font size " .. val .. "." .. C.r)
+            elseif which == "total" and val then
+                db.fontCircleTotal = val
+                if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end
+                print(C.green .. "ShammyTime: Circle total font size " .. val .. "." .. C.r)
+            elseif which == "critical" and val then
+                db.fontCircleCritical = val
+                if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end
+                print(C.green .. "ShammyTime: Circle critical font size " .. val .. "." .. C.r)
+            elseif subarg == "" or not val then
+                local t1 = db.fontCircleTitle or 20
+                local t2 = db.fontCircleTotal or 14
+                local t3 = db.fontCircleCritical or 20
+                print(C.gray .. "ShammyTime: Circle font — title " .. C.gold .. t1 .. C.r .. C.gray .. ", total " .. C.gold .. t2 .. C.r .. C.gray .. ", critical " .. C.gold .. t3 .. C.r .. C.gray .. ". " .. C.gold .. "/st font circle title 20" .. C.r)
+            else
+                PrintFontHelp()
+            end
+        elseif sub == "satellite" then
+            local which = subarg:match("^%S+%s+(%S+)") and subarg:match("^%S+%s+(%S+)"):lower() or ""
+            local val = clamp(num)
+            if which == "label" and val then
+                db.fontSatelliteLabel = val
+                if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end
+                print(C.green .. "ShammyTime: Satellite label font size " .. val .. "." .. C.r)
+            elseif which == "value" and val then
+                db.fontSatelliteValue = val
+                if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end
+                print(C.green .. "ShammyTime: Satellite value font size " .. val .. "." .. C.r)
+            elseif subarg == "" or not val then
+                local l = db.fontSatelliteLabel or 8
+                local v = db.fontSatelliteValue or 13
+                print(C.gray .. "ShammyTime: Satellite font — label " .. C.gold .. l .. C.r .. C.gray .. ", value " .. C.gold .. v .. C.r .. C.gray .. ". " .. C.gold .. "/st font satellite label 8" .. C.r)
+            else
+                PrintFontHelp()
+            end
+        elseif sub == "totem" and clamp(num) then
+            db.fontTotemTimer = clamp(num)
+            if ShammyTime.ApplyTotemBarFontSize then ShammyTime.ApplyTotemBarFontSize() end
+            print(C.green .. "ShammyTime: Totem bar timer font size " .. db.fontTotemTimer .. "." .. C.r)
+        elseif sub == "imbue" and clamp(num) then
+            db.fontImbueTimer = clamp(num)
+            if ShammyTime.ApplyImbueBarFontSize then ShammyTime.ApplyImbueBarFontSize() end
+            print(C.green .. "ShammyTime: Imbue bar timer font size " .. db.fontImbueTimer .. "." .. C.r)
+        elseif sub == "" then
+            local ct = db.fontCircleTitle or 20
+            local ctot = db.fontCircleTotal or 14
+            local cc = db.fontCircleCritical or 20
+            local sl = db.fontSatelliteLabel or 8
+            local sv = db.fontSatelliteValue or 13
+            local tt = db.fontTotemTimer or 7
+            local ib = db.fontImbueTimer or 20
+            print(C.gray .. "ShammyTime: Font — circle title " .. C.gold .. ct .. C.r .. C.gray .. ", total " .. C.gold .. ctot .. C.r .. C.gray .. ", critical " .. C.gold .. cc .. C.r)
+            print(C.gray .. "  satellite label " .. C.gold .. sl .. C.r .. C.gray .. ", value " .. C.gold .. sv .. C.r .. C.gray .. ", totem " .. C.gold .. tt .. C.r .. C.gray .. ", imbue " .. C.gold .. ib .. C.r .. C.gray .. ". " .. C.gold .. "/st font" .. C.r .. C.gray .. " for list." .. C.r)
+            PrintFontHelp()
+        else
+            PrintFontHelp()
+        end
+    elseif cmd == "bubbles" then
+        local sub1, rest = arg:match("^(%S+)%s*(.*)$")
+        sub1 = sub1 and sub1:lower() or ""
+        rest = rest and rest:gsub("^%s+", ""):gsub("%s+$", "") or ""
+        local BUBBLE_NAMES = { air = true, stone = true, fire = true, grass = true, water = true, grass_2 = true }
+        local function PrintBubblesHelp()
+            print("")
+            print(C.green .. "ShammyTime — Bubbles (" .. C.gold .. "/st bubbles" .. C.r .. C.green .. ")" .. C.r)
+            print(C.gray .. "  Windfury statistic circles (center + 6 outer). Not totem/imbue bars." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "center" .. C.r .. C.gray .. "  — Center circle: size, text (title/total/critical), font (title/total/critical)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "outer" .. C.r .. C.gray .. "   — Outer circles: gap, font label/value, pos label/value, or per-circle (air, stone, fire, grass, water, grass_2)" .. C.r)
+            print("")
+        end
+        local function PrintBubblesCenterHelp()
+            print("")
+            print(C.green .. "  Bubbles → Center (" .. C.gold .. "/st bubbles center" .. C.r .. C.green .. ")" .. C.r)
+            print(C.gray .. "  size 200" .. C.r .. C.gray .. "  — Center circle diameter (px)" .. C.r)
+            print(C.gray .. "  text title 13" .. C.r .. C.gray .. "  — Y offset of \"Windfury!\"" .. C.r)
+            print(C.gray .. "  text total 0" .. C.r .. C.gray .. "  — Y offset of \"TOTAL: xxx\"" .. C.r)
+            print(C.gray .. "  text critical 31" .. C.r .. C.gray .. "  — Y offset of \"CRITICAL\"" .. C.r)
+            print(C.gray .. "  font title 20" .. C.r .. C.gray .. "  — Font size for title" .. C.r)
+            print(C.gray .. "  font total 14" .. C.r .. C.gray .. "  — Font size for total" .. C.r)
+            print(C.gray .. "  font critical 20" .. C.r .. C.gray .. "  — Font size for critical" .. C.r)
+            print("")
+        end
+        local function PrintBubblesOuterHelp()
+            print("")
+            print(C.green .. "  Bubbles → Outer (" .. C.gold .. "/st bubbles outer" .. C.r .. C.green .. ")" .. C.r)
+            print(C.gray .. "  gap 0" .. C.r .. C.gray .. "  — Space between center edge and outer circles (0=touch)" .. C.r)
+            print(C.gray .. "  font label 8" .. C.r .. C.gray .. "  — Label font size (e.g. \"CRIT%\")" .. C.r)
+            print(C.gray .. "  font value 13" .. C.r .. C.gray .. "  — Value font size (e.g. \"35\")" .. C.r)
+            print(C.gray .. "  pos label 0 8" .. C.r .. C.gray .. "  — Move the label (e.g. \"CRIT%\") inside each small circle. Two numbers: horizontal then vertical, in pixels from the circle center. Right = positive X, Left = negative X. Up = positive Y, Down = negative Y. Example: 0 8 = 8 px above center." .. C.r)
+            print(C.gray .. "  pos value 0 -6" .. C.r .. C.gray .. "  — Same for the number (e.g. \"42\"). Example: 0 -6 = 6 px below center." .. C.r)
+            print(C.gray .. "  <name> font label 8" .. C.r .. C.gray .. "  — Override one circle (name: air, stone, fire, grass, water, grass_2)" .. C.r)
+            print(C.gray .. "  <name> pos label 0 8" .. C.r .. C.gray .. "  — Override position for one circle" .. C.r)
+            print("")
+        end
+        if sub1 == "" then
+            print(C.gray .. "ShammyTime: Bubbles (Windfury circles) — " .. C.gold .. "center" .. C.r .. C.gray .. "  |  " .. C.gold .. "outer" .. C.r .. C.gray .. " (size, text, font, gap, per-circle)" .. C.r)
+            PrintBubblesHelp()
+        elseif sub1 == "center" then
+            local sub2, rest2 = rest:match("^(%S+)%s*(.*)$")
+            sub2 = sub2 and sub2:lower() or ""
+            rest2 = rest2 and rest2:gsub("^%s+", ""):gsub("%s+$", "") or ""
+            if sub2 == "size" then
+                local num = tonumber(rest2)
+                if num and num > 0 then
+                    db.wfCenterSize = num
+                    if ShammyTime.ApplyCenterRingSize then ShammyTime.ApplyCenterRingSize() end
+                    print(C.green .. "ShammyTime: Center circle size " .. num .. " px." .. C.r)
+                else
+                    print(C.red .. "ShammyTime: Enter a positive number. " .. C.gold .. "/st bubbles center size 200" .. C.r)
+                end
+            elseif sub2 == "text" then
+                local which = rest2:match("^(%S+)") and rest2:match("^(%S+)"):lower() or ""
+                local val = tonumber(rest2:match("%s+([-%d%.]+)$") or rest2:match("^([-%d%.]+)$"))
+                if which == "title" and val ~= nil then db.wfCenterTextTitleY = val; if ShammyTime.ApplyCenterRingTextPosition then ShammyTime.ApplyCenterRingTextPosition() end; print(C.green .. "ShammyTime: Center text title Y = " .. val .. "." .. C.r)
+                elseif which == "total" and val ~= nil then db.wfCenterTextTotalY = val; if ShammyTime.ApplyCenterRingTextPosition then ShammyTime.ApplyCenterRingTextPosition() end; print(C.green .. "ShammyTime: Center text total Y = " .. val .. "." .. C.r)
+                elseif which == "critical" and val ~= nil then db.wfCenterTextCriticalY = val; if ShammyTime.ApplyCenterRingTextPosition then ShammyTime.ApplyCenterRingTextPosition() end; print(C.green .. "ShammyTime: Center text critical Y = " .. val .. "." .. C.r)
+                else print(C.gray .. "ShammyTime: Center text — title " .. (db.wfCenterTextTitleY or 13) .. ", total " .. (db.wfCenterTextTotalY or 0) .. ", critical " .. (db.wfCenterTextCriticalY or 31) .. ". " .. C.gold .. "/st bubbles center text title 13" .. C.r) end
+            elseif sub2 == "font" then
+                local which = rest2:match("^(%S+)") and rest2:match("^(%S+)"):lower() or ""
+                local val = tonumber(rest2:match("%s+(%S+)$"))
+                local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+                if which == "title" and clamp(val) then db.fontCircleTitle = clamp(val); if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end; print(C.green .. "ShammyTime: Center font title " .. db.fontCircleTitle .. "." .. C.r)
+                elseif which == "total" and clamp(val) then db.fontCircleTotal = clamp(val); if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end; print(C.green .. "ShammyTime: Center font total " .. db.fontCircleTotal .. "." .. C.r)
+                elseif which == "critical" and clamp(val) then db.fontCircleCritical = clamp(val); if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end; print(C.green .. "ShammyTime: Center font critical " .. db.fontCircleCritical .. "." .. C.r)
+                else print(C.gray .. "ShammyTime: Center font — title " .. (db.fontCircleTitle or 20) .. ", total " .. (db.fontCircleTotal or 14) .. ", critical " .. (db.fontCircleCritical or 20) .. ". " .. C.gold .. "/st bubbles center font title 20" .. C.r) end
+            elseif sub2 == "" then
+                print(C.gray .. "ShammyTime: Bubbles → Center — size " .. (db.wfCenterSize or "200") .. ", text(title " .. (db.wfCenterTextTitleY or 13) .. ", total " .. (db.wfCenterTextTotalY or 0) .. ", critical " .. (db.wfCenterTextCriticalY or 31) .. "), font(title " .. (db.fontCircleTitle or 20) .. ", total " .. (db.fontCircleTotal or 14) .. ", critical " .. (db.fontCircleCritical or 20) .. ")" .. C.r)
+                PrintBubblesCenterHelp()
+            else
+                PrintBubblesCenterHelp()
+            end
+        elseif sub1 == "outer" then
+            local sub2, rest2 = rest:match("^(%S+)%s*(.*)$")
+            sub2 = sub2 and sub2:lower() or ""
+            rest2 = rest2 and rest2:gsub("^%s+", ""):gsub("%s+$", "") or ""
+            if sub2 == "gap" then
+                local num = tonumber(rest2)
+                if num then
+                    db.wfSatelliteGap = num
+                    if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
+                    print(C.green .. "ShammyTime: Outer bubbles gap " .. num .. "." .. C.r)
+                else
+                    print(C.red .. "ShammyTime: Enter a number. " .. C.gold .. "/st bubbles outer gap 0" .. C.r)
+                end
+            elseif sub2 == "font" then
+                local which = rest2:match("^(%S+)") and rest2:match("^(%S+)"):lower() or ""
+                local val = tonumber(rest2:match("%s+(%S+)$"))
+                local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+                if which == "label" and clamp(val) then db.fontSatelliteLabel = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer font label " .. db.fontSatelliteLabel .. "." .. C.r)
+                elseif which == "value" and clamp(val) then db.fontSatelliteValue = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer font value " .. db.fontSatelliteValue .. "." .. C.r)
+                else print(C.gray .. "ShammyTime: Outer font — label " .. (db.fontSatelliteLabel or 8) .. ", value " .. (db.fontSatelliteValue or 13) .. ". " .. C.gold .. "/st bubbles outer font label 8" .. C.r) end
+            elseif sub2 == "pos" then
+                local which = rest2:match("^(%S+)") and rest2:match("^(%S+)"):lower() or ""
+                local x, y = rest2:match("%s+([-%d%.]+)%s+([-%d%.]+)$")
+                x, y = tonumber(x), tonumber(y)
+                if which == "label" and x and y then db.wfSatelliteLabelX = x; db.wfSatelliteLabelY = y; if ShammyTime.ApplySatelliteTextPosition then ShammyTime.ApplySatelliteTextPosition() end; print(C.green .. "ShammyTime: Outer label pos " .. x .. " " .. y .. "." .. C.r)
+                elseif which == "value" and x and y then db.wfSatelliteValueX = x; db.wfSatelliteValueY = y; if ShammyTime.ApplySatelliteTextPosition then ShammyTime.ApplySatelliteTextPosition() end; print(C.green .. "ShammyTime: Outer value pos " .. x .. " " .. y .. "." .. C.r)
+                else print(C.gray .. "ShammyTime: Outer text position (pixels from center of each circle: X +right -left, Y +up -down). Label " .. (db.wfSatelliteLabelX or 0) .. " " .. (db.wfSatelliteLabelY or 8) .. ", value " .. (db.wfSatelliteValueX or 0) .. " " .. (db.wfSatelliteValueY or -6) .. ". " .. C.gold .. "/st bubbles outer pos label 0 8" .. C.r .. C.gray .. ", " .. C.gold .. "pos value 0 -6" .. C.r) end
+            elseif BUBBLE_NAMES[sub2] then
+                local bubbleName = sub2
+                local sub3, rest3 = rest2:match("^(%S+)%s*(.*)$")
+                sub3 = sub3 and sub3:lower() or ""
+                rest3 = rest3 and rest3:gsub("^%s+", ""):gsub("%s+$", "") or ""
+                db.wfSatelliteOverrides = db.wfSatelliteOverrides or {}
+                if not db.wfSatelliteOverrides[bubbleName] then db.wfSatelliteOverrides[bubbleName] = {} end
+                local ov = db.wfSatelliteOverrides[bubbleName]
+                if sub3 == "font" then
+                    local which = rest3:match("^(%S+)") and rest3:match("^(%S+)"):lower() or ""
+                    local val = tonumber(rest3:match("%s+(%S+)$"))
+                    local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+                    if which == "label" and clamp(val) then ov.labelSize = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer " .. bubbleName .. " font label " .. ov.labelSize .. "." .. C.r)
+                    elseif which == "value" and clamp(val) then ov.valueSize = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer " .. bubbleName .. " font value " .. ov.valueSize .. "." .. C.r)
+                    else print(C.gray .. "ShammyTime: " .. bubbleName .. " font — label " .. tostring(ov.labelSize or "–") .. ", value " .. tostring(ov.valueSize or "–") .. ". " .. C.gold .. "/st bubbles outer " .. bubbleName .. " font label 8" .. C.r) end
+                elseif sub3 == "pos" then
+                    local which = rest3:match("^(%S+)") and rest3:match("^(%S+)"):lower() or ""
+                    local x, y = rest3:match("%s+([-%d%.]+)%s+([-%d%.]+)$")
+                    x, y = tonumber(x), tonumber(y)
+                    if which == "label" and x and y then ov.labelX = x; ov.labelY = y; if ShammyTime.ApplySatelliteTextPosition then ShammyTime.ApplySatelliteTextPosition() end; print(C.green .. "ShammyTime: Outer " .. bubbleName .. " label pos " .. x .. " " .. y .. "." .. C.r)
+                    elseif which == "value" and x and y then ov.valueX = x; ov.valueY = y; if ShammyTime.ApplySatelliteTextPosition then ShammyTime.ApplySatelliteTextPosition() end; print(C.green .. "ShammyTime: Outer " .. bubbleName .. " value pos " .. x .. " " .. y .. "." .. C.r)
+                    else print(C.gray .. "ShammyTime: " .. bubbleName .. " pos — label " .. tostring(ov.labelX or "–") .. " " .. tostring(ov.labelY or "–") .. ", value " .. tostring(ov.valueX or "–") .. " " .. tostring(ov.valueY or "–") .. ". " .. C.gold .. "/st bubbles outer " .. bubbleName .. " pos label 0 8" .. C.r) end
+                elseif sub3 == "" then
+                    print(C.gray .. "ShammyTime: Bubbles → Outer → " .. bubbleName .. " — font(label " .. tostring(ov.labelSize or "–") .. ", value " .. tostring(ov.valueSize or "–") .. "), pos(label " .. tostring(ov.labelX or "–") .. " " .. tostring(ov.labelY or "–") .. ", value " .. tostring(ov.valueX or "–") .. " " .. tostring(ov.valueY or "–") .. ")" .. C.r)
+                    PrintBubblesOuterHelp()
+                else
+                    PrintBubblesOuterHelp()
+                end
+            elseif sub2 == "" then
+                print(C.gray .. "ShammyTime: Bubbles → Outer — gap " .. tostring(db.wfSatelliteGap or 0) .. ", font(label " .. (db.fontSatelliteLabel or 8) .. ", value " .. (db.fontSatelliteValue or 13) .. "), pos(label " .. (db.wfSatelliteLabelX or 0) .. " " .. (db.wfSatelliteLabelY or 8) .. ", value " .. (db.wfSatelliteValueX or 0) .. " " .. (db.wfSatelliteValueY or -6) .. ")" .. C.r)
+                PrintBubblesOuterHelp()
+            else
+                PrintBubblesOuterHelp()
+            end
+        else
+            PrintBubblesHelp()
         end
     else
         if cmd ~= "" then

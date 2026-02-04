@@ -15,6 +15,7 @@ local wfExpectingDamage = false
 local wfWindowTotal = 0
 local wfWindowHits = 0
 local wfWindowTimer = nil
+local wfRadialShownForThisProc = false  -- true once we've shown the radial for this proc (to avoid replaying animation)
 
 -- Clear any in-flight Windfury proc window (used on stats reset)
 function ShammyTime.ResetWindfuryProcWindow()
@@ -25,6 +26,7 @@ function ShammyTime.ResetWindfuryProcWindow()
     wfExpectingDamage = false
     wfWindowTotal = 0
     wfWindowHits = 0
+    wfRadialShownForThisProc = false
 end
 
 local function GetDB()
@@ -62,26 +64,43 @@ function ShammyTime_Windfury_GetStats()
 end
 
 -- Called when correlation window ends with a proc total (or from /st test). Uses center ring + satellite rings only.
-function ShammyTime_Windfury_ShowRadial(procTotal)
+-- updateOnly: if true, only update the TOTAL text without replaying the animation (used when window closes after instant show)
+function ShammyTime_Windfury_ShowRadial(procTotal, updateOnly)
     if ShammyTime.FlushWindfuryProc then ShammyTime.FlushWindfuryProc() end
     if procTotal then
         ShammyTime.lastProcTotal = procTotal
     end
-    if ShammyTime.PlayCenterRingProc then
-        ShammyTime.PlayCenterRingProc(procTotal)
+    if updateOnly then
+        -- Just update the text, don't replay animation
+        if ShammyTime.UpdateCenterRingTotal then
+            ShammyTime.UpdateCenterRingTotal(procTotal)
+        end
+    else
+        if ShammyTime.PlayCenterRingProc then
+            ShammyTime.PlayCenterRingProc(procTotal)
+        end
     end
 end
 
 -- Start or extend the proc damage window (called from SPELL_EXTRA_ATTACKS or first WF damage)
-local function StartProcWindow()
+-- showInstant: if true, show the radial immediately with current total (for SPELL_EXTRA_ATTACKS)
+local function StartProcWindow(showInstant)
     wfExpectingDamage = true
+    wfRadialShownForThisProc = false  -- reset for new proc window
     if wfWindowTimer then wfWindowTimer:Cancel() end
+    -- Show radial instantly on SPELL_EXTRA_ATTACKS so user sees feedback immediately
+    if showInstant then
+        ShammyTime_Windfury_ShowRadial(wfWindowTotal)
+        wfRadialShownForThisProc = true
+    end
     wfWindowTimer = C_Timer.NewTimer(WF_WINDOW, function()
         wfWindowTimer = nil
         wfExpectingDamage = false
         if wfWindowHits > 0 then
-            ShammyTime_Windfury_ShowRadial(wfWindowTotal)
+            -- If we already showed the radial, just update the text; otherwise play full animation
+            ShammyTime_Windfury_ShowRadial(wfWindowTotal, wfRadialShownForThisProc)
         end
+        wfRadialShownForThisProc = false
     end)
 end
 
@@ -97,7 +116,7 @@ local function OnCombatLog()
         if srcGUID == UnitGUID("player") then
             wfWindowTotal = 0
             wfWindowHits = 0
-            StartProcWindow()
+            StartProcWindow(true)  -- showInstant: show radial immediately on proc
         end
         return
     end
@@ -117,7 +136,7 @@ local function OnCombatLog()
     if not wfExpectingDamage then
         wfWindowTotal = 0
         wfWindowHits = 0
-        StartProcWindow()
+        StartProcWindow(true)  -- showInstant: show radial immediately on first WF damage
     end
 
     wfWindowTotal = wfWindowTotal + amount
@@ -127,7 +146,9 @@ local function OnCombatLog()
         wfWindowTimer:Cancel()
         wfWindowTimer = nil
         wfExpectingDamage = false
-        ShammyTime_Windfury_ShowRadial(wfWindowTotal)
+        -- If we already showed the radial, just update the text; otherwise play full animation
+        ShammyTime_Windfury_ShowRadial(wfWindowTotal, wfRadialShownForThisProc)
+        wfRadialShownForThisProc = false
     end
 end
 

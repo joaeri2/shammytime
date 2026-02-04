@@ -8,6 +8,7 @@ if addonName ~= "ShammyTime" then return end
 
 local FormatTime = ShammyTime.FormatTime
 local GetWeaponImbuePerHand = ShammyTime.GetWeaponImbuePerHand
+local GetElementalShieldAura = ShammyTime.GetElementalShieldAura
 local GetRadialPositionDB = ShammyTime.GetRadialPositionDB
 local GetDB = ShammyTime.GetDB
 
@@ -37,8 +38,19 @@ local TIMER_COLOR = { 0.88, 0.86, 0.82 }
 local SLOT_FRAME_ALPHA = 0.94
 local EMPTY_ICON = 135847  -- Frostbrand-style empty slot
 
+-- Elemental shield (Lightning Shield / Water Shield): off texture base, on texture fades in with alpha when active; orb count 1–3.
+-- 1:1 display (512×426 = texture size in pixels).
+local SHIELD_GAP = 16
+local SHIELD_ICON_WIDTH = 512
+local SHIELD_ICON_HEIGHT = 426
+local SHIELD_FADE_DURATION = 0.25  -- seconds for "on" overlay to fade in/out (light turning on/off)
+local SHIELD_COUNT_FONT_SIZE = 18  -- orb count (1–3) text
+local SHIELD_COUNT_COLOR = { 0.95, 0.9, 0.7 }  -- light gold for count
+
 local imbueBarFrame
 local slots = {}  -- [1] = MH, [2] = OH
+local shieldFrame  -- elemental shield indicator (off/on overlay + orb count)
+local shieldAlphaTicker = nil  -- smooth fade for "on" overlay
 local updateTicker
 -- Pulse when no imbues for 15 sec (remind player); pulse for 15 sec then stop. Removal = stay still (reset delay).
 local IMBUE_PULSE_DELAY = 15
@@ -75,6 +87,35 @@ local function SaveImbueBarPosition(frame)
     pos.imbueBar.relativePoint = relativePoint
     pos.imbueBar.x = x
     pos.imbueBar.y = y
+end
+
+local DEFAULT_SHIELD_SCALE = 0.2
+
+local function ApplyShieldPosition(frame)
+    local pos = GetRadialPositionDB and GetRadialPositionDB()
+    if not pos then return end
+    pos.shieldFrame = pos.shieldFrame or {}
+    local t = pos.shieldFrame
+    if t.point and t.relativeTo then
+        local relTo = (t.relativeTo and _G[t.relativeTo]) or UIParent
+        frame:ClearAllPoints()
+        frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
+    else
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", 250, -180)
+    end
+end
+
+local function SaveShieldPosition(frame)
+    if not GetRadialPositionDB then return end
+    local pos = GetRadialPositionDB()
+    pos.shieldFrame = pos.shieldFrame or {}
+    local point, relTo, relativePoint, x, y = frame:GetPoint(1)
+    pos.shieldFrame.point = point
+    pos.shieldFrame.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+    pos.shieldFrame.relativePoint = relativePoint
+    pos.shieldFrame.x = x
+    pos.shieldFrame.y = y
 end
 
 local function SetSlotTexture(icon, iconData)
@@ -128,12 +169,74 @@ local function HasAnyImbue()
         or (perHand.offHand and perHand.offHand.expirationTime and (perHand.offHand.expirationTime - GetTime()) > 0)
 end
 
+local function StopShieldAlphaTicker()
+    if shieldAlphaTicker then
+        shieldAlphaTicker:Cancel()
+        shieldAlphaTicker = nil
+    end
+end
+
+-- Update elemental shield indicator: off texture always visible; on texture fades in when Lightning/Water Shield active; show orb count (1–3).
+local function UpdateShieldIndicator()
+    if not shieldFrame or not shieldFrame.shieldOn or not shieldFrame.shieldOff then return end
+    if not GetElementalShieldAura then return end
+
+    local icon, count, duration, expTime, spellId, fallbackIcon = GetElementalShieldAura()
+    local hasShield = (icon or fallbackIcon) and true
+    -- TBC: Lightning Shield and Water Shield have 1–3 orbs (UnitAura stack count); 0 when all consumed but aura may still be present
+    count = (type(count) == "number" and count >= 0 and count <= 9) and count or (hasShield and 3 or 0)
+
+    -- Override count from DB if set (shieldCount = 1–9 means fixed display; nil = auto from buff)
+    local db = GetDB and GetDB() or {}
+    if db.shieldCount and type(db.shieldCount) == "number" and db.shieldCount >= 1 and db.shieldCount <= 9 then
+        count = db.shieldCount
+    end
+
+    local onTex = shieldFrame.shieldOn
+    local currentAlpha = onTex:GetAlpha() or 0
+    local targetAlpha = hasShield and 1 or 0
+
+    -- Orb count: show when shield active (0–9 for Lightning/Water Shield, or override)
+    if shieldFrame.countText then
+        if hasShield then
+            shieldFrame.countText:SetText(tostring(count))
+            shieldFrame.countText:SetTextColor(SHIELD_COUNT_COLOR[1], SHIELD_COUNT_COLOR[2], SHIELD_COUNT_COLOR[3])
+            shieldFrame.countText:Show()
+        else
+            shieldFrame.countText:SetText("")
+            shieldFrame.countText:Hide()
+        end
+    end
+
+    -- Already at target (or very close)
+    if math.abs(currentAlpha - targetAlpha) < 0.02 then
+        onTex:SetAlpha(targetAlpha)
+        StopShieldAlphaTicker()
+        return
+    end
+
+    -- Smooth fade: run ticker if not already running
+    if shieldAlphaTicker then return end
+    local startAlpha = currentAlpha
+    local startTime = GetTime()
+    shieldAlphaTicker = C_Timer.NewTicker(1/60, function()
+        local t = (GetTime() - startTime) / SHIELD_FADE_DURATION
+        if t >= 1 then
+            onTex:SetAlpha(targetAlpha)
+            StopShieldAlphaTicker()
+            return
+        end
+        onTex:SetAlpha(startAlpha + (targetAlpha - startAlpha) * t)
+    end)
+end
+
 local function UpdateImbueBar()
     if not imbueBarFrame or not imbueBarFrame:IsShown() then return end
     local perHand = GetWeaponImbuePerHand and GetWeaponImbuePerHand()
     if not perHand then return end
     RenderImbueSlot(slots[1], perHand.mainHand)
     RenderImbueSlot(slots[2], perHand.offHand)
+    UpdateShieldIndicator()
 
     -- No-imbue pulse: only if no imbue for 15 sec (never applied / expired); pulse 15 sec then stop. Removal = stay still.
     local hasImbue = HasAnyImbue()
@@ -267,9 +370,10 @@ local function CreateImbueBarFrame()
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         sf.icon = icon
 
+        local fontSz = (GetDB and GetDB().fontImbueTimer and GetDB().fontImbueTimer >= 6 and GetDB().fontImbueTimer <= 28) and GetDB().fontImbueTimer or TIMER_FONT_SIZE
         local timerText = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         timerText:SetPoint("BOTTOM", 0, TIMER_OFFSET_BOTTOM)
-        timerText:SetFont("Fonts\\FRIZQT__.TTF", TIMER_FONT_SIZE, "OUTLINE")
+        timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
         timerText:SetTextColor(TIMER_COLOR[1], TIMER_COLOR[2], TIMER_COLOR[3])
         timerText:SetShadowColor(0, 0, 0, 1)
         timerText:SetShadowOffset(1, -1)
@@ -284,8 +388,110 @@ local function CreateImbueBarFrame()
     return f
 end
 
+-- Standalone elemental shield frame (Lightning/Water Shield): own position, movable, scale via /st shield scale.
+local function CreateShieldFrame()
+    if shieldFrame then return shieldFrame end
+
+    local M = ShammyTime_Media
+    local shieldTexOff = (M and M.TEX and M.TEX.LIGHTNING_SHIELD_OFF) or "Interface\\Icons\\Spell_Nature_LightningShield"
+    local shieldTexOn  = (M and M.TEX and M.TEX.LIGHTNING_SHIELD_ON)  or "Interface\\Icons\\Spell_Nature_LightningShield"
+    local db = GetDB and GetDB() or {}
+    local scale = (db.shieldScale and db.shieldScale >= 0.05 and db.shieldScale <= 2) and db.shieldScale or DEFAULT_SHIELD_SCALE
+
+    local f = CreateFrame("Frame", "ShammyTimeShieldFrame", UIParent)
+    f:SetFrameStrata("MEDIUM")
+    f:SetSize(SHIELD_ICON_WIDTH + 8, SHIELD_ICON_HEIGHT + 50)
+    ApplyShieldPosition(f)
+    f:SetScale(scale)
+    f.baseScale = scale
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(not (db.locked))
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self)
+        if GetDB and GetDB().locked then return end
+        self:StartMoving()
+    end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        SaveShieldPosition(self)
+    end)
+
+    local shieldOff = f:CreateTexture(nil, "ARTWORK")
+    shieldOff:SetSize(SHIELD_ICON_WIDTH, SHIELD_ICON_HEIGHT)
+    shieldOff:SetPoint("TOP", 0, ICON_OFFSET_TOP)
+    shieldOff:SetTexCoord(0, 1, 0, 1)
+    shieldOff:SetTexture(shieldTexOff)
+    shieldOff:SetVertexColor(1, 1, 1)
+    shieldOff:SetAlpha(1)
+    shieldOff:Show()
+    f.shieldOff = shieldOff
+
+    local shieldOn = f:CreateTexture(nil, "OVERLAY")
+    shieldOn:SetSize(SHIELD_ICON_WIDTH, SHIELD_ICON_HEIGHT)
+    shieldOn:SetPoint("TOP", 0, ICON_OFFSET_TOP)
+    shieldOn:SetTexCoord(0, 1, 0, 1)
+    shieldOn:SetTexture(shieldTexOn)
+    shieldOn:SetVertexColor(1, 1, 1)
+    shieldOn:SetAlpha(0)
+    shieldOn:Show()
+    f.shieldOn = shieldOn
+
+    local countFontSz = (GetDB and GetDB().fontImbueTimer and GetDB().fontImbueTimer >= 6 and GetDB().fontImbueTimer <= 28) and GetDB().fontImbueTimer or SHIELD_COUNT_FONT_SIZE
+    local countText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    -- Use position from DB (shieldCountX, shieldCountY) with defaults (0, TIMER_OFFSET_BOTTOM)
+    local countX = (db.shieldCountX and type(db.shieldCountX) == "number") and db.shieldCountX or 0
+    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or TIMER_OFFSET_BOTTOM
+    countText:SetPoint("BOTTOM", countX, countY)
+    countText:SetFont("Fonts\\FRIZQT__.TTF", countFontSz, "OUTLINE")
+    countText:SetTextColor(SHIELD_COUNT_COLOR[1], SHIELD_COUNT_COLOR[2], SHIELD_COUNT_COLOR[3])
+    countText:SetShadowColor(0, 0, 0, 1)
+    countText:SetShadowOffset(1, -1)
+    countText:Hide()
+    f.countText = countText
+
+    shieldFrame = f
+    if db.wfShieldEnabled ~= false then f:Show() else f:Hide() end
+    UpdateShieldIndicator()
+    return f
+end
+
+function ShammyTime.GetShieldFrame()
+    return shieldFrame
+end
+
+function ShammyTime.EnsureShieldFrame()
+    return CreateShieldFrame()
+end
+
+function ShammyTime.ApplyShieldScale()
+    if not shieldFrame then return end
+    local db = GetDB and GetDB() or {}
+    local scale = (db.shieldScale and db.shieldScale >= 0.05 and db.shieldScale <= 2) and db.shieldScale or DEFAULT_SHIELD_SCALE
+    shieldFrame.baseScale = scale
+    shieldFrame:SetScale(scale)
+end
+
+function ShammyTime.ApplyShieldPosition()
+    if shieldFrame then ApplyShieldPosition(shieldFrame) end
+end
+
+-- Apply shield count settings (count override and number position) from DB
+function ShammyTime.ApplyShieldCountSettings()
+    if not shieldFrame or not shieldFrame.countText then return end
+    local db = GetDB and GetDB() or {}
+    -- Update count text position from DB
+    local countX = (db.shieldCountX and type(db.shieldCountX) == "number") and db.shieldCountX or 0
+    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or TIMER_OFFSET_BOTTOM
+    shieldFrame.countText:ClearAllPoints()
+    shieldFrame.countText:SetPoint("BOTTOM", countX, countY)
+    -- Refresh the indicator to update the count display (in case count override changed)
+    UpdateShieldIndicator()
+end
+
 local function Init()
     CreateImbueBarFrame()
+    CreateShieldFrame()
     if not updateTicker then
         updateTicker = C_Timer.NewTicker(1, UpdateImbueBar)
     end
@@ -333,4 +539,16 @@ function ShammyTime.ApplyImbueBarLayout()
     slots[2]:SetSize(slotW, SLOT_H)
     slots[2].icon:SetSize(iconSize, iconSize)
     UpdateImbueBar()
+end
+
+-- Apply timer font size from DB (called when user changes /st font imbue N)
+function ShammyTime.ApplyImbueBarFontSize()
+    if not imbueBarFrame or not slots[1] then return end
+    local db = GetDB and GetDB() or {}
+    local fontSz = (db.fontImbueTimer and db.fontImbueTimer >= 6 and db.fontImbueTimer <= 28) and db.fontImbueTimer or TIMER_FONT_SIZE
+    for i = 1, #slots do
+        if slots[i] and slots[i].timerText then
+            slots[i].timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
+        end
+    end
 end

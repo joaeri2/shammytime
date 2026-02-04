@@ -80,15 +80,31 @@ local function SaveCenterPosition(f)
     }
 end
 
+-- Current center circle size (diameter) from DB
+local function GetCenterSize()
+    return (ShammyTime.GetCenterSize and ShammyTime.GetCenterSize()) or 200
+end
+
+-- Current center text Y offsets from DB (pixels from center; +Y = up)
+local function GetCenterTextOffsets()
+    local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    return {
+        titleY    = (db.wfCenterTextTitleY ~= nil) and db.wfCenterTextTitleY or 13,
+        totalY    = (db.wfCenterTextTotalY ~= nil) and db.wfCenterTextTotalY or 0,
+        criticalY = (db.wfCenterTextCriticalY ~= nil) and db.wfCenterTextCriticalY or 31,
+    }
+end
+
 -- Creates the main center ring frame once; subsequent calls return the same frame.
 -- Contains: ring subframe (textures + proc animation), text frame ("Windfury!", "TOTAL: xxx"), and behavior (drag, right-click reset).
 local function CreateCenterRingFrame()
     if centerFrame then return centerFrame end
 
+    local centerSize = GetCenterSize()
     local f = CreateFrame("Frame", "ShammyTimeCenterRing", UIParent)
     f.wfProcAnimPlaying = false
     f:SetFrameStrata("MEDIUM")
-    f:SetSize(260, 260)
+    f:SetSize(centerSize, centerSize)
     f:SetScale(GetRadialScale())
     f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     ApplyCenterPosition(f)
@@ -127,7 +143,7 @@ local function CreateCenterRingFrame()
         if centerFrame then
             if centerFrame.criticalLine then centerFrame.criticalLine:Hide() end
             if centerFrame.total then
-                centerFrame.total:SetPoint("CENTER", 0, 2)
+                centerFrame.total:SetPoint("CENTER", 0, GetCenterTextOffsets().totalY)
                 centerFrame.total:SetText("TOTAL: 0")
             end
             if centerFrame.title then centerFrame.title:SetText("Windfury!") end
@@ -142,14 +158,15 @@ local function CreateCenterRingFrame()
 
     -- Ring subframe: holds all visual layers (shadow, bg, energy, border, runes). This frame scales during proc (pop effect); satellites are parented here so they move with the ring. Totem bar is a sibling, so it does not scale.
     local ringFrame = CreateFrame("Frame", nil, f)
-    ringFrame:SetSize(260, 260)
+    ringFrame:SetSize(centerSize, centerSize)
     ringFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
     ringFrame:SetFrameLevel(1)
     f.ringFrame = ringFrame
 
     -- Layer 0: Soft shadow behind the circle. Slightly larger than the ring; scales with the ring on proc.
-    local ringShadowSize = 280
-    local ringShadowOffsetY = -8
+    local scale = centerSize / 200
+    local ringShadowSize = 222 * scale
+    local ringShadowOffsetY = -7 * scale
     ringFrame.shadow = ringFrame:CreateTexture(nil, "BACKGROUND", nil, -1)
     ringFrame.shadow:SetSize(ringShadowSize, ringShadowSize)
     ringFrame.shadow:SetPoint("CENTER", 0, ringShadowOffsetY)
@@ -177,9 +194,8 @@ local function CreateCenterRingFrame()
     ringFrame.border:SetAlpha(1)
 
     -- Layer 4: Rune circle overlay (wf_center_runes.tga). Hidden (alpha 0) when idle. On proc: flashes to full visibility, spins slightly, then fades out to 0 over a few seconds. No other system touches runes (e.g. lightning only affects energy).
-    -- Edit only these to change rune ring size and position (nothing else uses them):
-    local RUNE_RING_SIZE = 189
-    local RUNE_RING_OFFSET_X, RUNE_RING_OFFSET_Y = -2, 9
+    local RUNE_RING_SIZE = 144 * scale
+    local RUNE_RING_OFFSET_X, RUNE_RING_OFFSET_Y = -1 * scale, 7 * scale
     ringFrame.runes = ringFrame:CreateTexture(nil, "OVERLAY")
     ringFrame.runes:SetTexture(TEX.CENTER_RUNES)
     ringFrame.runes:SetAlpha(0)
@@ -190,7 +206,7 @@ local function CreateCenterRingFrame()
     local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", f)
     textFrame:SetFrameStrata("MEDIUM")
     textFrame:SetFrameLevel(10)
-    textFrame:SetSize(260, 260)
+    textFrame:SetSize(centerSize, centerSize)
     textFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
     textFrame:EnableMouse(false)  -- allow drag to pass through to center when clicking text
     textFrame:Hide()
@@ -209,29 +225,35 @@ local function CreateCenterRingFrame()
     end)
     textFrame.fadeOutAnim = fadeOutAg
 
+    local dbFont = ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local fontTitle = (dbFont.fontCircleTitle and dbFont.fontCircleTitle >= 6 and dbFont.fontCircleTitle <= 28) and dbFont.fontCircleTitle or 20
+    local fontTotal = (dbFont.fontCircleTotal and dbFont.fontCircleTotal >= 6 and dbFont.fontCircleTotal <= 28) and dbFont.fontCircleTotal or 14
+    local fontCritical = (dbFont.fontCircleCritical and dbFont.fontCircleCritical >= 6 and dbFont.fontCircleCritical <= 28) and dbFont.fontCircleCritical or 20
+    local textOff = GetCenterTextOffsets()
+
     -- Optional "CRITICAL" line (shown when the proc included a crit). Sits above "Windfury!" when visible.
     f.criticalLine = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    f.criticalLine:SetPoint("CENTER", 0, 42)
+    f.criticalLine:SetPoint("CENTER", 0, textOff.criticalY)
     f.criticalLine:SetText("CRITICAL")
     f.criticalLine:SetTextColor(1, 0.5, 0.3)  -- orange-red for impact
-    f.criticalLine:SetFont("Fonts\\FRIZQT__.TTF", 20, "OUTLINE")
+    f.criticalLine:SetFont("Fonts\\FRIZQT__.TTF", fontCritical, "OUTLINE")
     f.criticalLine:Hide()
     f.criticalLineRestColor = {1, 0.5, 0.3}
     f.criticalLineFlashColor = {1, 0.9, 0.5}
 
     f.title = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    f.title:SetPoint("CENTER", 0, 17)
+    f.title:SetPoint("CENTER", 0, textOff.titleY)
     f.title:SetText("Windfury!")
     f.title:SetTextColor(1, 0.9, 0.4)
-    f.title:SetFont("Fonts\\FRIZQT__.TTF", 20, "OUTLINE")
+    f.title:SetFont("Fonts\\FRIZQT__.TTF", fontTitle, "OUTLINE")
     f.titleRestColor = {1, 0.9, 0.4}
     f.titleFlashColor = {1, 1, 1}  -- bright white flash
 
     f.total = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    f.total:SetPoint("CENTER", 0, 2)  -- Y is adjusted in PlayCenterRingProc when "CRITICAL" is shown so three lines fit
+    f.total:SetPoint("CENTER", 0, textOff.totalY)  -- Y is adjusted in PlayCenterRingProc when "CRITICAL" is shown so three lines fit
     f.total:SetText("TOTAL: 3245")
     f.total:SetTextColor(1, 1, 1)
-    f.total:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+    f.total:SetFont("Fonts\\FRIZQT__.TTF", fontTotal, "OUTLINE")
     f.totalRestColor = {1, 1, 1}
     f.totalFlashColor = {1, 1, 0.5}  -- bright yellow flash
 
@@ -476,7 +498,7 @@ local function CreateCenterRingFrame()
         f.textFrame:Show()
         f.criticalLine:Hide()
         f.title:SetText("Windfury!")
-        f.total:SetPoint("CENTER", 0, 2)
+        f.total:SetPoint("CENTER", 0, GetCenterTextOffsets().totalY)
         f.total:SetText("TOTAL: " .. FormatNum(ShammyTime and ShammyTime.lastProcTotal or 0))
         local bar = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
         if bar then bar:Show() end
@@ -503,6 +525,49 @@ end
 -- Ensures the center ring frame is created; used by other modules (e.g. satellites) that need to parent or anchor to it.
 function ShammyTime.EnsureCenterRingExists()
     return CreateCenterRingFrame()
+end
+
+-- Apply font sizes from DB to center ring text (called when user changes /st font circle).
+function ShammyTime.ApplyCenterRingFontSizes()
+    local f = _G.ShammyTimeCenterRing
+    if not f or not f.criticalLine then return end
+    local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local fontTitle = (db.fontCircleTitle and db.fontCircleTitle >= 6 and db.fontCircleTitle <= 28) and db.fontCircleTitle or 20
+    local fontTotal = (db.fontCircleTotal and db.fontCircleTotal >= 6 and db.fontCircleTotal <= 28) and db.fontCircleTotal or 14
+    local fontCritical = (db.fontCircleCritical and db.fontCircleCritical >= 6 and db.fontCircleCritical <= 28) and db.fontCircleCritical or 20
+    f.criticalLine:SetFont("Fonts\\FRIZQT__.TTF", fontCritical, "OUTLINE")
+    f.title:SetFont("Fonts\\FRIZQT__.TTF", fontTitle, "OUTLINE")
+    f.total:SetFont("Fonts\\FRIZQT__.TTF", fontTotal, "OUTLINE")
+end
+
+-- Resize center circle and its layers from DB (call when user changes /st circle size N).
+function ShammyTime.ApplyCenterRingSize()
+    local f = centerFrame or _G.ShammyTimeCenterRing
+    if not f or not f.ringFrame then return end
+    local s = GetCenterSize()
+    local scale = s / 200
+    f:SetSize(s, s)
+    f.ringFrame:SetSize(s, s)
+    if f.textFrame then f.textFrame:SetSize(s, s) end
+    if f.ringFrame.shadow then
+        f.ringFrame.shadow:SetSize(222 * scale, 222 * scale)
+        f.ringFrame.shadow:SetPoint("CENTER", 0, -7 * scale)
+    end
+    if f.ringFrame.runes then
+        f.ringFrame.runes:SetSize(144 * scale, 144 * scale)
+        f.ringFrame.runes:SetPoint("CENTER", -1 * scale, 7 * scale)
+    end
+    if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
+end
+
+-- Reposition center text from DB (call when user changes /st circle text ...).
+function ShammyTime.ApplyCenterRingTextPosition()
+    local f = centerFrame or _G.ShammyTimeCenterRing
+    if not f or not f.criticalLine then return end
+    local off = GetCenterTextOffsets()
+    f.criticalLine:SetPoint("CENTER", 0, off.criticalY)
+    f.title:SetPoint("CENTER", 0, off.titleY)
+    f.total:SetPoint("CENTER", 0, off.totalY)
 end
 
 -- Applies saved position to the totem bar frame (per character).
@@ -607,17 +672,18 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     db.wfRadialShown = true
     if ShammyTime.UpdateAllElementsFadeState then ShammyTime.UpdateAllElementsFadeState() end
     f.total:SetText("TOTAL: " .. FormatNum(procTotal or 0))
+    local totY = GetCenterTextOffsets().totalY
     if ShammyTime.lastProcHadCrit then
         f.criticalLine:SetText("CRITICAL")
         f.criticalLine:Show()
         f.title:SetText("Windfury!")
-        f.total:SetPoint("CENTER", 0, -4)  -- lower so three lines fit
+        f.total:SetPoint("CENTER", 0, totY - 4)  -- lower so three lines fit
         ShammyTime.lastProcHadCritForPopup = true  -- so delayed popup can show CRITICAL! too
         ShammyTime.lastProcHadCrit = nil
     else
         f.criticalLine:Hide()
         f.title:SetText("Windfury!")
-        f.total:SetPoint("CENTER", 0, 2)
+        f.total:SetPoint("CENTER", 0, totY)
     end
     f:SetScale(GetRadialScale())
     local rf = f.ringFrame
@@ -693,6 +759,21 @@ end
 function ShammyTime.IsWindfuryProcAnimationPlaying()
     local c = _G.ShammyTimeCenterRing
     return c and c.wfProcAnimPlaying
+end
+
+-- Update just the "TOTAL: xxx" text without replaying the proc animation. Used when damage is calculated after the instant show.
+function ShammyTime.UpdateCenterRingTotal(procTotal)
+    local f = _G.ShammyTimeCenterRing
+    if not f or not f.total then return end
+    f.total:SetText("TOTAL: " .. FormatNum(procTotal or 0))
+    -- Also update lastProcTotal so satellite values can use it
+    if procTotal then
+        ShammyTime.lastProcTotal = procTotal
+    end
+    -- Update satellite values with new stats
+    if ShammyTime.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
+        ShammyTime.UpdateSatelliteValues(ShammyTime_Windfury_GetStats())
+    end
 end
 
 -- Circle/totem bar toggle and scale are handled via /st circle in ShammyTime.lua.

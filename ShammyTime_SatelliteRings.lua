@@ -11,37 +11,57 @@ if not M then return end
 
 local TEX = M.TEX
 
--- Satellite ring size (smaller than center's 260); reduced another 10%
-local SATELLITE_SIZE = 97
-local SATELLITE_SCALE = 0.85
+-- Satellite ring size: center is 20% larger (200), so satellites = 150 for even proportions
+local SATELLITE_SIZE = 150
+local SATELLITE_SCALE = 1.0
 
--- Distance from center ring center to satellite center; increased ~22% so satellites sit more outside the circle
-local SATELLITE_RADIUS = 116
+-- Satellite radius (75). Center radius + gap + this = distance from center to satellite center (so outer rings touch center edge when gap 0).
+local SATELLITE_HALF = 75
+
+local function GetSatelliteRadius()
+    local centerSize = (ShammyTime.GetCenterSize and ShammyTime.GetCenterSize()) or 200
+    local centerRadius = centerSize / 2
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local gap = db.wfSatelliteGap
+    if gap == nil then gap = 0 end
+    return centerRadius + SATELLITE_HALF + gap
+end
 
 -- Satellite text: font + X,Y position within each circle (pixels from center)
--- +X = right, +Y = up. Tweak these to center text in each ring (designs vary slightly).
+-- +X = right, +Y = up. Global defaults; overridden by DB (bubbles outer) and per-bubble overrides.
 local SATELLITE_FONT = {
     path   = "Fonts\\FRIZQT__.TTF",
     labelSize = 8,
     valueSize = 13,
     outline = "OUTLINE",
-    -- Label (e.g. "PROCS", "CRIT%") position in circle:
     labelX = 0,
     labelY = 8,
-    -- Value (e.g. "216", "8.3%") position in circle:
     valueX = 0,
     valueY = -6,
 }
 
--- Positions: 8:30 to 3:30 over the top; 0 = 3 o'clock, CCW positive
--- Evenly spread from 195° (8:30) to 345° (3:30), 42° apart
+-- Effective text options for a satellite (global DB + per-bubble override). Returns labelSize, valueSize, labelX, labelY, valueX, valueY.
+function ShammyTime.GetSatelliteTextOptions(bubbleName)
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local o = db.wfSatelliteOverrides and db.wfSatelliteOverrides[bubbleName]
+    local labelSize = (o and o.labelSize ~= nil) and o.labelSize or ((db.fontSatelliteLabel and db.fontSatelliteLabel >= 6 and db.fontSatelliteLabel <= 28) and db.fontSatelliteLabel or SATELLITE_FONT.labelSize)
+    local valueSize = (o and o.valueSize ~= nil) and o.valueSize or ((db.fontSatelliteValue and db.fontSatelliteValue >= 6 and db.fontSatelliteValue <= 28) and db.fontSatelliteValue or SATELLITE_FONT.valueSize)
+    local labelX = (o and o.labelX ~= nil) and o.labelX or (db.wfSatelliteLabelX ~= nil and db.wfSatelliteLabelX or SATELLITE_FONT.labelX)
+    local labelY = (o and o.labelY ~= nil) and o.labelY or (db.wfSatelliteLabelY ~= nil and db.wfSatelliteLabelY or SATELLITE_FONT.labelY)
+    local valueX = (o and o.valueX ~= nil) and o.valueX or (db.wfSatelliteValueX ~= nil and db.wfSatelliteValueX or SATELLITE_FONT.valueX)
+    local valueY = (o and o.valueY ~= nil) and o.valueY or (db.wfSatelliteValueY ~= nil and db.wfSatelliteValueY or SATELLITE_FONT.valueY)
+    return labelSize, valueSize, labelX, labelY, valueX, valueY
+end
+
+-- Positions: 6 satellites evenly around the circle (60° apart). 0° = 3 o'clock (right), angles counter-clockwise.
+-- Layout: top-right=MAX(stone), mid-right=MIN(air), down-right=CRIT%(grass_2), down-left=PROC%(water), mid-left=PROCS(grass), upper-left=AVG(fire).
 local SATELLITE_POSITIONS = {
-    MIN    = 195,   -- 8:30
-    AVG    = 153,   -- ~9:30
-    PROCS  = 111,   -- ~10:30
-    CRIT   = 69,    -- ~11:30
-    PROCPCT = 27,   -- ~12:30
-    MAX    = 345,   -- 3:30
+    MIN    = 0,     -- mid-right   — air
+    MAX    = 60,    -- top-right   — stone
+    AVG    = 120,   -- upper-left  — fire
+    PROCS  = 180,   -- mid-left    — grass
+    PROCPCT = 240,  -- down-left   — water
+    CRIT   = 300,   -- down-right  — grass_2
 }
 
 -- Storage for satellite frames
@@ -65,8 +85,9 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     if not parentFrame then return nil end
 
     local angle = math.rad(position)
-    local offsetX = SATELLITE_RADIUS * math.cos(angle) + (nudgeX or 0)
-    local offsetY = SATELLITE_RADIUS * math.sin(angle) + (nudgeY or 0)
+    local radius = GetSatelliteRadius()
+    local offsetX = radius * math.cos(angle) + (nudgeX or 0)
+    local offsetY = radius * math.sin(angle) + (nudgeY or 0)
 
     -- Parent to main center; base offsets stored so we can move satellites with the ring (rubber-band style)
     local f = CreateFrame("Frame", "ShammyTimeSatellite_" .. name, parentFrame)
@@ -146,15 +167,21 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     end)
     textFrame.fadeOutAnim = fadeOutAg
 
-    local lx = textLabelX ~= nil and textLabelX or (SATELLITE_FONT.labelX or 0)
-    local ly = textLabelY ~= nil and textLabelY or (SATELLITE_FONT.labelY or 8)
-    local vx = textValueX ~= nil and textValueX or (SATELLITE_FONT.valueX or 0)
-    local vy = textValueY ~= nil and textValueY or (SATELLITE_FONT.valueY or -6)
+    local labelSize, valueSize, lx, ly, vx, vy
+    if ShammyTime.GetSatelliteTextOptions then
+        labelSize, valueSize, lx, ly, vx, vy = ShammyTime.GetSatelliteTextOptions(name)
+    else
+        labelSize, valueSize = SATELLITE_FONT.labelSize, SATELLITE_FONT.valueSize
+        lx = textLabelX ~= nil and textLabelX or (SATELLITE_FONT.labelX or 0)
+        ly = textLabelY ~= nil and textLabelY or (SATELLITE_FONT.labelY or 8)
+        vx = textValueX ~= nil and textValueX or (SATELLITE_FONT.valueX or 0)
+        vy = textValueY ~= nil and textValueY or (SATELLITE_FONT.valueY or -6)
+    end
     f.label = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     f.label:SetPoint("CENTER", lx, ly)
     f.label:SetText(label or "")
     f.label:SetTextColor(0.9, 0.85, 0.7)
-    f.label:SetFont(SATELLITE_FONT.path, SATELLITE_FONT.labelSize, SATELLITE_FONT.outline or "")
+    f.label:SetFont(SATELLITE_FONT.path, labelSize, SATELLITE_FONT.outline or "")
     f.labelRestColor = {0.9, 0.85, 0.7}
     f.labelFlashColor = {1, 1, 1}
 
@@ -162,7 +189,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f.value:SetPoint("CENTER", vx, vy)
     f.value:SetText("0")
     f.value:SetTextColor(1, 1, 1)
-    f.value:SetFont(SATELLITE_FONT.path, SATELLITE_FONT.valueSize, SATELLITE_FONT.outline or "")
+    f.value:SetFont(SATELLITE_FONT.path, valueSize, SATELLITE_FONT.outline or "")
     f.valueRestColor = {1, 1, 1}
     f.valueFlashColor = {1, 1, 0.5}
     f.currentValue = nil  -- used to hide text when 0/empty
@@ -333,14 +360,15 @@ end
 -- - textLabelX / textLabelY, textValueX / textValueY:
 --   - Pixel offsets of label/value relative to the ring center.
 --   - If you want “no override”, set to 0 (which effectively uses the base placement plus 0 offset).
--- Satellite names = element / look (from art): air, water, fire, grass, stone, grass_2. Same values still shown.
+-- Layout: top-right=MAX(stone), mid-right=MIN(air), down-right=CRIT%(grass_2), down-left=PROC%(water), mid-left=PROCS(grass), upper-left=AVG(fire).
+-- 0°=mid-right, 60°=top-right, 120°=upper-left, 180°=mid-left, 240°=down-left, 300°=down-right.
 local SATELLITE_CONFIG = {
-    { name = "air",     position = 195, tex = "AIR_FULL",          label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "water",   position = 153, tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "fire",    position = 111, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "grass",   position = 69,  tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "stone",   position = 27,  tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0, textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "grass_2", position = 345, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "air",     position = 0,   tex = "AIR_FULL",          label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "stone",   position = 60,  tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 13, textValueX = 0, textValueY = 13 },
+    { name = "fire",    position = 120, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "grass",   position = 180, tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "water",   position = 240, tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0, textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "grass_2", position = 300, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
 }
 
 local function GetSatelliteTextureSet(texKey)
@@ -492,6 +520,21 @@ function ShammyTime.ResetSatellitePositions()
     end
 end
 
+-- Reapply satellite radius from DB and move all outer bubbles (call when user changes /st circle gap N)
+function ShammyTime.ApplySatelliteRadius()
+    local centerFrame = GetCenterFrame()
+    if not centerFrame then return end
+    local radius = GetSatelliteRadius()
+    for _, f in pairs(satelliteFrames) do
+        if f and f.baseOffsetX ~= nil and f.baseOffsetY ~= nil then
+            local angle = math.atan2(f.baseOffsetY, f.baseOffsetX)
+            f.baseOffsetX = radius * math.cos(angle)
+            f.baseOffsetY = radius * math.sin(angle)
+            f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX, f.baseOffsetY)
+        end
+    end
+end
+
 -- Set alpha on all satellite frames (for fade-out-of-combat / fade-when-not-procced)
 function ShammyTime.SetSatelliteFadeAlpha(alpha)
     for _, f in pairs(satelliteFrames) do
@@ -526,6 +569,30 @@ function ShammyTime.AnimateSatellitesToAlpha(targetAlpha, duration)
     end
     for _, f in pairs(satelliteFrames) do
         if f then anim(f, targetAlpha, duration) end
+    end
+end
+
+-- Apply font sizes and text position from DB to all satellite text (called when user changes bubbles outer font/pos).
+function ShammyTime.ApplySatelliteFontSizes()
+    for bubbleName, f in pairs(satelliteFrames) do
+        if f and f.label and f.value and ShammyTime.GetSatelliteTextOptions then
+            local labelSize, valueSize, lx, ly, vx, vy = ShammyTime.GetSatelliteTextOptions(bubbleName)
+            f.label:SetFont(SATELLITE_FONT.path, labelSize, SATELLITE_FONT.outline or "")
+            f.value:SetFont(SATELLITE_FONT.path, valueSize, SATELLITE_FONT.outline or "")
+            f.label:SetPoint("CENTER", lx, ly)
+            f.value:SetPoint("CENTER", vx, vy)
+        end
+    end
+end
+
+-- Apply only text position from DB (when only position changed).
+function ShammyTime.ApplySatelliteTextPosition()
+    for bubbleName, f in pairs(satelliteFrames) do
+        if f and f.label and f.value and ShammyTime.GetSatelliteTextOptions then
+            local _, _, lx, ly, vx, vy = ShammyTime.GetSatelliteTextOptions(bubbleName)
+            f.label:SetPoint("CENTER", lx, ly)
+            f.value:SetPoint("CENTER", vx, vy)
+        end
     end
 end
 

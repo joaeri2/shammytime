@@ -173,9 +173,11 @@ local function CreateWindfuryTotemSlots()
         sf.icon = icon
 
         -- Timer text at bottom of slot (no cooldown spiral) (muted so it sits in the bar)
+        local dbFont = ShammyTime.GetDB and ShammyTime.GetDB() or {}
+        local fontSz = (dbFont.fontTotemTimer and dbFont.fontTotemTimer >= 6 and dbFont.fontTotemTimer <= 28) and dbFont.fontTotemTimer or TIMER_FONT_SIZE
         local timerText = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         timerText:SetPoint("BOTTOM", 0, TIMER_OFFSET_BOTTOM)
-        timerText:SetFont("Fonts\\FRIZQT__.TTF", TIMER_FONT_SIZE, "OUTLINE")
+        timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
         timerText:SetTextColor(TIMER_COLOR[1], TIMER_COLOR[2], TIMER_COLOR[3])
         timerText:SetShadowColor(0, 0, 0, 1)
         timerText:SetShadowOffset(1, -1)
@@ -252,6 +254,18 @@ end
 -- Run after center ring and main addon are ready (ADDON_LOADED ShammyTime already created center if radial is shown).
 if ShammyTime.EnsureCenterRingExists then
     C_Timer.After(0, Init)
+end
+
+-- Apply timer font size from DB (called when user changes /st font totem N)
+function ShammyTime.ApplyTotemBarFontSize()
+    for i = 1, 4 do
+        local sf = windfurySlots[i]
+        if sf and sf.timerText then
+            local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
+            local fontSz = (db.fontTotemTimer and db.fontTotemTimer >= 6 and db.fontTotemTimer <= 28) and db.fontTotemTimer or TIMER_FONT_SIZE
+            sf.timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
+        end
+    end
 end
 
 -- Expose for /st totem pos

@@ -2,8 +2,7 @@
 -- When you're too far from a totem to receive its buff, a red overlay appears on that slot.
 -- WoW Classic Anniversary 2026 (TBC Anniversary Edition, Interface 20505); compatible with builds 20501–20505.
 
-local addonName, addon = ...
--- Expose API for ShammyTime_Windfury.lua (no require in WoW)
+-- ShammyTime main logic (API, totems, windfury, fade). Core creates ShammyTime addon and DB.
 ShammyTime = ShammyTime or {}
 -- Chat colors for slash help (WoW: |cAARRGGBB text |r)
 local C = {
@@ -233,65 +232,10 @@ local function HasPlayerBuffByAnySpellId(idOrIds)
     return false
 end
 
--- Defaults
-local DEFAULTS = {
-    point = "CENTER",
-    relativeTo = "UIParent",
-    relativePoint = "CENTER",
-    x = 0,
-    y = -180,
-    scale = 1.0,
-    locked = false,
-    -- Windfury stats frame (separate, below main bar by default)
-    wfPoint = "TOP",
-    wfRelativeTo = "ShammyTimeFrame",
-    wfRelativePoint = "BOTTOM",
-    wfX = 0,
-    wfY = -4,
-    wfScale = 1.0,
-    wfLocked = false,
-    windfuryTrackerEnabled = true,
-    wfRadialEnabled = true,  -- show radial UI on Windfury proc
-    wfTotemBarEnabled = true,   -- show Windfury totem bar (on/off via /st show totem)
-    wfFocusEnabled = true,      -- show Shamanistic Focus (on/off via /st show focus)
-    wfImbueBarEnabled = true,   -- show imbue bar (on/off via /st show imbue)
-    wfShieldEnabled = true,    -- show Lightning/Water Shield indicator (on/off via /st show shield)
-    shieldScale = 0.2,         -- scale for shield indicator (0.05–2; /st shield scale X)
-    shieldCount = nil,         -- override shield charge count (nil = auto from buff; 1–9 = fixed display)
-    shieldCountX = 0,          -- X offset for shield count text (default 0)
-    shieldCountY = -50,        -- Y offset for shield count text (default -50 = TIMER_OFFSET_BOTTOM)
-    wfRadialScale = 1.0,    -- scale for center ring + satellites (circle only) (0.5–2)
-    wfSatelliteGap = nil,  -- gap in pixels between center ring edge and outer bubble edges (nil/0 = touch; positive = space, negative = overlap)
-    wfCenterSize = nil,    -- center circle diameter in pixels (nil = 200)
-    wfCenterTextTitleY = nil,    -- "Windfury!" line Y offset from center (nil = 13)
-    wfCenterTextTotalY = nil,    -- "TOTAL: xxx" line Y offset (nil = 0)
-    wfCenterTextCriticalY = nil, -- "CRITICAL" line Y offset (nil = 31)
-    wfTotemBarScale = 1.0,  -- scale for Windfury totem bar only (0.5–2)
-    wfRadialShown = false,  -- persist: center + satellites visible (restored after reload; set when /st circle toggle on or on Windfury proc; totem bar is separate)
-    wfAlwaysShowNumbers = false,  -- if false (default): numbers fade after proc, show on hover; if true: numbers always visible
-    wfFadeOutOfCombat = true,    -- when on: fade elements out of combat (default on for "fade all" style)
-    wfFadeWhenNotProcced = true, -- when on: circle fades when no recent WF proc; imbue bar by duration (default on)
-    wfFocusFadeWhenNotProcced = true,  -- when on: Shamanistic Focus fades when no Focus buff; fades in on proc
-    wfFadeWhenNoTotems = true,   -- when on: totem bar fades when no totems (show when totems or in combat)
-    wfNoTotemsFadeDelay = 5,     -- seconds with no totems before totem bar fades out
-    wfImbueFadeWhenLongDuration = true,  -- when on: imbue bar fades unless ≤ threshold left (default 2 min)
-    wfImbueFadeThresholdSec = 120,       -- show imbue bar when any imbue has this many seconds or less left
-    -- Per-element text sizes (used by /st font); defaults = current in-game sizes; range typically 6–28
-    fontCircleTitle = 20,
-    fontCircleTotal = 14,
-    fontCircleCritical = 20,
-    fontSatelliteLabel = 8,
-    fontSatelliteValue = 13,
-    fontTotemTimer = 7,
-    fontImbueTimer = 20,
-    -- Outer bubbles: global text position (nil = use built-in 0, 8, 0, -6)
-    wfSatelliteLabelX = nil,
-    wfSatelliteLabelY = nil,
-    wfSatelliteValueX = nil,
-    wfSatelliteValueY = nil,
-    -- Per-bubble overrides: key = bubble name (air, stone, fire, grass, water, grass_2), value = { labelSize, valueSize, labelX, labelY, valueX, valueY }
-    wfSatelliteOverrides = nil,
-}
+-- DB from Core (AceDB profile); fallback if Core not loaded yet
+local function GetDB()
+    return (ShammyTime.GetDB and ShammyTime.GetDB()) or (ShammyTimeDB or {})
+end
 
 -- State: previous totem presence per slot (to detect "just gone")
 local lastHadTotem = { [1] = false, [2] = false, [3] = false, [4] = false }
@@ -336,14 +280,6 @@ local circleFadeOutStarted = false  -- true once circle has started fading out; 
 ShammyTime.circleHovered = false  -- true while mouse is over center ring; pauses fade-out (no revive from 0)
 ShammyTime.radialNumbersVisible = false  -- true when radial numbers should be shown (prevents late re-show after fade)
 
-local function GetDB()
-    ShammyTimeDB = ShammyTimeDB or {}
-    for k, v in pairs(DEFAULTS) do
-        if ShammyTimeDB[k] == nil then ShammyTimeDB[k] = v end
-    end
-    return ShammyTimeDB
-end
-
 -- Per-character position for Windfury radial (center ring + totem bar placed separately)
 local function GetRadialPositionKey()
     return (GetRealmName() or "") .. "\001" .. (UnitName("player") or "")
@@ -359,94 +295,24 @@ function ShammyTime.GetRadialPositionDB()
     return db.wfRadialPos[key]
 end
 
--- Reset all settings and positions to defaults; re-apply lock/fade and frame positions/scales.
-local function ResetAllToDefaults()
-    ShammyTimeDB = ShammyTimeDB or {}
-    for k, v in pairs(DEFAULTS) do
-        ShammyTimeDB[k] = v
-    end
-    ShammyTimeDB.focusFrame = {
-        point = "CENTER",
-        relativeTo = "UIParent",
-        relativePoint = "CENTER",
-        x = 0,
-        y = -150,
-        scale = 0.8,
-        locked = false,
-    }
-    local db = ShammyTimeDB
-    -- Ensure all elements are in default visible state after reset: enabled and always shown (no fading).
-    db.wfRadialShown = true
-    db.wfRadialEnabled = true
-    db.wfTotemBarEnabled = true
-    db.wfFocusEnabled = true
-    db.wfImbueBarEnabled = true
-    db.wfShieldEnabled = true
-    db.shieldScale = 0.2
-    db.wfFadeOutOfCombat = false
-    db.wfFadeWhenNotProcced = false
-    db.wfFocusFadeWhenNotProcced = false
-    db.wfFadeWhenNoTotems = false
-    db.wfImbueFadeWhenLongDuration = false
-    -- Always use a fresh table so we never index corrupted saved data (e.g. wfRadialPos as number)
-    db.wfRadialPos = {}
-    local key = GetRadialPositionKey()
-    db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil }
-    db.wfSession = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
-    db.wfLastPull = { total = 0, count = 0, procs = 0, min = nil, max = nil, crits = 0, swings = 0 }
-    db.imbueBarScale = 0.4
-    db.imbueBarMargin = nil
-    db.imbueBarGap = nil
-    db.imbueBarOffsetY = nil
-    db.imbueBarIconSize = nil
-    -- Zero in-memory Windfury stats (ResetWindfurySession is defined later so we inline it here)
+-- Hook called by Core's ResetAllToDefaults() to reset in-memory state that only ShammyTime.lua can access.
+function ShammyTime:OnResetAll()
     wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
     wfSession.total, wfSession.count, wfSession.procs, wfSession.min, wfSession.max, wfSession.crits, wfSession.swings = 0, 0, 0, nil, nil, 0, 0
     wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
     ShammyTime.lastProcTotal = 0
     noTotemsFaded = false
     circleFadeOutStarted = false
-    ShammyTime.circleHovered = false
-    if noTotemsFadeTimer then
-        noTotemsFadeTimer:Cancel()
-        noTotemsFadeTimer = nil
+    if noTotemsFadeTimer then noTotemsFadeTimer:Cancel(); noTotemsFadeTimer = nil end
+end
+
+-- Reset all settings (delegate to Core AceDB reset + ApplyAllConfigs, which calls OnResetAll).
+local function ResetAllToDefaults()
+    if ShammyTime.ResetAllToDefaults then
+        ShammyTime:ResetAllToDefaults()
+        return true
     end
-    local ok, err = pcall(function()
-        local center = _G.ShammyTimeCenterRing
-        if center then
-            center:ClearAllPoints()
-            center:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-            center:SetScale(db.wfRadialScale or 1)
-        end
-        if ShammyTime.EnsureWindfuryTotemBarFrame then
-            local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
-            if bar then
-                bar:ClearAllPoints()
-                bar:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
-                bar:SetScale(db.wfTotemBarScale or 1)
-            end
-        end
-        if ShammyTime.EnsureImbueBarFrame then
-            local imbue = ShammyTime.EnsureImbueBarFrame()
-            if imbue then
-                imbue:ClearAllPoints()
-                imbue:SetPoint("CENTER", UIParent, "CENTER", 0, -260)
-                if ShammyTime.ApplyImbueBarScale then ShammyTime.ApplyImbueBarScale() end
-            end
-        end
-        if ShammyTime.ApplyShamanisticFocusScale then ShammyTime.ApplyShamanisticFocusScale() end
-        ApplyLockStateToAllFrames()
-        UpdateNoTotemsFadeState()
-        UpdateAllElementsFadeState()
-        if ShammyTime.ApplyElementVisibility then ShammyTime.ApplyElementVisibility() end
-    end)
-    if not ok then
-        local msg = type(err) == "string" and err or tostring(err)
-        if msg == "" then msg = "(no message)" end
-        print("|cffFF6B6BShammyTime:|r Reset failed: " .. msg)
-        return false
-    end
-    return true
+    return false
 end
 
 -- Format number for compact display (1234 -> "1.2k", 1234567 -> "1.2m").
@@ -773,7 +639,7 @@ end
 
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
 ShammyTime.lastProcTotal = 0
-ShammyTime.GetDB = GetDB
+-- GetDB is provided by ShammyTime_Core.lua
 
 -- Center circle size (diameter in pixels); used by CenterRing and SatelliteRings for tangent spacing
 function ShammyTime.GetCenterSize()
@@ -822,10 +688,12 @@ end
 ShammyTime.ApplyElementMouseState = ApplyElementMouseState
 
 -- Apply show/hide for each element based on enabled flags (/st show X on|off).
+-- Treat nil as enabled so old profiles without these keys show all elements.
 local function ApplyElementVisibility()
     local db = GetDB()
+    local function enabled(key) return (db[key] ~= false) end
     -- Circle (center + satellites)
-    if db.wfRadialEnabled then
+    if enabled("wfRadialEnabled") then
         if ShammyTime.ShowWindfuryRadial then ShammyTime.ShowWindfuryRadial() end
     else
         if ShammyTime.HideWindfuryRadial then ShammyTime.HideWindfuryRadial() end
@@ -834,26 +702,26 @@ local function ApplyElementVisibility()
     if ShammyTime.EnsureWindfuryTotemBarFrame then
         local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
         if bar then
-            if db.wfTotemBarEnabled then bar:Show() else bar:Hide() end
+            if enabled("wfTotemBarEnabled") then bar:Show() else bar:Hide() end
         end
     end
     -- Shamanistic Focus
     local focusFrame = ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame()
     if focusFrame then
-        if db.wfFocusEnabled then focusFrame:Show() else focusFrame:Hide() end
+        if enabled("wfFocusEnabled") then focusFrame:Show() else focusFrame:Hide() end
     end
     -- Imbue bar
     if ShammyTime.EnsureImbueBarFrame then
         local imbueBar = ShammyTime.EnsureImbueBarFrame()
         if imbueBar then
-            if db.wfImbueBarEnabled then imbueBar:Show() else imbueBar:Hide() end
+            if enabled("wfImbueBarEnabled") then imbueBar:Show() else imbueBar:Hide() end
         end
     end
     -- Lightning/Water Shield indicator (standalone)
     if ShammyTime.EnsureShieldFrame then
         local shieldFrame = ShammyTime.EnsureShieldFrame()
         if shieldFrame then
-            if db.wfShieldEnabled then shieldFrame:Show() else shieldFrame:Hide() end
+            if enabled("wfShieldEnabled") then shieldFrame:Show() else shieldFrame:Hide() end
         end
     end
     ApplyElementMouseState()
@@ -937,7 +805,30 @@ local function AnyImbueRemainingUnder(thresholdSec)
 end
 
 -- Fade state: apply "fade out of combat", "fade when not procced", and "fade when no totems" to all elements. Uses slow fade animations when wfFadeOutOfCombat is on.
+-- When profile.modules[moduleName].fade.enabled is set, uses ShammyTime:EvaluateFade(moduleName, context) for per-module conditions.
 function UpdateAllElementsFadeState()
+    -- During Play Demo, keep all elements visible at full alpha
+    if ShammyTime.demoActive then
+        local center = _G.ShammyTimeCenterRing
+        if center then center:Show(); center:SetAlpha(1) end
+        if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(1) end
+        if ShammyTime.EnsureWindfuryTotemBarFrame then
+            local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
+            if bar then bar:Show(); bar:SetAlpha(1) end
+        end
+        local focusFrame = ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame()
+        if focusFrame then focusFrame:Show(); focusFrame:SetAlpha(1) end
+        if ShammyTime.EnsureImbueBarFrame then
+            local imbue = ShammyTime.EnsureImbueBarFrame()
+            if imbue then imbue:Show(); imbue:SetAlpha(1) end
+        end
+        if ShammyTime.EnsureShieldFrame then
+            local shield = ShammyTime.EnsureShieldFrame()
+            if shield then shield:Show(); shield:SetAlpha(1) end
+        end
+        ApplyElementMouseState()
+        return
+    end
     local db = GetDB()
     if db.wfAlwaysShowNumbers then
         ShammyTime.radialNumbersVisible = true
@@ -957,31 +848,78 @@ function UpdateAllElementsFadeState()
     elseif db.wfFadeWhenNotProcced and not wfProcced then
         alphaWf = FADE_ALPHA
     end
+    local procAnimPlaying = ShammyTime.IsWindfuryProcAnimationPlaying and ShammyTime.IsWindfuryProcAnimationPlaying()
+    local hasTarget = UnitExists and UnitExists("target")
+    local hasTotems = HasAnyTotem()
+    local hasFocusBuff = ShammyTime.HasFocusedBuff and ShammyTime.HasFocusedBuff()
+    local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
+    local imbueShortTime = AnyImbueRemainingUnder(db.wfImbueFadeThresholdSec or 120)
+    local hasShield = (ShammyTime.GetElementalShieldAura and ShammyTime.GetElementalShieldAura()) and true or false
+    local anyTotemOutOfRange = false
+    if ShammyTime.GetTotemSlotData then
+        for slot = 1, 4 do
+            local data = ShammyTime.GetTotemSlotData(slot)
+            if data and data.rangeState == "out" then anyTotemOutOfRange = true; break end
+        end
+    end
+    local fadeContext = {
+        inCombat = inCombat,
+        hasTarget = hasTarget,
+        hasTotems = hasTotems,
+        noTotemsFaded = noTotemsFaded,
+        focusActive = hasFocusBuff,
+        imbueActive = imbueProcced,
+        imbueShortTime = imbueShortTime,
+        wfProcced = wfProcced,
+        procAnimPlaying = procAnimPlaying,
+        outOfRange = anyTotemOutOfRange,
+        hasShield = hasShield,
+    }
+    local useModuleFade = ShammyTime.EvaluateFade and ShammyTime.db and ShammyTime.db.profile and ShammyTime.db.profile.modules
+
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
     local center = _G.ShammyTimeCenterRing
     if not db.wfRadialEnabled then
         if center then center:Hide() end
         if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
     else
-        local procAnimPlaying = ShammyTime.IsWindfuryProcAnimationPlaying and ShammyTime.IsWindfuryProcAnimationPlaying()
         -- Lock fade-out as soon as we're not procced (not just when alpha < 0.01) so we never briefly restore to 1 during fade = no blink
         if not procAnimPlaying and not wfProcced then circleFadeOutStarted = true end
         -- Reset circleFadeOutStarted when circle should be shown (e.g. when fade rules are turned off and wfRadialShown is true)
         if wfProcced then circleFadeOutStarted = false end
-        local circleAlpha = procAnimPlaying and 1 or (circleFadeOutStarted and 0 or (wfProcced and alphaWf or 0))
-        local circleFadeOut = circleAlpha < 1
-        -- Hover hold: pause fade-out if still visible; never revive once fully faded
         local currentAlpha = (center and center.GetAlpha and center:GetAlpha()) or 0
-        local holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
-        if holdHover then
-            circleAlpha = currentAlpha
-            circleFadeOut = false
+        local circleAlpha, circleFadeOut, circleUseSlowFade, holdHover
+        local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryBubbles
+        local useModulePath = mod and true
+        if useModulePath and ShammyTime.EvaluateFade then
+            if mod.fade and mod.fade.enabled then
+                local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("windfuryBubbles", fadeContext)
+                circleAlpha = procAnimPlaying and 1 or (shouldFade and targetAlpha or 1)
+                circleFadeOut = circleAlpha < 1
+                holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
+                if holdHover then circleAlpha = currentAlpha; circleFadeOut = false end
+                circleUseSlowFade = (not holdHover) and useSlowMod and circleFadeOut
+            else
+                -- Panel: fade disabled = show at full alpha (don't fall back to legacy flat keys)
+                circleAlpha = 1
+                circleFadeOut = false
+                holdHover = false
+                circleUseSlowFade = false
+            end
+        else
+            circleAlpha = procAnimPlaying and 1 or (circleFadeOutStarted and 0 or (wfProcced and alphaWf or 0))
+            circleFadeOut = circleAlpha < 1
+            holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
+            if holdHover then
+                circleAlpha = currentAlpha
+                circleFadeOut = false
+            end
+            circleUseSlowFade = (not holdHover) and useSlowFade and circleFadeOut
         end
-        -- Circle appears instantly on proc (no fade-in); fade out slowly over FADE_ANIM_OUT_DURATION so it never blinks.
-        local circleUseSlowFade = (not holdHover) and useSlowFade and circleFadeOut
+        local effAlphaWf = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("windfuryBubbles")) or 1
         if center then
             center:Show()
-            SetOrAnimateFade(center, circleAlpha, circleUseSlowFade, circleFadeOut)
+            SetOrAnimateFade(center, effAlphaWf * circleAlpha, circleUseSlowFade, circleFadeOut)
             -- Satellites: only when center exists; deferred retry next frame so they're not missing when center was just created
             if circleAlpha >= 0.01 and ShammyTime.ShowAllSatellites then
                 ShammyTime.ShowAllSatellites()
@@ -993,12 +931,12 @@ function UpdateAllElementsFadeState()
             end
         end
         if holdHover then
-            if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(circleAlpha) end
+            if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(effAlphaWf * circleAlpha) end
         else
             if ShammyTime.AnimateSatellitesToAlpha then
-                ShammyTime.AnimateSatellitesToAlpha(circleAlpha, circleUseSlowFade and FADE_ANIM_OUT_DURATION or 0)
+                ShammyTime.AnimateSatellitesToAlpha(effAlphaWf * circleAlpha, circleUseSlowFade and FADE_ANIM_OUT_DURATION or 0)
             else
-                if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(circleAlpha) end
+                if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(effAlphaWf * circleAlpha) end
             end
         end
     end
@@ -1008,16 +946,31 @@ function UpdateAllElementsFadeState()
         if bar then
             if not db.wfTotemBarEnabled then bar:Hide()
             else
-                local haveTotems = HasAnyTotem()
-                local totemBarAlpha
-                if haveTotems then
-                    totemBarAlpha = 1  -- always show when you have a totem down (even out of combat)
+                local totemBarAlpha, totemBarFadeOut, totemUseSlow
+                local mod = useModuleFade and ShammyTime.db.profile.modules.totemBar
+                if mod and ShammyTime.EvaluateFade then
+                    if mod.fade and mod.fade.enabled then
+                        local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("totemBar", fadeContext)
+                        totemBarAlpha = shouldFade and targetAlpha or 1
+                        totemBarFadeOut = shouldFade
+                        totemUseSlow = useSlowMod
+                    else
+                        totemBarAlpha = 1
+                        totemBarFadeOut = false
+                        totemUseSlow = false
+                    end
                 else
-                    totemBarAlpha = noTotemsFaded and NO_TOTEMS_FADE_ALPHA or alphaWf
+                    if hasTotems then
+                        totemBarAlpha = 1
+                    else
+                        totemBarAlpha = noTotemsFaded and NO_TOTEMS_FADE_ALPHA or alphaWf
+                    end
+                    totemBarFadeOut = totemBarAlpha < 1
+                    totemUseSlow = useSlowFade
                 end
-                local totemBarFadeOut = totemBarAlpha < 1
                 bar:Show()
-                SetOrAnimateFade(bar, totemBarAlpha, useSlowFade, totemBarFadeOut)
+                local effAlphaBar = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("totemBar")) or 1
+                SetOrAnimateFade(bar, effAlphaBar * totemBarAlpha, totemUseSlow, totemBarFadeOut)
             end
         end
     end
@@ -1026,19 +979,29 @@ function UpdateAllElementsFadeState()
         if not db.wfFocusEnabled then focusFrame:Hide()
         else
             local testActive = ShammyTime.IsShamanisticFocusTestActive and ShammyTime.IsShamanisticFocusTestActive()
-            local hasFocusBuff = ShammyTime.HasFocusedBuff and ShammyTime.HasFocusedBuff()
-            local focusFaded
-            local focusAlpha
+            local focusFaded, focusAlpha, focusUseSlow
             if testActive then
-                -- Let the test animation drive visuals; keep frame fully visible so it doesn't double-fade/blink
                 focusFaded = false
                 focusAlpha = 1
-            elseif hasFocusBuff then
-                focusFaded = false
-                focusAlpha = 1
+                focusUseSlow = useSlowFade
             else
-                focusFaded = fadedCombat or db.wfFocusFadeWhenNotProcced
-                focusAlpha = focusFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
+                local mod = useModuleFade and ShammyTime.db.profile.modules.shamanisticFocus
+                if mod and ShammyTime.EvaluateFade then
+                    if mod.fade and mod.fade.enabled then
+                        local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("shamanisticFocus", fadeContext)
+                        focusFaded = shouldFade
+                        focusAlpha = shouldFade and targetAlpha or 1
+                        focusUseSlow = useSlowMod
+                    else
+                        focusFaded = false
+                        focusAlpha = 1
+                        focusUseSlow = false
+                    end
+                else
+                    focusFaded = fadedCombat or db.wfFocusFadeWhenNotProcced
+                    focusAlpha = focusFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
+                    focusUseSlow = useSlowFade
+                end
             end
             -- If focus just turned off, hold frame fade until on->off transition completes
             local holdUntil = ShammyTime.focusFadeHoldUntil
@@ -1047,7 +1010,8 @@ function UpdateAllElementsFadeState()
                 focusAlpha = 1
             end
             focusFrame:Show()
-            SetOrAnimateFade(focusFrame, focusAlpha, useSlowFade, focusFaded)
+            local effAlphaFocus = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("shamanisticFocus")) or 1
+            SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, focusUseSlow, focusFaded)
             -- Sync "on/off" overlay: pass our computed hasFocusBuff so focus shows "on" even if UNIT_AURA/event order lags.
             if (not testActive) and ShammyTime.UpdateShamanisticFocusVisual then
                 ShammyTime.UpdateShamanisticFocusVisual(hasFocusBuff)
@@ -1058,20 +1022,51 @@ function UpdateAllElementsFadeState()
     if imbueBar then
         if not db.wfImbueBarEnabled then imbueBar:Hide()
         else
-            local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
-            local imbueShortTime = AnyImbueRemainingUnder(db.wfImbueFadeThresholdSec or 120)
-            -- When no imbue at all: always show bar (so empty slots are visible and user is reminded to imbue); only fade for out-of-combat.
-            local imbueFaded
-            if not imbueProcced then
-                imbueFaded = fadedCombat
+            local imbueFaded, imbueAlpha, imbueUseSlow
+            local mod = useModuleFade and ShammyTime.db.profile.modules.weaponImbueBar
+            if mod and ShammyTime.EvaluateFade then
+                if mod.fade and mod.fade.enabled then
+                    local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("weaponImbueBar", fadeContext)
+                    imbueFaded = shouldFade
+                    imbueAlpha = shouldFade and targetAlpha or 1
+                    imbueUseSlow = useSlowMod
+                else
+                    imbueFaded = false
+                    imbueAlpha = 1
+                    imbueUseSlow = false
+                end
             else
-                imbueFaded = fadedCombat or (db.wfFadeWhenNotProcced and not imbueProcced) or (db.wfImbueFadeWhenLongDuration and not imbueShortTime)
+                if not imbueProcced then
+                    imbueFaded = fadedCombat
+                else
+                    imbueFaded = fadedCombat or (db.wfFadeWhenNotProcced and not imbueProcced) or (db.wfImbueFadeWhenLongDuration and not imbueShortTime)
+                end
+                imbueAlpha = imbueFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
+                imbueUseSlow = useSlowFade
             end
-            local imbueAlpha = imbueFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
             imbueBar:Show()
-            -- Refresh slots before fade-in so removed imbue doesn't blink during alpha animation
             if imbueAlpha >= 0.99 and ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
-            SetOrAnimateFade(imbueBar, imbueAlpha, useSlowFade, imbueFaded)
+            local effAlphaImbue = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("weaponImbueBar")) or 1
+            SetOrAnimateFade(imbueBar, effAlphaImbue * imbueAlpha, imbueUseSlow, imbueFaded)
+        end
+    end
+    -- Shield indicator: per-module fade when enabled; otherwise full alpha
+    if ShammyTime.EnsureShieldFrame and db.wfShieldEnabled then
+        local shieldFrame = ShammyTime.EnsureShieldFrame()
+        if shieldFrame then
+            shieldFrame:Show()
+            local effAlphaShield = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("shieldIndicator")) or 1
+            local mod = useModuleFade and ShammyTime.db.profile.modules.shieldIndicator
+            if mod and ShammyTime.EvaluateFade then
+                if mod.fade and mod.fade.enabled then
+                    local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("shieldIndicator", fadeContext)
+                    SetOrAnimateFade(shieldFrame, effAlphaShield * (shouldFade and targetAlpha or 1), useSlowMod, shouldFade)
+                else
+                    SetOrAnimateFade(shieldFrame, effAlphaShield, false, false)
+                end
+            else
+                SetOrAnimateFade(shieldFrame, effAlphaShield, false, false)
+            end
         end
     end
     -- Hidden or faded (alpha 0) elements: click-through so no right-click/drag
@@ -1535,22 +1530,15 @@ local function PrintMainHelp()
     print(C.gold .. "  ShammyTime" .. C.r .. C.gray .. "  —  " .. C.r .. C.gold .. "/st" .. C.r .. C.gray .. " or " .. C.r .. C.gold .. "/shammytime" .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
     print("")
-    print(C.green .. "  SIMPLE (quick settings)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. " / " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "  — Lock or unlock all bars (drag when unlocked)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st fade" .. C.r .. C.gray .. "  — Fade elements out of combat / when not procced. " .. C.gold .. "/st fade all on|off" .. C.r .. C.gray .. " turns all fade rules on or off." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st show" .. C.r .. C.gray .. "  — Turn circle, totem bar, Shamanistic Focus, or imbue bar on/off. " .. C.gold .. "/st show circle off" .. C.r .. C.gray .. " etc." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st scale 0.8" .. C.r .. C.gray .. "  — Resize Windfury circles as a whole (0.5–2)." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Test mode: show proc/fade behavior (run again to stop)." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings and positions to defaults." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — Print all current settings to chat (copy for defaults)." .. C.r)
+    print(C.green .. "  QUICK COMMANDS" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st options" .. C.r .. C.gray .. "  — Open the settings panel (recommended)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. " / " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "  — Lock or unlock all frames" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st test" .. C.r .. C.gray .. "  — Test mode (run again to stop)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings to defaults" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — Export settings to chat" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st dev on|off" .. C.r .. C.gray .. "  — Toggle Developer tab in options" .. C.r)
     print("")
-    print(C.green .. "  ADVANCED (text, positions, per-element options)" .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st adv" .. C.r .. C.gray .. "  — Hierarchical options per element. Each has subcategories." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "  — Totem bar: scale, font." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st adv bubbles" .. C.r .. C.gray .. "  — Windfury circles: center (size, text, font), outer (gap, font, position)." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "  — Lightning/Water Shield: scale, count override, number position." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st adv focus" .. C.r .. C.gray .. "  — Shamanistic Focus: scale." .. C.r)
-    print(C.gray .. "    • " .. C.gold .. "/st adv imbue" .. C.r .. C.gray .. "  — Imbue bar: scale, layout (margin, gap, offset, icon size)." .. C.r)
+    print(C.gray .. "  For all settings, use " .. C.gold .. "/st options" .. C.r .. C.gray .. " to open the settings panel." .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
     print("")
 end
@@ -1783,7 +1771,32 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.green .. "ShammyTime: All settings and positions reset to defaults." .. C.r)
         end
     elseif cmd == "print" or cmd == "defaults" or cmd == "export" then
-        PrintAllSettings()
+        if ShammyTime.ExportSettings then ShammyTime.ExportSettings() else PrintAllSettings() end
+    -- Open options panel
+    elseif cmd == "options" or cmd == "config" or cmd == "settings" or cmd == "opt" then
+        if Settings and Settings.OpenToCategory then
+            Settings.OpenToCategory("ShammyTime")
+        elseif InterfaceOptionsFrame_OpenToCategory then
+            InterfaceOptionsFrame_OpenToCategory("ShammyTime")
+            InterfaceOptionsFrame_OpenToCategory("ShammyTime")  -- call twice for Blizzard bug
+        end
+        print(C.green .. "ShammyTime: Options panel opened." .. C.r)
+    -- Developer mode toggle
+    elseif cmd == "dev" or cmd == "developer" then
+        local sub = arg:lower()
+        local g = db.global or {}
+        if sub == "on" or sub == "enable" or sub == "1" then
+            db.global = db.global or {}
+            db.global.devMode = true
+            print(C.gold .. "ShammyTime: Developer mode ON." .. C.r .. C.gray .. " Open options panel to see Developer tab." .. C.r)
+        elseif sub == "off" or sub == "disable" or sub == "0" then
+            db.global = db.global or {}
+            db.global.devMode = false
+            print(C.green .. "ShammyTime: Developer mode OFF." .. C.r)
+        else
+            local current = (db.global and db.global.devMode) and "ON" or "OFF"
+            print(C.gray .. "ShammyTime: Developer mode is " .. C.gold .. current .. C.r .. C.gray .. ". Use " .. C.gold .. "/st dev on" .. C.r .. C.gray .. " or " .. C.gold .. "/st dev off" .. C.r)
+        end
     -- Global test: Windfury proc + Shamanistic Focus (one proc immediately, then every 10s). Run /st test again to stop.
     elseif cmd == "test" then
         if wfTestTimer then
@@ -1867,6 +1880,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 db.wfFocusFadeWhenNotProcced = true
                 db.wfImbueFadeWhenLongDuration = true
                 db.wfImbueFadeThresholdSec = 120
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateNoTotemsFadeState()
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade all on — circle (on WF proc), totem bar (totems or combat), imbue (≤2 min), focus (on proc), combat fade." .. C.r)
@@ -1876,6 +1890,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 db.wfFadeWhenNoTotems = false
                 db.wfFocusFadeWhenNotProcced = false
                 db.wfImbueFadeWhenLongDuration = false
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateNoTotemsFadeState()
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade all off — all elements always visible (no fade rules)." .. C.r)
@@ -1886,10 +1901,12 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         elseif sub == "combat" then
             if subarg == "on" or subarg == "enable" or subarg == "1" then
                 db.wfFadeOutOfCombat = true
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade out of combat on." .. C.r)
             elseif subarg == "off" or subarg == "disable" or subarg == "0" then
                 db.wfFadeOutOfCombat = false
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade out of combat off." .. C.r)
             else
@@ -1898,10 +1915,12 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         elseif sub == "procced" then
             if subarg == "on" or subarg == "enable" or subarg == "1" then
                 db.wfFadeWhenNotProcced = true
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade when not procced on." .. C.r)
             elseif subarg == "off" or subarg == "disable" or subarg == "0" then
                 db.wfFadeWhenNotProcced = false
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade when not procced off." .. C.r)
             else
@@ -1910,12 +1929,15 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         elseif sub == "nototems" then
             if subarg == "on" or subarg == "enable" or subarg == "1" then
                 db.wfFadeWhenNoTotems = true
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateNoTotemsFadeState()
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade when no totems on." .. C.r)
             elseif subarg == "off" or subarg == "disable" or subarg == "0" then
                 db.wfFadeWhenNoTotems = false
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateNoTotemsFadeState()
+                UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Fade when no totems off." .. C.r)
             else
                 print(C.gray .. "ShammyTime: Fade nototems " .. (db.wfFadeWhenNoTotems and (C.green .. "on" .. C.r) or (C.gray .. "off" .. C.r)) .. C.gray .. ", delay " .. C.gold .. tostring(db.wfNoTotemsFadeDelay or 5) .. "s" .. C.r .. C.gray .. ". " .. C.gold .. "/st fade nototems on|off" .. C.r)
@@ -1923,10 +1945,12 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         elseif sub == "focus" then
             if subarg == "on" or subarg == "enable" or subarg == "1" then
                 db.wfFocusFadeWhenNotProcced = true
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Shamanistic Focus fades when not procced (on)." .. C.r)
             elseif subarg == "off" or subarg == "disable" or subarg == "0" then
                 db.wfFocusFadeWhenNotProcced = false
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Shamanistic Focus always visible (fade when not procced off)." .. C.r)
             else
@@ -1935,10 +1959,12 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         elseif sub == "imbue" then
             if subarg == "on" or subarg == "enable" or subarg == "1" then
                 db.wfImbueFadeWhenLongDuration = true
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Imbue bar fades unless at least one imbue has ≤ " .. tostring(db.wfImbueFadeThresholdSec or 120) .. " s left." .. C.r)
             elseif subarg == "off" or subarg == "disable" or subarg == "0" then
                 db.wfImbueFadeWhenLongDuration = false
+                if ShammyTime.SyncFlatToModules then ShammyTime:SyncFlatToModules() end
                 UpdateAllElementsFadeState()
                 print(C.green .. "ShammyTime: Imbue bar fade (by duration) off." .. C.r)
             else
@@ -2491,5 +2517,10 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.red .. "ShammyTime: Unknown command " .. (C.gold .. "'" .. cmd .. "'" .. C.r) .. C.red .. ". Type " .. C.gold .. "/st" .. C.r .. C.red .. " for options." .. C.r)
         end
         PrintMainHelp()
+    end
+
+    -- Sync flat keys to profile.modules so the options panel sees updated values
+    if ShammyTime.SyncFlatToModules then
+        ShammyTime:SyncFlatToModules()
     end
 end

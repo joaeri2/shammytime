@@ -66,6 +66,12 @@ local function ApplyCenterPosition(f)
     end
 end
 
+-- Global wrapper for repositioning center ring after scale change
+function ShammyTime.ApplyCenterRingPosition()
+    local f = _G.ShammyTimeCenterRing
+    if f then ApplyCenterPosition(f) end
+end
+
 -- Saves the center ring's current position when the user stops dragging (per character).
 local function SaveCenterPosition(f)
     if not ShammyTime.GetRadialPositionDB then return end
@@ -86,12 +92,13 @@ local function GetCenterSize()
 end
 
 -- Current center text Y offsets from DB (pixels from center; +Y = up)
+-- Defaults to 0. Adjust via Developer panel, then export and update code.
 local function GetCenterTextOffsets()
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
     return {
-        titleY    = (db.wfCenterTextTitleY ~= nil) and db.wfCenterTextTitleY or 13,
+        titleY    = (db.wfCenterTextTitleY ~= nil) and db.wfCenterTextTitleY or 0,
         totalY    = (db.wfCenterTextTotalY ~= nil) and db.wfCenterTextTotalY or 0,
-        criticalY = (db.wfCenterTextCriticalY ~= nil) and db.wfCenterTextCriticalY or 31,
+        criticalY = (db.wfCenterTextCriticalY ~= nil) and db.wfCenterTextCriticalY or 0,
     }
 end
 
@@ -582,6 +589,12 @@ local function ApplyTotemBarPosition(barFrame)
     end
 end
 
+-- Global wrapper for repositioning totem bar after scale change
+function ShammyTime.ApplyTotemBarPosition()
+    local f = _G.ShammyTimeWindfuryTotemBarFrame
+    if f then ApplyTotemBarPosition(f) end
+end
+
 -- Saves the totem bar position when the user stops dragging (per character).
 local function SaveTotemBarPosition(barFrame)
     if not ShammyTime.GetRadialPositionDB then return end
@@ -652,6 +665,8 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     -- Mark proc as recent so UpdateAllElementsFadeState (fade when not procced) gives the circle alpha 1 when it runs below.
     if ShammyTime.NotifyWindfuryProcStarted then ShammyTime.NotifyWindfuryProcStarted() end
     local f = CreateCenterRingFrame()
+    -- Keep center at saved position (stops demo/proc from shifting the bubbles)
+    if ShammyTime.ApplyCenterRingPosition then ShammyTime.ApplyCenterRingPosition() end
     f.wfProcAnimPlaying = true  -- block fade-out until animation finishes (circle stays visible in/out of combat)
     f:Show()
     -- Cancel any pending text/satellite fade timers so this proc gets a full hold period

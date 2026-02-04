@@ -39,7 +39,16 @@ local DEFAULTS = {
     locked = false,
 }
 
+-- Prefer AceDB profile.focusFrame when available so options panel and ApplyAllConfigs stay in sync.
 local function GetDB()
+    local profile = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
+    if profile and profile.focusFrame then
+        local db = profile.focusFrame
+        for k, v in pairs(DEFAULTS) do
+            if db[k] == nil then db[k] = v end
+        end
+        return db
+    end
     ShammyTimeDB = ShammyTimeDB or {}
     ShammyTimeDB.focusFrame = ShammyTimeDB.focusFrame or {}
     local df = DEFAULTS

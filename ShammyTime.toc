@@ -1,11 +1,23 @@
 ## Interface: 20505
 ## X-Compatible-With: 20501, 20502, 20503, 20504, 20505
 ## Title: ShammyTime
-## Notes: Totem bar with timers, red overlay when too far from totem (buff-based or position-based outdoors), Lightning Shield, weapon imbue, Windfury stats, and optional Windfury radial proc UI. For WoW Classic Anniversary 2026 (TBC Anniversary Edition) and compatible builds.
+## Notes: ...
 ## Author: ShammyTime
 ## Version: 1.0.0
 ## SavedVariables: ShammyTimeDB
 
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.xml
+
+Libs\AceAddon-3.0\AceAddon-3.0.xml
+Libs\AceEvent-3.0\AceEvent-3.0.xml
+Libs\AceDB-3.0\AceDB-3.0.xml
+Libs\AceConfig-3.0\AceConfig-3.0.xml
+Libs\AceGUI-3.0\AceGUI-3.0.xml
+
+ShammyTime_Core.lua
+ShammyTime_Modules.lua
+ShammyTime_Options.lua
 ShammyTime.lua
 ShammyTime_Media.lua
 ShammyTime_CenterRing.lua

@@ -75,6 +75,19 @@ local function ApplyImbueBarPosition(frame)
         frame:ClearAllPoints()
         frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
     end
+    -- Normalize to CENTER anchor so changing scale doesn't cause weird movement (anchor stays fixed)
+    local fx, fy = frame:GetCenter()
+    local ux, uy = UIParent:GetCenter()
+    if fx and fy and ux and uy then
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", fx - ux, fy - uy)
+    end
+end
+
+-- Global wrapper for repositioning imbue bar after scale change
+function ShammyTime.ApplyImbueBarPosition()
+    local f = _G.ShammyTimeImbueBarFrame
+    if f then ApplyImbueBarPosition(f) end
 end
 
 local function SaveImbueBarPosition(frame)
@@ -103,6 +116,13 @@ local function ApplyShieldPosition(frame)
     else
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", 250, -180)
+    end
+    -- Normalize to CENTER anchor so changing scale doesn't cause weird movement (anchor stays fixed)
+    local fx, fy = frame:GetCenter()
+    local ux, uy = UIParent:GetCenter()
+    if fx and fy and ux and uy then
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", fx - ux, fy - uy)
     end
 end
 

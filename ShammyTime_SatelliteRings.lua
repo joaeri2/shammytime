@@ -27,17 +27,25 @@ local function GetSatelliteRadius()
     return centerRadius + SATELLITE_HALF + gap
 end
 
+-- User scale for the small bubbles (0.1–3, default 1)
+local function GetSatelliteBubbleScale()
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local s = db.wfSatelliteBubbleScale
+    if type(s) ~= "number" or s < 0.1 or s > 3 then return 1 end
+    return s
+end
+
 -- Satellite text: font + X,Y position within each circle (pixels from center)
--- +X = right, +Y = up. Global defaults; overridden by DB (bubbles outer) and per-bubble overrides.
+-- +X = right, +Y = up. Defaults to 0. Adjust via Developer panel, then export and update code.
 local SATELLITE_FONT = {
     path   = "Fonts\\FRIZQT__.TTF",
     labelSize = 8,
     valueSize = 13,
     outline = "OUTLINE",
     labelX = 0,
-    labelY = 8,
+    labelY = 0,
     valueX = 0,
-    valueY = -6,
+    valueY = 0,
 }
 
 -- Effective text options for a satellite (global DB + per-bubble override). Returns labelSize, valueSize, labelX, labelY, valueX, valueY.
@@ -96,8 +104,10 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f:SetFrameStrata("MEDIUM")
     f:SetFrameLevel(5)
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
-    f:SetScale(SATELLITE_SCALE)
-    f:SetPoint("CENTER", parentFrame, "CENTER", offsetX, offsetY)
+    f:SetScale(GetSatelliteBubbleScale())
+    local parentScale = parentFrame and parentFrame:GetScale()
+    if not parentScale or parentScale <= 0 then parentScale = 1 end
+    f:SetPoint("CENTER", parentFrame, "CENTER", offsetX / parentScale, offsetY / parentScale)
     local dbLocked = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked
     f:EnableMouse(not dbLocked)   -- hover for quick-peek; when locked, click-through
     f:EnableMouseWheel(false)
@@ -362,13 +372,14 @@ end
 --   - If you want “no override”, set to 0 (which effectively uses the base placement plus 0 offset).
 -- Layout: top-right=MAX(stone), mid-right=MIN(air), down-right=CRIT%(grass_2), down-left=PROC%(water), mid-left=PROCS(grass), upper-left=AVG(fire).
 -- 0°=mid-right, 60°=top-right, 120°=upper-left, 180°=mid-left, 240°=down-left, 300°=down-right.
+-- Text positions reset to 0 - adjust via Developer panel in /st options, then export settings.
 local SATELLITE_CONFIG = {
-    { name = "air",     position = 0,   tex = "AIR_FULL",          label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "stone",   position = 60,  tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 13, textValueX = 0, textValueY = 13 },
-    { name = "fire",    position = 120, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "grass",   position = 180, tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "water",   position = 240, tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0, textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
-    { name = "grass_2", position = 300, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 12, textValueX = 0, textValueY = -2 },
+    { name = "air",     position = 0,   tex = "AIR_FULL",          label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "stone",   position = 60,  tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "fire",    position = 120, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "grass",   position = 180, tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "water",   position = 240, tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "grass_2", position = 300, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
 }
 
 local function GetSatelliteTextureSet(texKey)
@@ -495,13 +506,16 @@ local PROC_POP_SCALE = 1.18
 function ShammyTime.OnRingProcScaleUpdate(scale)
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
-    -- Satellite visual scale: 1.0 at rest, 1.1 at proc peak (10% bigger = coming at you)
+    local centerScale = centerFrame:GetScale()
+    if not centerScale or centerScale <= 0 then centerScale = 1 end
+    -- Satellite visual scale: base at rest, 10% bigger at proc peak (pop toward player)
     local scaleFactor = 1 + 0.1 * (scale - 1) / (PROC_POP_SCALE - 1)
-    local satelliteScale = SATELLITE_SCALE * scaleFactor
+    local satelliteScale = GetSatelliteBubbleScale() * scaleFactor
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX then
-            local x = f.baseOffsetX * scale
-            local y = f.baseOffsetY * scale
+            -- Rest position is baseOffset/centerScale; during proc expand by scale
+            local x = (f.baseOffsetX / centerScale) * scale
+            local y = (f.baseOffsetY / centerScale) * scale
             f:SetPoint("CENTER", centerFrame, "CENTER", x, y)
             f:SetScale(satelliteScale)
         end
@@ -512,11 +526,36 @@ end
 function ShammyTime.ResetSatellitePositions()
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
+    local centerScale = centerFrame and centerFrame:GetScale() or 1
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX then
-            f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX, f.baseOffsetY)
-            f:SetScale(SATELLITE_SCALE)
+            local sx = (centerScale and centerScale > 0) and (f.baseOffsetX / centerScale) or f.baseOffsetX
+            local sy = (centerScale and centerScale > 0) and (f.baseOffsetY / centerScale) or f.baseOffsetY
+            f:SetPoint("CENTER", centerFrame, "CENTER", sx, sy)
+            f:SetScale(GetSatelliteBubbleScale())
         end
+    end
+end
+
+-- Re-position satellites so they stay visually fixed when the center ring's scale changes (master/module scale).
+-- Call after setting center:SetScale(effScale). Offsets in parent space = baseOffset/centerScale so visual position stays the same.
+function ShammyTime.ApplySatellitePositionsForCenterScale(centerScale)
+    local centerFrame = GetCenterFrame()
+    if not centerFrame or not centerScale or centerScale <= 0 then return end
+    for _, f in pairs(satelliteFrames) do
+        if f and f.baseOffsetX ~= nil and f.baseOffsetY ~= nil then
+            local sx = f.baseOffsetX / centerScale
+            local sy = f.baseOffsetY / centerScale
+            f:SetPoint("CENTER", centerFrame, "CENTER", sx, sy)
+        end
+    end
+end
+
+-- Reapply satellite bubble scale from DB (call when user changes Developer option)
+function ShammyTime.ApplySatelliteBubbleScale()
+    local baseScale = GetSatelliteBubbleScale()
+    for _, f in pairs(satelliteFrames) do
+        if f then f:SetScale(baseScale) end
     end
 end
 
@@ -525,12 +564,14 @@ function ShammyTime.ApplySatelliteRadius()
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
     local radius = GetSatelliteRadius()
+    local centerScale = centerFrame:GetScale()
+    if not centerScale or centerScale <= 0 then centerScale = 1 end
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX ~= nil and f.baseOffsetY ~= nil then
             local angle = math.atan2(f.baseOffsetY, f.baseOffsetX)
             f.baseOffsetX = radius * math.cos(angle)
             f.baseOffsetY = radius * math.sin(angle)
-            f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX, f.baseOffsetY)
+            f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX / centerScale, f.baseOffsetY / centerScale)
         end
     end
 end

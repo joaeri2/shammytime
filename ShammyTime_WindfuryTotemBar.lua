@@ -27,7 +27,7 @@ local SLOT_OFFSET_Y = -24  -- 0 = slots at bar TOP; negative = push slots down; 
 local ICON_SIZE = 22
 local ICON_OFFSET_TOP = -3   -- icon position from slot TOP (negative = down)
 local TIMER_OFFSET_BOTTOM = -3  -- timer from slot BOTTOM
-local TIMER_FONT_SIZE = 7     -- timer text size (smaller = lower number, e.g. 8–12)
+local TIMER_FONT_SIZE = 13    -- timer text size default
 -- Per-slot fine-tuning (x = horizontal, y = vertical in pixels; positive x = right, positive y = up):
 local SLOT_OFFSETS = {
     { x = 0, y = 0 },  -- slot 1 (Earth, leftmost)

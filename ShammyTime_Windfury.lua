@@ -47,9 +47,14 @@ local function GetStatsForRadial()
     local critPct = (count > 0 and crits > 0) and (crits / count * 100) or nil
     -- Min/max/avg are per-PROC (combined damage of 1–2 hits per Windfury proc)
     local avg = (procs > 0 and session.total) and math.floor(session.total / procs + 0.5) or nil
+    local max = session.max
+    if avg and max and avg > max then
+        -- Guard against mismatched stats from earlier split-proc flushes.
+        max = avg
+    end
     return {
         min = session.min,
-        max = session.max,
+        max = max,
         avg = avg,
         procPct = procPct,
         procCount = procs,
@@ -66,7 +71,11 @@ end
 -- Called when correlation window ends with a proc total (or from /st test). Uses center ring + satellite rings only.
 -- updateOnly: if true, only update the TOTAL text without replaying the animation (used when window closes after instant show)
 function ShammyTime_Windfury_ShowRadial(procTotal, updateOnly)
-    if ShammyTime.FlushWindfuryProc then ShammyTime.FlushWindfuryProc() end
+    if ShammyTime.FlushWindfuryProcIfClosed then
+        ShammyTime.FlushWindfuryProcIfClosed()
+    elseif ShammyTime.FlushWindfuryProc then
+        ShammyTime.FlushWindfuryProc()
+    end
     if procTotal then
         ShammyTime.lastProcTotal = procTotal
     end

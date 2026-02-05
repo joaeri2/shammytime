@@ -252,7 +252,7 @@ local function BuildFullExportLines(useColorCodes)
     line("")
     sec("Totem bar")
     line("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
-    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 7))
+    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 13))
     line("")
     sec("Shamanistic Focus (position and scale)")
     if p.focusFrame then
@@ -266,17 +266,18 @@ local function BuildFullExportLines(useColorCodes)
     end
     line("")
     sec("Imbue bar (scale, layout, offsets, font)")
-    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.4))
+    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.35))
     line("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
     line("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
     line("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
     line("imbueBarIconSize = " .. tostring(p.imbueBarIconSize or "nil"))
-    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 20))
+    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 28))
     line("")
     sec("Shield indicator")
     line("shieldScale = " .. tostring(p.shieldScale or 0.2))
+    line("fontShieldCount = " .. tostring(p.fontShieldCount or 86))
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
-    line("shieldCountY = " .. tostring(p.shieldCountY or -50))
+    line("shieldCountY = " .. tostring(p.shieldCountY or 101))
     line("")
     sec("Modules (per-element: enabled, scale, alpha, fade)")
     if p.modules then
@@ -613,6 +614,106 @@ function ShammyTime:SetupOptions()
         name = "ShammyTime",
         args = {
             -----------------------------------------------------------------
+            -- WELCOME (first page when opening settings)
+            -----------------------------------------------------------------
+            welcome = {
+                type = "group",
+                name = "Welcome",
+                order = 0,
+                args = {
+                    authorLine = {
+                        type = "description",
+                        name = "|cffaaaaaaAuthor: Joachim Eriksson (05.02.2026)|r\n",
+                        order = 0,
+                        width = "full",
+                    },
+                    reloadBox = {
+                        type = "group",
+                        inline = true,
+                        name = "|cffffcc00Important|r",
+                        order = 1,
+                        args = {
+                            reloadNotice = {
+                                type = "description",
+                                name = "|cff00ff00Please type |cffffcc00/reload|r |cff00ff00after you change settings so that all options are applied correctly.|r\n",
+                                order = 1,
+                                width = "full",
+                            },
+                        },
+                    },
+                    welcomeBox = {
+                        type = "group",
+                        inline = true,
+                        name = "Welcome to ShammyTime",
+                        order = 2,
+                        args = {
+                            welcomeDesc = {
+                                type = "description",
+                                name = "ShammyTime is a shaman addon that shows Windfury procs (center ring and stat bubbles), totem timers, weapon imbues, Shamanistic Focus, and shield charges. Use the General and Modules tabs to lock frames, scale elements, and configure each part.\n",
+                                order = 1,
+                                width = "full",
+                            },
+                        },
+                    },
+                    aboutBox = {
+                        type = "group",
+                        inline = true,
+                        name = "About",
+                        order = 3,
+                        args = {
+                            aboutDesc = {
+                                type = "description",
+                                name = "This addon was made to make Windfury feel even more exciting and to give you a clear picture of how well it's performing. You get instant feedback on proc damage (min, max, average, crits) so you can see the numbers that matter, have a bit of fun with it, and compare weapons and setups at a glance.\n",
+                                order = 1,
+                                width = "full",
+                            },
+                        },
+                    },
+                    metricsBox = {
+                        type = "group",
+                        inline = true,
+                        name = "How the numbers are calculated",
+                        order = 4,
+                        args = {
+                            metricsDesc = {
+                                type = "description",
+                                name = "|cffccccccMIN|r — Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r — Highest total damage from one proc.\n|cffccccccAVG|r — Total Windfury damage ÷ number of procs.\n|cffccccccPROCS|r — How many Windfury procs so far this session.\n|cffccccccPROC%|r — Procs ÷ white swings (how often Windfury procced).\n|cffccccccCRIT%|r — Windfury hits that were crits ÷ all Windfury hits.\n",
+                                order = 1,
+                                width = "full",
+                            },
+                        },
+                    },
+                    tipBox = {
+                        type = "group",
+                        inline = true,
+                        name = "Tip",
+                        order = 5,
+                        args = {
+                            resetTip = {
+                                type = "description",
+                                name = "Right-click the Windfury circle to reset all statistics (MIN, MAX, PROCS, etc. start over).\n",
+                                order = 1,
+                                width = "full",
+                            },
+                        },
+                    },
+                    fadeBox = {
+                        type = "group",
+                        inline = true,
+                        name = "Fading elements",
+                        order = 6,
+                        args = {
+                            fadeDesc = {
+                                type = "description",
+                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n• |cffccccccOut of Combat|r — fade when you're not in combat.\n• |cffccccccNo Target|r — fade when you have no target.\n• |cffccccccNo Active Buff/Proc|r — e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n• |cffccccccNo Totems Placed|r — totem bar fades when you have no totems down.\n• |cffccccccFade In When Targeting Enemy|r — (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
+                                order = 1,
+                                width = "full",
+                            },
+                        },
+                    },
+                },
+            },
+            -----------------------------------------------------------------
             -- GENERAL
             -----------------------------------------------------------------
             general = {
@@ -620,11 +721,6 @@ function ShammyTime:SetupOptions()
                 name = "General",
                 order = 1,
                 args = {
-                    desc = {
-                        type = "description",
-                        name = "ShammyTime displays Windfury procs, totem timers, weapon imbues, Shamanistic Focus, and shield charges.\n",
-                        order = 0,
-                    },
                     lockFrames = {
                         type = "toggle",
                         name = "Lock Frames",
@@ -765,6 +861,20 @@ function ShammyTime:SetupOptions()
                 childGroups = "tab",
                 args = {
                     windfuryBubbles = CreateModuleOptions("windfuryBubbles", "Windfury Bubbles", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Shows when you proc Windfury: a center ring plus bubbles with your proc stats (min, max, avg, proc%, crit%) so you can see how well Windfury is performing.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
                         alwaysShowNumbers = {
                             type = "toggle",
                             name = "Always Show Numbers",
@@ -840,6 +950,20 @@ function ShammyTime:SetupOptions()
                         },
                     }),
                     totemBar = CreateModuleOptions("totemBar", "Totem Bar", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Shows your four totem slots with timers and range: totems fade when you go out of range. Range fade does not work for totems that don't appear as a buff (e.g. in some instances).\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
                         textHeader = {
                             type = "header",
                             name = "Text Sizes",
@@ -850,7 +974,7 @@ function ShammyTime:SetupOptions()
                             name = "Timer Font",
                             min = 4, max = 20, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontTotemTimer", 7) end,
+                            get = function() return getFlatDB("fontTotemTimer", 13) end,
                             set = function(_, v)
                                 setFlatDB("fontTotemTimer", v)
                                 local st = _G.ShammyTime
@@ -867,8 +991,37 @@ function ShammyTime:SetupOptions()
                             set = function(_, v) setFlatDB("wfNoTotemsFadeDelay", v) end,
                         },
                     }),
-                    shamanisticFocus = CreateModuleOptions("shamanisticFocus", "Shamanistic Focus"),
+                    shamanisticFocus = CreateModuleOptions("shamanisticFocus", "Shamanistic Focus", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Shows when your Shamanistic Focus buff is active (after a crit), so you know when your next spell costs less mana.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                    }),
                     weaponImbueBar = CreateModuleOptions("weaponImbueBar", "Weapon Imbue Bar", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Shows your weapon imbues (e.g. Windfury, Flametongue) and their remaining time so you can refresh them before they drop.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
                         textHeader = {
                             type = "header",
                             name = "Text Sizes",
@@ -877,9 +1030,9 @@ function ShammyTime:SetupOptions()
                         fontImbueTimer = {
                             type = "range",
                             name = "Timer Font",
-                            min = 6, max = 32, step = 1,
+                            min = 6, max = 64, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontImbueTimer", 20) end,
+                            get = function() return getFlatDB("fontImbueTimer", 28) end,
                             set = function(_, v)
                                 setFlatDB("fontImbueTimer", v)
                                 local st = _G.ShammyTime
@@ -897,6 +1050,20 @@ function ShammyTime:SetupOptions()
                         },
                     }),
                     shieldIndicator = CreateModuleOptions("shieldIndicator", "Shield Indicator", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Shows when Lightning Shield or Water Shield is active and how many charges you have left.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
                         textHeader = {
                             type = "header",
                             name = "Text Sizes",
@@ -905,14 +1072,14 @@ function ShammyTime:SetupOptions()
                         fontShieldCount = {
                             type = "range",
                             name = "Count Font",
-                            desc = "Shared with Weapon Imbue Bar timer font.",
-                            min = 6, max = 32, step = 1,
+                            desc = "Shield count text size.",
+                            min = 6, max = 200, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontImbueTimer", 20) end,
+                            get = function() return getFlatDB("fontShieldCount", 86) end,
                             set = function(_, v)
-                                setFlatDB("fontImbueTimer", v)
+                                setFlatDB("fontShieldCount", v)
                                 local st = _G.ShammyTime
-                                if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                                if st and st.ApplyShieldCountSettings then st.ApplyShieldCountSettings() end
                             end,
                         },
                     }),
@@ -1188,7 +1355,7 @@ function ShammyTime:SetupOptions()
                         name = "Totem Timer Font",
                         min = 4, max = 20, step = 1,
                         order = 61,
-                        get = function() return getFlatDB("fontTotemTimer", 7) end,
+                        get = function() return getFlatDB("fontTotemTimer", 13) end,
                         set = function(_, v)
                             setFlatDB("fontTotemTimer", v)
                             local st = _G.ShammyTime
@@ -1198,20 +1365,26 @@ function ShammyTime:SetupOptions()
                     fontImbueTimer = {
                         type = "range",
                         name = "Imbue Timer Font",
-                        min = 6, max = 32, step = 1,
+                        min = 6, max = 64, step = 1,
                         order = 62,
-                        get = function() return getFlatDB("fontImbueTimer", 20) end,
+                        get = function() return getFlatDB("fontImbueTimer", 28) end,
                         set = function(_, v)
                             setFlatDB("fontImbueTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
                         end,
                     },
+                    shieldTextHeader = {
+                        type = "header",
+                        name = "Shield Indicator Text",
+                        order = 62.5,
+                    },
                     shieldCountX = {
                         type = "range",
-                        name = "Shield Count X",
+                        name = "Text X",
+                        desc = "Horizontal offset for the shield count text.",
                         min = -100, max = 100, step = 1,
-                        order = 63,
+                        order = 62.6,
                         get = function() return getFlatDB("shieldCountX", 0) end,
                         set = function(_, v)
                             setFlatDB("shieldCountX", v)
@@ -1221,10 +1394,11 @@ function ShammyTime:SetupOptions()
                     },
                     shieldCountY = {
                         type = "range",
-                        name = "Shield Count Y",
-                        min = -100, max = 100, step = 1,
-                        order = 64,
-                        get = function() return getFlatDB("shieldCountY", -50) end,
+                        name = "Text Y",
+                        desc = "Vertical offset for the shield count text (positive = up).",
+                        min = -200, max = 300, step = 1,
+                        order = 62.7,
+                        get = function() return getFlatDB("shieldCountY", 101) end,
                         set = function(_, v)
                             setFlatDB("shieldCountY", v)
                             local st = _G.ShammyTime

@@ -84,4 +84,4 @@ Expected behavior:
 
 - [x] The shamanistic focus is affected by settings when i change windfury bubbles settings. Bug. 
 
-
+- [x] When i apply the hide shield if no shield is active then the shamanistic focus cant hide if the hide setting is set on shamanistic focus. Bug. these should not be intercontected.

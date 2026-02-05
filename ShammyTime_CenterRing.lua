@@ -180,6 +180,7 @@ local function CreateCenterRingFrame()
     f:SetScript("OnDragStop", function(self)
         ShammyTime.SetRadialDragging(false)
         self:StopMovingOrSizing()
+        if ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked then return end
         -- Get center's new screen position
         local point, _, relPoint, x, y = self:GetPoint(1)
         -- Move wrapper to match where center was dragged

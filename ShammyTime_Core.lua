@@ -42,7 +42,7 @@ local DEFAULTS = {
             demoMode = false,
             masterScale = 1.0,
             masterAlpha = 1.0,
-            devMode = true,  -- Show Developer panel in options
+            devMode = false,  -- Show Developer panel in options
         },
         -- Per-module (spec)
         modules = {
@@ -50,7 +50,7 @@ local DEFAULTS = {
             shieldIndicator = moduleDefaults(true, 0.3, 1.0),
             shamanisticFocus = moduleDefaults(true, 0.9, 1.0),
             totemBar = moduleDefaults(true, 1.2, 1.0),
-            weaponImbueBar = moduleDefaults(true, 0.45, 1.0),
+            weaponImbueBar = moduleDefaults(true, 0.35, 1.0),
         },
         -- Flat keys (existing code)
         point = "CENTER",
@@ -76,7 +76,7 @@ local DEFAULTS = {
         shieldScale = 0.3,
         shieldCount = nil,
         shieldCountX = 1,
-        shieldCountY = -23,
+        shieldCountY = 101,
         wfRadialScale = 0.65,
         wfSatelliteGap = -89,
         wfSatelliteBubbleScale = 1,
@@ -99,17 +99,18 @@ local DEFAULTS = {
         fontCircleCritical = 17,
         fontSatelliteLabel = 12,
         fontSatelliteValue = 17,
-        fontTotemTimer = 14,
-        fontImbueTimer = 14,
+        fontTotemTimer = 13,
+        fontImbueTimer = 28,
+        fontShieldCount = 86,
         wfSatelliteLabelX = 0,
-        wfSatelliteLabelY = 18,
+        wfSatelliteLabelY = 20,
         wfSatelliteValueX = 0,
-        wfSatelliteValueY = 1,
+        wfSatelliteValueY = 0,
         wfSatelliteOverrides = {
-            air = { labelY = 15, valueY = -1 },
-            grass = { labelY = 15, valueY = 0 },
+            air = { labelY = 14, valueY = -5 },
+            grass = { labelY = 14, valueY = -5 },
         },
-        imbueBarScale = 0.45,
+        imbueBarScale = 0.35,
         imbueBarMargin = nil,
         imbueBarGap = nil,
         imbueBarOffsetY = nil,
@@ -239,7 +240,7 @@ end
 
 --- Centralized fade evaluation: given module name and game context, returns whether to fade, target alpha, and use slow animation.
 --- @param moduleName string One of: windfuryBubbles, totemBar, shamanisticFocus, weaponImbueBar, shieldIndicator
---- @param context table { inCombat, hasTarget, hasTotems, noTotemsFaded, focusActive, imbueActive, imbueShortTime, wfProcced, procAnimPlaying, hasShield, outOfRange }
+--- @param context table { inCombat, hasTarget, hasEnemyTarget, hasTotems, noTotemsFaded, focusActive, imbueActive, imbueShortTime, wfProcced, procAnimPlaying, hasShield, outOfRange }
 --- @return boolean shouldFade, number targetAlpha, boolean useSlowFade
 function ShammyTime:EvaluateFade(moduleName, context)
     local p = self.db and self.db.profile
@@ -259,6 +260,9 @@ function ShammyTime:EvaluateFade(moduleName, context)
         shouldFade = true
     end
     if cond.noTarget and not context.hasTarget then
+        shouldFade = true
+    end
+    if cond.fadeInOnTarget and not context.hasEnemyTarget then
         shouldFade = true
     end
     if cond.noTotemsPlaced and (not context.hasTotems or context.noTotemsFaded) then
@@ -284,11 +288,14 @@ function ShammyTime:EvaluateFade(moduleName, context)
     return shouldFade, shouldFade and inactiveAlpha or 1, true
 end
 
---- Sync flat keys TO profile.modules (reverse of ApplyAllConfigs sync)
---- Call this after slash commands modify flat keys so the options panel sees updated values.
-function ShammyTime:SyncFlatToModules()
+-- Sync flat keys TO profile.modules (reverse of ApplyAllConfigs sync)
+-- Call this after slash commands modify flat keys so the options panel sees updated values.
+-- opts.includeFade = false skips legacy fade flag sync (preserves per-module fade settings).
+function ShammyTime:SyncFlatToModules(opts)
     local p = self.db and self.db.profile
     if not p then return end
+    opts = opts or {}
+    local includeFade = (opts.includeFade ~= false)
     p.modules = p.modules or {}
     p.global = p.global or {}
 
@@ -336,43 +343,45 @@ function ShammyTime:SyncFlatToModules()
     -- Global: flat → global
     p.global.locked = (p.locked == true)
 
-    -- Fade conditions: flat → modules.*.fade.conditions
-    -- Note: The options panel uses per-module fade conditions, but slash commands use global fade flags.
-    -- We sync the global flags to all relevant modules for consistency.
-    if p.modules.windfuryBubbles then
-        p.modules.windfuryBubbles.fade = p.modules.windfuryBubbles.fade or {}
-        p.modules.windfuryBubbles.fade.conditions = p.modules.windfuryBubbles.fade.conditions or {}
-        p.modules.windfuryBubbles.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
-        p.modules.windfuryBubbles.fade.conditions.inactiveBuff = (p.wfFadeWhenNotProcced == true)
-        -- Enable fade if any condition is on
-        p.modules.windfuryBubbles.fade.enabled = p.wfFadeOutOfCombat or p.wfFadeWhenNotProcced or false
-    end
-    if p.modules.totemBar then
-        p.modules.totemBar.fade = p.modules.totemBar.fade or {}
-        p.modules.totemBar.fade.conditions = p.modules.totemBar.fade.conditions or {}
-        p.modules.totemBar.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
-        p.modules.totemBar.fade.conditions.noTotemsPlaced = (p.wfFadeWhenNoTotems == true)
-        p.modules.totemBar.fade.enabled = p.wfFadeOutOfCombat or p.wfFadeWhenNoTotems or false
-    end
-    if p.modules.shamanisticFocus then
-        p.modules.shamanisticFocus.fade = p.modules.shamanisticFocus.fade or {}
-        p.modules.shamanisticFocus.fade.conditions = p.modules.shamanisticFocus.fade.conditions or {}
-        p.modules.shamanisticFocus.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
-        p.modules.shamanisticFocus.fade.conditions.inactiveBuff = (p.wfFocusFadeWhenNotProcced == true)
-        p.modules.shamanisticFocus.fade.enabled = p.wfFadeOutOfCombat or p.wfFocusFadeWhenNotProcced or false
-    end
-    if p.modules.weaponImbueBar then
-        p.modules.weaponImbueBar.fade = p.modules.weaponImbueBar.fade or {}
-        p.modules.weaponImbueBar.fade.conditions = p.modules.weaponImbueBar.fade.conditions or {}
-        p.modules.weaponImbueBar.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
-        p.modules.weaponImbueBar.fade.conditions.inactiveBuff = (p.wfImbueFadeWhenLongDuration == true)
-        p.modules.weaponImbueBar.fade.enabled = p.wfFadeOutOfCombat or p.wfImbueFadeWhenLongDuration or false
-    end
-    if p.modules.shieldIndicator then
-        p.modules.shieldIndicator.fade = p.modules.shieldIndicator.fade or {}
-        p.modules.shieldIndicator.fade.conditions = p.modules.shieldIndicator.fade.conditions or {}
-        p.modules.shieldIndicator.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
-        p.modules.shieldIndicator.fade.enabled = p.wfFadeOutOfCombat or false
+    if includeFade then
+        -- Fade conditions: flat → modules.*.fade.conditions
+        -- Note: The options panel uses per-module fade conditions, but slash commands use global fade flags.
+        -- We sync the global flags to all relevant modules for consistency.
+        if p.modules.windfuryBubbles then
+            p.modules.windfuryBubbles.fade = p.modules.windfuryBubbles.fade or {}
+            p.modules.windfuryBubbles.fade.conditions = p.modules.windfuryBubbles.fade.conditions or {}
+            p.modules.windfuryBubbles.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.windfuryBubbles.fade.conditions.inactiveBuff = (p.wfFadeWhenNotProcced == true)
+            -- Enable fade if any legacy condition is on
+            p.modules.windfuryBubbles.fade.enabled = p.wfFadeOutOfCombat or p.wfFadeWhenNotProcced or p.modules.windfuryBubbles.fade.enabled or false
+        end
+        if p.modules.totemBar then
+            p.modules.totemBar.fade = p.modules.totemBar.fade or {}
+            p.modules.totemBar.fade.conditions = p.modules.totemBar.fade.conditions or {}
+            p.modules.totemBar.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.totemBar.fade.conditions.noTotemsPlaced = (p.wfFadeWhenNoTotems == true)
+            p.modules.totemBar.fade.enabled = p.wfFadeOutOfCombat or p.wfFadeWhenNoTotems or p.modules.totemBar.fade.enabled or false
+        end
+        if p.modules.shamanisticFocus then
+            p.modules.shamanisticFocus.fade = p.modules.shamanisticFocus.fade or {}
+            p.modules.shamanisticFocus.fade.conditions = p.modules.shamanisticFocus.fade.conditions or {}
+            p.modules.shamanisticFocus.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.shamanisticFocus.fade.conditions.inactiveBuff = (p.wfFocusFadeWhenNotProcced == true)
+            p.modules.shamanisticFocus.fade.enabled = p.wfFadeOutOfCombat or p.wfFocusFadeWhenNotProcced or p.modules.shamanisticFocus.fade.enabled or false
+        end
+        if p.modules.weaponImbueBar then
+            p.modules.weaponImbueBar.fade = p.modules.weaponImbueBar.fade or {}
+            p.modules.weaponImbueBar.fade.conditions = p.modules.weaponImbueBar.fade.conditions or {}
+            p.modules.weaponImbueBar.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.weaponImbueBar.fade.conditions.inactiveBuff = (p.wfImbueFadeWhenLongDuration == true)
+            p.modules.weaponImbueBar.fade.enabled = p.wfFadeOutOfCombat or p.wfImbueFadeWhenLongDuration or p.modules.weaponImbueBar.fade.enabled or false
+        end
+        if p.modules.shieldIndicator then
+            p.modules.shieldIndicator.fade = p.modules.shieldIndicator.fade or {}
+            p.modules.shieldIndicator.fade.conditions = p.modules.shieldIndicator.fade.conditions or {}
+            p.modules.shieldIndicator.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.shieldIndicator.fade.enabled = p.wfFadeOutOfCombat or p.modules.shieldIndicator.fade.enabled or false
+        end
     end
 end
 
@@ -386,6 +395,7 @@ function ShammyTime:ApplyAllConfigs()
     if p.wfFocusEnabled == nil then p.wfFocusEnabled = true end
     if p.wfImbueBarEnabled == nil then p.wfImbueBarEnabled = true end
     if p.wfShieldEnabled == nil then p.wfShieldEnabled = true end
+    if p.fontShieldCount == nil then p.fontShieldCount = p.fontImbueTimer or 86 end
     -- Sync flat keys from modules so existing code sees them
     if p.modules then
         if p.modules.windfuryBubbles then p.wfRadialEnabled = (p.modules.windfuryBubbles.enabled ~= false) end
@@ -397,15 +407,27 @@ function ShammyTime:ApplyAllConfigs()
         if p.modules.totemBar then p.wfTotemBarScale = p.modules.totemBar.scale or p.wfTotemBarScale end
         if p.modules.shieldIndicator then p.shieldScale = p.modules.shieldIndicator.scale or p.shieldScale end
         if p.modules.weaponImbueBar then p.imbueBarScale = p.modules.weaponImbueBar.scale or p.imbueBarScale end
-        -- Sync module font.size to flat keys for totem/imbue only (center ring uses flat keys so Dev panel can set title/total/critical separately)
-        local function clampFont(v) return (type(v)=="number" and v>=6 and v<=28) and v or nil end
-        if p.modules.totemBar and p.modules.totemBar.font and p.modules.totemBar.font.size then
-            local sz = clampFont(p.modules.totemBar.font.size)
-            if sz then p.fontTotemTimer = sz end
+        -- Sync font sizes between flat keys and modules (flat values win when set)
+        local function clampFont(v) return (type(v)=="number" and v>=6 and v<=64) and v or nil end
+        if p.modules.totemBar then
+            p.modules.totemBar.font = p.modules.totemBar.font or {}
+            if type(p.fontTotemTimer) == "number" then
+                local sz = clampFont(p.fontTotemTimer)
+                if sz then p.modules.totemBar.font.size = sz end
+            elseif p.modules.totemBar.font.size then
+                local sz = clampFont(p.modules.totemBar.font.size)
+                if sz then p.fontTotemTimer = sz end
+            end
         end
-        if p.modules.weaponImbueBar and p.modules.weaponImbueBar.font and p.modules.weaponImbueBar.font.size then
-            local sz = clampFont(p.modules.weaponImbueBar.font.size)
-            if sz then p.fontImbueTimer = sz end
+        if p.modules.weaponImbueBar then
+            p.modules.weaponImbueBar.font = p.modules.weaponImbueBar.font or {}
+            if type(p.fontImbueTimer) == "number" then
+                local sz = clampFont(p.fontImbueTimer)
+                if sz then p.modules.weaponImbueBar.font.size = sz end
+            elseif p.modules.weaponImbueBar.font.size then
+                local sz = clampFont(p.modules.weaponImbueBar.font.size)
+                if sz then p.fontImbueTimer = sz end
+            end
         end
         -- Sync shamanistic focus position from module pos to flat focusFrame (used by ShammyTime_ShamanisticFocus.lua)
         if p.modules.shamanisticFocus then
@@ -444,6 +466,8 @@ function ShammyTime:ApplyAllConfigs()
     -- Scale/position for imbue, shield, focus are applied by each module's ApplyConfig (with master scale). Do not re-apply here or master scale would be overwritten.
     if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end
     if ShammyTime.ApplyTotemBarFontSize then ShammyTime.ApplyTotemBarFontSize() end
+    if ShammyTime.ApplyImbueBarFontSize then ShammyTime.ApplyImbueBarFontSize() end
+    if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
     if ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
     if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
     if ShammyTime.ApplySatelliteBubbleScale then ShammyTime.ApplySatelliteBubbleScale() end
@@ -469,12 +493,48 @@ local function DeepCopy(src)
     return copy
 end
 
+-- Flat DB keys that belong to each module's options tab (reset with module).
+local MODULE_RESET_FLAT_KEYS = {
+    windfuryBubbles = {
+        "wfAlwaysShowNumbers",
+        "fontCircleTitle",
+        "fontCircleTotal",
+        "fontCircleCritical",
+        "fontSatelliteLabel",
+        "fontSatelliteValue",
+    },
+    totemBar = {
+        "fontTotemTimer",
+        "wfNoTotemsFadeDelay",
+    },
+    weaponImbueBar = {
+        "fontImbueTimer",
+        "wfImbueFadeThresholdSec",
+    },
+    shieldIndicator = {
+        "fontShieldCount",
+    },
+}
+
 --- Reset a single module to defaults
 function ShammyTime:ResetModule(moduleName)
     local def = DEFAULTS.profile.modules[moduleName]
     if not def then return end
     -- Replace the module table with a fresh deep copy of defaults
     self.db.profile.modules[moduleName] = DeepCopy(def)
+    -- Reset flat keys that are part of this module's options
+    local p = self.db.profile
+    local defaults = DEFAULTS.profile
+    local flatKeys = MODULE_RESET_FLAT_KEYS[moduleName]
+    if p and flatKeys then
+        for _, key in ipairs(flatKeys) do
+            if defaults[key] == nil then
+                p[key] = nil
+            else
+                p[key] = DeepCopy(defaults[key])
+            end
+        end
+    end
     self:ApplyAllConfigs()
     print("|cff00ff00ShammyTime:|r " .. tostring(moduleName) .. " reset to defaults.")
 end

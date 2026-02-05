@@ -10,11 +10,17 @@ local FormatTime = ShammyTime.FormatTime
 local GetWeaponImbuePerHand = ShammyTime.GetWeaponImbuePerHand
 local GetElementalShieldAura = ShammyTime.GetElementalShieldAura
 local GetRadialPositionDB = ShammyTime.GetRadialPositionDB
-local GetDB = ShammyTime.GetDB
+local function GetDB()
+    local st = _G.ShammyTime
+    if st and st.GetDB then
+        return st.GetDB()
+    end
+    return {}
+end
 
 -- Layout: BAR_W/BAR_H match imbue_bar_512_261_nohalo.tga (512×261)
 local BAR_W, BAR_H = 512, 261
-local DEFAULT_IMBUE_BAR_SCALE = 0.4
+local DEFAULT_IMBUE_BAR_SCALE = 0.35
 
 -- ═══ EDIT THESE TO MOVE AND RESIZE THE IMBUE ICONS (left=MH, right=OH) ═══
 -- Change numbers, save file, then /reload in game. No in-game commands needed.
@@ -27,7 +33,7 @@ local ICON_SIZE     = 80    -- icon size in pixels (e.g. 28–56). Larger = bigg
 local SLOT_H = 32
 local ICON_OFFSET_TOP = -3
 local TIMER_OFFSET_BOTTOM = -50
-local TIMER_FONT_SIZE = 20
+local TIMER_FONT_SIZE = 29
 -- Shadow behind icon (same style as totem bar: wf_center_shadow.tga, drop below icon)
 local ICON_SHADOW_OFFSET_X = 2
 local ICON_SHADOW_OFFSET_Y = 15
@@ -48,8 +54,18 @@ local SHIELD_TEX_SQUARE_RATIO = SHIELD_TEX_H / SHIELD_TEX_W
 local SHIELD_TEX_CROP_LEFT = (1 - SHIELD_TEX_SQUARE_RATIO) / 2
 local SHIELD_TEX_CROP_RIGHT = 1 - SHIELD_TEX_CROP_LEFT
 local SHIELD_FADE_DURATION = 0.25  -- seconds for "on" overlay to fade in/out (light turning on/off)
-local SHIELD_COUNT_FONT_SIZE = 18  -- orb count (1–3) text
+local SHIELD_COUNT_FONT_SIZE = 86  -- orb count (1–3) text default
 local SHIELD_COUNT_COLOR = { 0.95, 0.9, 0.7 }  -- light gold for count
+
+local function GetImbueFontSize(db)
+    db = db or (GetDB and GetDB() or {})
+    return (db.fontImbueTimer and db.fontImbueTimer >= 6 and db.fontImbueTimer <= 64) and db.fontImbueTimer or TIMER_FONT_SIZE
+end
+
+local function GetShieldCountFontSize(db)
+    db = db or (GetDB and GetDB() or {})
+    return (db.fontShieldCount and db.fontShieldCount >= 6 and db.fontShieldCount <= 200) and db.fontShieldCount or SHIELD_COUNT_FONT_SIZE
+end
 
 local imbueBarFrame
 local slots = {}  -- [1] = MH, [2] = OH
@@ -272,6 +288,16 @@ local function UpdateImbueBar()
     RenderImbueSlot(slots[2], perHand.offHand)
     UpdateShieldIndicator()
 
+    local db = GetDB and GetDB() or {}
+    local imbueFontSz = GetImbueFontSize(db)
+    if imbueBarFrame and imbueBarFrame.lastImbueFontSize ~= imbueFontSz then
+        if ShammyTime.ApplyImbueBarFontSize then ShammyTime.ApplyImbueBarFontSize() end
+    end
+    local shieldFontSz = GetShieldCountFontSize(db)
+    if shieldFrame and shieldFrame.lastShieldCountFontSize ~= shieldFontSz then
+        if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
+    end
+
     -- No-imbue pulse: only if no imbue for 15 sec (never applied / expired); pulse 15 sec then stop. Removal = stay still.
     local hasImbue = HasAnyImbue()
     if hasImbue then
@@ -404,7 +430,7 @@ local function CreateImbueBarFrame()
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         sf.icon = icon
 
-        local fontSz = (GetDB and GetDB().fontImbueTimer and GetDB().fontImbueTimer >= 6 and GetDB().fontImbueTimer <= 28) and GetDB().fontImbueTimer or TIMER_FONT_SIZE
+        local fontSz = GetImbueFontSize()
         local timerText = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         timerText:SetPoint("BOTTOM", 0, TIMER_OFFSET_BOTTOM)
         timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
@@ -473,11 +499,11 @@ local function CreateShieldFrame()
     shieldOn:Show()
     f.shieldOn = shieldOn
 
-    local countFontSz = (GetDB and GetDB().fontImbueTimer and GetDB().fontImbueTimer >= 6 and GetDB().fontImbueTimer <= 28) and GetDB().fontImbueTimer or SHIELD_COUNT_FONT_SIZE
+    local countFontSz = GetShieldCountFontSize(db)
     local countText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    -- Use position from DB (shieldCountX, shieldCountY) with defaults (0, TIMER_OFFSET_BOTTOM)
+    -- Use position from DB (shieldCountX, shieldCountY) with defaults (0, 101)
     local countX = (db.shieldCountX and type(db.shieldCountX) == "number") and db.shieldCountX or 0
-    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or TIMER_OFFSET_BOTTOM
+    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or 101
     countText:SetPoint("BOTTOM", countX, countY)
     countText:SetFont("Fonts\\FRIZQT__.TTF", countFontSz, "OUTLINE")
     countText:SetTextColor(SHIELD_COUNT_COLOR[1], SHIELD_COUNT_COLOR[2], SHIELD_COUNT_COLOR[3])
@@ -485,6 +511,7 @@ local function CreateShieldFrame()
     countText:SetShadowOffset(1, -1)
     countText:Hide()
     f.countText = countText
+    f.lastShieldCountFontSize = countFontSz
 
     shieldFrame = f
     if db.wfShieldEnabled ~= false then f:Show() else f:Hide() end
@@ -520,11 +547,12 @@ function ShammyTime.ApplyShieldCountSettings()
     local db = GetDB and GetDB() or {}
     -- Update count text position from DB
     local countX = (db.shieldCountX and type(db.shieldCountX) == "number") and db.shieldCountX or 0
-    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or TIMER_OFFSET_BOTTOM
+    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or 101
     shieldFrame.countText:ClearAllPoints()
     shieldFrame.countText:SetPoint("BOTTOM", countX, countY)
-    local fontSz = (db.fontImbueTimer and db.fontImbueTimer >= 6 and db.fontImbueTimer <= 28) and db.fontImbueTimer or SHIELD_COUNT_FONT_SIZE
+    local fontSz = GetShieldCountFontSize(db)
     shieldFrame.countText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
+    shieldFrame.lastShieldCountFontSize = fontSz
     -- Refresh the indicator to update the count display (in case count override changed)
     UpdateShieldIndicator()
 end
@@ -593,13 +621,14 @@ end
 -- Apply timer font size from DB (called when user changes /st font imbue N)
 function ShammyTime.ApplyImbueBarFontSize()
     local db = GetDB and GetDB() or {}
-    local fontSz = (db.fontImbueTimer and db.fontImbueTimer >= 6 and db.fontImbueTimer <= 28) and db.fontImbueTimer or TIMER_FONT_SIZE
+    local fontSz = GetImbueFontSize(db)
     if imbueBarFrame and slots[1] then
         for i = 1, #slots do
             if slots[i] and slots[i].timerText then
                 slots[i].timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
             end
         end
+        imbueBarFrame.lastImbueFontSize = fontSz
     end
     if ShammyTime.ApplyShieldCountSettings then ShammyTime.ApplyShieldCountSettings() end
 end

@@ -105,12 +105,9 @@ function windfuryBubbles:DemoStart()
         if center.textFrame then center.textFrame:Show() end
     end
     if st and st.ShowAllSatellites then st.ShowAllSatellites() end
-    if st and st.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
-        st.UpdateSatelliteValues(ShammyTime_Windfury_GetStats())
-    end
-    -- One proc immediately
-    if st and st.PlayCenterRingProc then
-        st.PlayCenterRingProc(math.random(1500, 4500), true)
+    -- Use the same SimulateTestProc as /st test (records fake hits, updates stats, plays proc)
+    if st and st.SimulateTestProc then
+        st.SimulateTestProc()
     end
     -- Repeat every 3s while demo is active
     local mod = self
@@ -124,8 +121,8 @@ function windfuryBubbles:DemoStart()
             end
             return
         end
-        if addon and addon.PlayCenterRingProc then
-            addon.PlayCenterRingProc(math.random(1500, 4500), true)
+        if addon and addon.SimulateTestProc then
+            addon.SimulateTestProc()
         end
     end)
 end

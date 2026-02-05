@@ -380,6 +380,10 @@ local function RecordEligibleSwing()
     end
     ScheduleWindfuryUpdate()
     SaveWindfuryDB()
+    -- Keep proc% up to date even when no procs are happening.
+    if ShammyTime.UpdateSatelliteValues and ShammyTime_Windfury_GetStats then
+        ShammyTime.UpdateSatelliteValues(ShammyTime_Windfury_GetStats())
+    end
 end
 
 -- Flush current proc buffer into pull/session: min/max/total are per-PROC (sum of hits), not per hit.
@@ -407,6 +411,19 @@ end
 -- Record one Windfury hit (amount, isCrit). Buffers hits; on proc end (timer or next proc) flushes combined total for min/max/total/avg.
 -- One proc = 1 or 2 hits; min/max/avg are the sum of those hits per proc.
 local WF_PROC_WINDOW = 0.4
+local function FlushWindfuryProcIfClosed()
+    if not wfProcBuffer or wfProcBuffer.total <= 0 then return false end
+    -- Windfury procs are at most 2 hits; flush early only when the proc is complete or the window timed out.
+    if wfProcBuffer.hits >= 2 then
+        FlushWindfuryProc()
+        return true
+    end
+    if (GetTime() - lastWfHitTime) >= WF_PROC_WINDOW then
+        FlushWindfuryProc()
+        return true
+    end
+    return false
+end
 local function RecordWindfuryHit(amount, isCrit)
     if not amount or amount <= 0 then return end
     if isCrit then ShammyTime.lastProcHadCrit = true end  -- for center ring "Windfury! CRITICAL!"
@@ -467,6 +484,7 @@ local function ResetWindfurySession()
 end
 
 -- Test mode: simulate one Windfury proc with 2 random hits, some random crits; update stats and play center ring.
+-- Exposed as ShammyTime.SimulateTestProc so options panel demo can reuse it.
 local function SimulateTestProc()
     local critChance = math.random(20, 45)  -- 20–45% crit per hit so crit % varies
     local function rollCrit() return math.random(1, 100) <= critChance end
@@ -486,6 +504,7 @@ local function SimulateTestProc()
     ShammyTime.lastProcTotal = total  -- so radial/satellites and GetWindfuryStats() show this proc
     if ShammyTime.PlayCenterRingProc then ShammyTime.PlayCenterRingProc(total, true) end
 end
+ShammyTime.SimulateTestProc = SimulateTestProc
 
 -- Show Windfury radial (center ring + satellites) with current stats; no proc animation.
 local function ShowWindfuryRadial()
@@ -652,6 +671,7 @@ ShammyTime.ResetWindfurySession = ResetWindfurySession
 ShammyTime.ShowWindfuryRadial = ShowWindfuryRadial
 ShammyTime.HideWindfuryRadial = HideWindfuryRadial
 ShammyTime.FlushWindfuryProc = FlushWindfuryProc  -- commit current proc buffer so min/max/avg include this proc (e.g. when radial opens)
+ShammyTime.FlushWindfuryProcIfClosed = FlushWindfuryProcIfClosed  -- avoid splitting a proc when numbers update mid-window
 
 -- When an element is hidden (not shown or alpha 0): click-through so no right-click/drag. When visible: circle keeps mouse for right-click reset; others follow lock.
 local function ApplyElementMouseState()
@@ -838,15 +858,18 @@ function UpdateAllElementsFadeState()
     if inCombat == nil then inCombat = false end
     local fadedCombat = db.wfFadeOutOfCombat and not inCombat
     local useSlowFade = db.wfFadeOutOfCombat or db.wfFadeWhenNotProcced or db.wfFadeWhenNoTotems or db.wfFocusFadeWhenNotProcced or db.wfImbueFadeWhenLongDuration
+    local useModuleFade = ShammyTime.EvaluateFade and ShammyTime.db and ShammyTime.db.profile and ShammyTime.db.profile.modules
     local alphaWf = 1
     -- Circle: when "fade when not procced" is on, only show for a short window after an actual proc (not on combat/totem)
-    local recentWfProc = (GetTime() - lastWfProcEndTime) < FADE_GRACE_AFTER_PROC
-    local circleShowSec = db.wfFadeWhenNotProcced and CIRCLE_SHOW_AFTER_PROC_SEC or FADE_GRACE_AFTER_PROC
+    local modWf = useModuleFade and ShammyTime.db.profile.modules.windfuryBubbles
+    local wfInactiveFade = modWf and modWf.fade and modWf.fade.conditions and modWf.fade.conditions.inactiveBuff
+    local circleShowSec = (db.wfFadeWhenNotProcced or wfInactiveFade) and CIRCLE_SHOW_AFTER_PROC_SEC or FADE_GRACE_AFTER_PROC
     local circleRecentProc = (GetTime() - lastWfProcEndTime) < circleShowSec
-    local wfProcced = (not db.wfFadeWhenNotProcced and db.wfRadialShown) or circleRecentProc
+    local wfProcced = circleRecentProc
+    local wfProccedLegacy = (not db.wfFadeWhenNotProcced and db.wfRadialShown) or circleRecentProc
     if fadedCombat then
         alphaWf = FADE_OUT_OF_COMBAT_ALPHA
-    elseif db.wfFadeWhenNotProcced and not wfProcced then
+    elseif db.wfFadeWhenNotProcced and not wfProccedLegacy then
         alphaWf = FADE_ALPHA
     end
     local procAnimPlaying = ShammyTime.IsWindfuryProcAnimationPlaying and ShammyTime.IsWindfuryProcAnimationPlaying()
@@ -878,7 +901,6 @@ function UpdateAllElementsFadeState()
         outOfRange = anyTotemOutOfRange,
         hasShield = hasShield,
     }
-    local useModuleFade = ShammyTime.EvaluateFade and ShammyTime.db and ShammyTime.db.profile and ShammyTime.db.profile.modules
 
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
     local wrapper = _G.ShammyTimeWindfuryRadial
@@ -888,9 +910,9 @@ function UpdateAllElementsFadeState()
         if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
     else
         -- Lock fade-out as soon as we're not procced (not just when alpha < 0.01) so we never briefly restore to 1 during fade = no blink
-        if not procAnimPlaying and not wfProcced then circleFadeOutStarted = true end
+        if not procAnimPlaying and not wfProccedLegacy then circleFadeOutStarted = true end
         -- Reset circleFadeOutStarted when circle should be shown (e.g. when fade rules are turned off and wfRadialShown is true)
-        if wfProcced then circleFadeOutStarted = false end
+        if wfProccedLegacy then circleFadeOutStarted = false end
         local currentAlpha = (wrapper and wrapper.GetAlpha and wrapper:GetAlpha()) or 0
         local circleAlpha, circleFadeOut, circleUseSlowFade, holdHover
         local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryBubbles
@@ -914,7 +936,7 @@ function UpdateAllElementsFadeState()
                 circleUseSlowFade = false
             end
         else
-            circleAlpha = procAnimPlaying and 1 or (circleFadeOutStarted and 0 or (wfProcced and alphaWf or 0))
+            circleAlpha = procAnimPlaying and 1 or (circleFadeOutStarted and 0 or (wfProccedLegacy and alphaWf or 0))
             circleFadeOut = circleAlpha < 1
             holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
             if holdHover then
@@ -1477,7 +1499,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
             ApplyElementVisibility()
             ApplyLockStateToAllFrames()
         end)
-        print(C.green .. "ShammyTime is enabled." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for settings. Right click on the windfury circle to reset statistics." .. C.r)
+        print(C.green .. "ShammyTime loaded." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for information or " .. C.gold .. "/st options" .. C.r .. C.gray .. " to enter the options panel." .. C.r)
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
     elseif event == "UNIT_AURA" then
@@ -1536,9 +1558,10 @@ end
 local function PrintMainHelp()
     print("")
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
-    print(C.gold .. "  ShammyTime" .. C.r .. C.gray .. "  —  " .. C.r .. C.gold .. "/st" .. C.r .. C.gray .. " or " .. C.r .. C.gold .. "/shammytime" .. C.r)
-    print(C.gold .. "═══════════════════════════════════════" .. C.r)
+    print(C.gold .. "  " .. C.white .. "ShammyTime" .. C.r)
     print("")
+    print(C.gold .. "  Author: Joachim Eriksson (05.02.2026)" .. C.r)
+    print(C.gold .. "═══════════════════════════════════════" .. C.r)
     print(C.green .. "  QUICK COMMANDS" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st options" .. C.r .. C.gray .. "  — Open the settings panel (recommended)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st lock" .. C.r .. C.gray .. " / " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "  — Lock or unlock all frames" .. C.r)
@@ -1679,7 +1702,7 @@ end
 local function PrintFontHelp()
     print("")
     print(C.green .. "ShammyTime — Font sizes (" .. C.gold .. "/st font" .. C.r .. C.green .. ")" .. C.r)
-    print(C.gray .. "  Set text size per element (6–28). Defaults unchanged until you set." .. C.r)
+    print(C.gray .. "  Set text size per element (6–64). Defaults unchanged until you set." .. C.r)
     print(C.gray .. "  • " .. C.gold .. "circle title 20" .. C.r .. C.gray .. "  — Center ring \"Windfury!\"" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "circle total 14" .. C.r .. C.gray .. "  — Center ring \"TOTAL: xxx\"" .. C.r)
     print(C.gray .. "  • " .. C.gold .. "circle critical 20" .. C.r .. C.gray .. "  — Center \"CRITICAL\" line" .. C.r)
@@ -2239,7 +2262,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue offsety -60" .. C.r .. C.gray .. " — Vertical offset." .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue iconsize 24" .. C.r .. C.gray .. " — Icon size." .. C.r)
         elseif a == "" then
-            local s = db.imbueBarScale or 0.4
+            local s = db.imbueBarScale or 0.35
             print(C.gray .. "ShammyTime: Imbue bar (" .. C.gold .. "/st adv imbue" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.1–2)" .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue scale 0.5" .. C.r .. C.gray .. " — Change size." .. C.r)
@@ -2304,7 +2327,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local s = db.shieldScale or 0.2
             local cnt = db.shieldCount
             local nx = db.shieldCountX or 0
-            local ny = db.shieldCountY or -50
+            local ny = db.shieldCountY or 101
             print(C.gray .. "ShammyTime: Lightning/Water Shield (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  size " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.05–2). Drag to move when unlocked." .. C.r)
             print(C.gray .. "  count " .. C.gold .. (cnt and tostring(cnt) or "auto") .. C.r .. C.gray .. " (1–9 = fixed, auto = from buff)" .. C.r)
@@ -2328,7 +2351,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         sub = sub and sub:lower() or ""
         subarg = subarg and subarg:gsub("^%s+", ""):gsub("%s+$", "") or ""
         local num = tonumber(subarg:match("%s+(%S+)$")) or tonumber(subarg:match("^(%S+)$"))
-        local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+        local clamp = function(n) return (n and n >= 6 and n <= 64) and n or nil end
         if sub == "circle" then
             local which = subarg:match("^(%S+)") and subarg:match("^(%S+)"):lower() or ""
             local val = clamp(num)
@@ -2384,8 +2407,8 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local cc = db.fontCircleCritical or 20
             local sl = db.fontSatelliteLabel or 8
             local sv = db.fontSatelliteValue or 13
-            local tt = db.fontTotemTimer or 7
-            local ib = db.fontImbueTimer or 20
+            local tt = db.fontTotemTimer or 13
+            local ib = db.fontImbueTimer or 28
             print(C.gray .. "ShammyTime: Font — circle title " .. C.gold .. ct .. C.r .. C.gray .. ", total " .. C.gold .. ctot .. C.r .. C.gray .. ", critical " .. C.gold .. cc .. C.r)
             print(C.gray .. "  satellite label " .. C.gold .. sl .. C.r .. C.gray .. ", value " .. C.gold .. sv .. C.r .. C.gray .. ", totem " .. C.gold .. tt .. C.r .. C.gray .. ", imbue " .. C.gold .. ib .. C.r .. C.gray .. ". " .. C.gold .. "/st font" .. C.r .. C.gray .. " for list." .. C.r)
             PrintFontHelp()
@@ -2455,7 +2478,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             elseif sub2 == "font" then
                 local which = rest2:match("^(%S+)") and rest2:match("^(%S+)"):lower() or ""
                 local val = tonumber(rest2:match("%s+(%S+)$"))
-                local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+                local clamp = function(n) return (n and n >= 6 and n <= 64) and n or nil end
                 if which == "title" and clamp(val) then db.fontCircleTitle = clamp(val); if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end; print(C.green .. "ShammyTime: Center font title " .. db.fontCircleTitle .. "." .. C.r)
                 elseif which == "total" and clamp(val) then db.fontCircleTotal = clamp(val); if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end; print(C.green .. "ShammyTime: Center font total " .. db.fontCircleTotal .. "." .. C.r)
                 elseif which == "critical" and clamp(val) then db.fontCircleCritical = clamp(val); if ShammyTime.ApplyCenterRingFontSizes then ShammyTime.ApplyCenterRingFontSizes() end; print(C.green .. "ShammyTime: Center font critical " .. db.fontCircleCritical .. "." .. C.r)
@@ -2482,7 +2505,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             elseif sub2 == "font" then
                 local which = rest2:match("^(%S+)") and rest2:match("^(%S+)"):lower() or ""
                 local val = tonumber(rest2:match("%s+(%S+)$"))
-                local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+                local clamp = function(n) return (n and n >= 6 and n <= 64) and n or nil end
                 if which == "label" and clamp(val) then db.fontSatelliteLabel = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer font label " .. db.fontSatelliteLabel .. "." .. C.r)
                 elseif which == "value" and clamp(val) then db.fontSatelliteValue = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer font value " .. db.fontSatelliteValue .. "." .. C.r)
                 else print(C.gray .. "ShammyTime: Outer font — label " .. (db.fontSatelliteLabel or 8) .. ", value " .. (db.fontSatelliteValue or 13) .. ". " .. C.gold .. "/st bubbles outer font label 8" .. C.r) end
@@ -2504,7 +2527,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if sub3 == "font" then
                     local which = rest3:match("^(%S+)") and rest3:match("^(%S+)"):lower() or ""
                     local val = tonumber(rest3:match("%s+(%S+)$"))
-                    local clamp = function(n) return (n and n >= 6 and n <= 28) and n or nil end
+                    local clamp = function(n) return (n and n >= 6 and n <= 64) and n or nil end
                     if which == "label" and clamp(val) then ov.labelSize = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer " .. bubbleName .. " font label " .. ov.labelSize .. "." .. C.r)
                     elseif which == "value" and clamp(val) then ov.valueSize = clamp(val); if ShammyTime.ApplySatelliteFontSizes then ShammyTime.ApplySatelliteFontSizes() end; print(C.green .. "ShammyTime: Outer " .. bubbleName .. " font value " .. ov.valueSize .. "." .. C.r)
                     else print(C.gray .. "ShammyTime: " .. bubbleName .. " font — label " .. tostring(ov.labelSize or "–") .. ", value " .. tostring(ov.valueSize or "–") .. ". " .. C.gold .. "/st bubbles outer " .. bubbleName .. " font label 8" .. C.r) end
@@ -2539,6 +2562,6 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
 
     -- Sync flat keys to profile.modules so the options panel sees updated values
     if ShammyTime.SyncFlatToModules then
-        ShammyTime:SyncFlatToModules()
+        ShammyTime:SyncFlatToModules({ includeFade = false })
     end
 end

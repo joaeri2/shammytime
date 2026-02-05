@@ -773,8 +773,90 @@ function ShammyTime:SetupOptions()
                             get = function() return getFlatDB("wfAlwaysShowNumbers", false) end,
                             set = function(_, v) setFlatDB("wfAlwaysShowNumbers", v) end,
                         },
+                        textHeader = {
+                            type = "header",
+                            name = "Text Sizes",
+                            order = 4.1,
+                        },
+                        fontCircleTitle = {
+                            type = "range",
+                            name = "Center Title Font",
+                            min = 6, max = 32, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("fontCircleTitle", 20) end,
+                            set = function(_, v)
+                                setFlatDB("fontCircleTitle", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyCenterRingFontSizes then st.ApplyCenterRingFontSizes() end
+                            end,
+                        },
+                        fontCircleTotal = {
+                            type = "range",
+                            name = "Center Total Font",
+                            min = 6, max = 32, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("fontCircleTotal", 14) end,
+                            set = function(_, v)
+                                setFlatDB("fontCircleTotal", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyCenterRingFontSizes then st.ApplyCenterRingFontSizes() end
+                            end,
+                        },
+                        fontCircleCritical = {
+                            type = "range",
+                            name = "Center Critical Font",
+                            min = 6, max = 32, step = 1,
+                            order = 4.4,
+                            get = function() return getFlatDB("fontCircleCritical", 20) end,
+                            set = function(_, v)
+                                setFlatDB("fontCircleCritical", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyCenterRingFontSizes then st.ApplyCenterRingFontSizes() end
+                            end,
+                        },
+                        fontSatelliteLabel = {
+                            type = "range",
+                            name = "Satellite Label Font",
+                            min = 4, max = 24, step = 1,
+                            order = 4.5,
+                            get = function() return getFlatDB("fontSatelliteLabel", 8) end,
+                            set = function(_, v)
+                                setFlatDB("fontSatelliteLabel", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplySatelliteFontSizes then st.ApplySatelliteFontSizes() end
+                            end,
+                        },
+                        fontSatelliteValue = {
+                            type = "range",
+                            name = "Satellite Value Font",
+                            min = 4, max = 24, step = 1,
+                            order = 4.6,
+                            get = function() return getFlatDB("fontSatelliteValue", 13) end,
+                            set = function(_, v)
+                                setFlatDB("fontSatelliteValue", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplySatelliteFontSizes then st.ApplySatelliteFontSizes() end
+                            end,
+                        },
                     }),
                     totemBar = CreateModuleOptions("totemBar", "Totem Bar", {
+                        textHeader = {
+                            type = "header",
+                            name = "Text Sizes",
+                            order = 4.1,
+                        },
+                        fontTotemTimer = {
+                            type = "range",
+                            name = "Timer Font",
+                            min = 4, max = 20, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("fontTotemTimer", 7) end,
+                            set = function(_, v)
+                                setFlatDB("fontTotemTimer", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
+                            end,
+                        },
                         noTotemsFadeDelay = {
                             type = "range",
                             name = "No Totems Fade Delay",
@@ -787,6 +869,23 @@ function ShammyTime:SetupOptions()
                     }),
                     shamanisticFocus = CreateModuleOptions("shamanisticFocus", "Shamanistic Focus"),
                     weaponImbueBar = CreateModuleOptions("weaponImbueBar", "Weapon Imbue Bar", {
+                        textHeader = {
+                            type = "header",
+                            name = "Text Sizes",
+                            order = 4.1,
+                        },
+                        fontImbueTimer = {
+                            type = "range",
+                            name = "Timer Font",
+                            min = 6, max = 32, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("fontImbueTimer", 20) end,
+                            set = function(_, v)
+                                setFlatDB("fontImbueTimer", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                            end,
+                        },
                         imbueFadeThreshold = {
                             type = "range",
                             name = "Imbue Fade Threshold",
@@ -797,7 +896,26 @@ function ShammyTime:SetupOptions()
                             set = function(_, v) setFlatDB("wfImbueFadeThresholdSec", v) end,
                         },
                     }),
-                    shieldIndicator = CreateModuleOptions("shieldIndicator", "Shield Indicator"),
+                    shieldIndicator = CreateModuleOptions("shieldIndicator", "Shield Indicator", {
+                        textHeader = {
+                            type = "header",
+                            name = "Text Sizes",
+                            order = 4.1,
+                        },
+                        fontShieldCount = {
+                            type = "range",
+                            name = "Count Font",
+                            desc = "Shared with Weapon Imbue Bar timer font.",
+                            min = 6, max = 32, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("fontImbueTimer", 20) end,
+                            set = function(_, v)
+                                setFlatDB("fontImbueTimer", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                            end,
+                        },
+                    }),
                 },
             },
             -----------------------------------------------------------------
@@ -1086,7 +1204,7 @@ function ShammyTime:SetupOptions()
                         set = function(_, v)
                             setFlatDB("fontImbueTimer", v)
                             local st = _G.ShammyTime
-                            if st and st.RefreshImbueBar then st.RefreshImbueBar() end
+                            if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
                         end,
                     },
                     shieldCountX = {

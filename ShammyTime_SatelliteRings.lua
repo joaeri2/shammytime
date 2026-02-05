@@ -113,6 +113,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     local dbLocked = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked
     f:EnableMouse(not dbLocked)   -- hover for quick-peek; when locked, click-through
     f:EnableMouseWheel(false)
+    -- No drag on satellites - drag on center ring only (StartMoving only works on frame that received mouse down)
     f:Hide()
     f:SetScript("OnEnter", function()
         if ShammyTime.OnRadialHoverEnter then ShammyTime.OnRadialHoverEnter() end

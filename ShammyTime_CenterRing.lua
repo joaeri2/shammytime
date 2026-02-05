@@ -55,29 +55,23 @@ local function FormatNum(n)
     return tostring(math.floor(n + 0.5))
 end
 
--- Applies saved position to the center ring frame (so it appears where the user last left it).
-local function ApplyCenterPosition(f)
-    local pos = ShammyTime.GetRadialPositionDB and ShammyTime.GetRadialPositionDB()
-    if not pos or not pos.center then return end
-    local c = pos.center
-    local relTo = (c.relativeTo and _G[c.relativeTo]) or UIParent
-    if relTo then
-        f:ClearAllPoints()
-        f:SetPoint(c.point or "CENTER", relTo, c.relativePoint or "CENTER", c.x or 0, c.y or 0)
-    end
-end
+-- Default position when user has never dragged (so the radial is movable from first load).
+local CENTER_DEFAULT_X, CENTER_DEFAULT_Y = 0, -180
 
--- Global wrapper for repositioning Windfury radial (wrapper frame) after scale change
-function ShammyTime.ApplyCenterRingPosition()
-    local f = _G.ShammyTimeWindfuryRadial
-    if f then ApplyCenterPosition(f) end
+-- Flag to prevent ApplyCenterPosition from overwriting position during drag
+-- Exposed globally so satellites can also set it
+local isRadialDragging = false
+function ShammyTime.SetRadialDragging(dragging)
+    isRadialDragging = dragging
 end
 
 -- Saves the center ring's current position when the user stops dragging (per character).
+-- Must be defined before ApplyCenterPosition so it can be called when pos.center is nil.
 local function SaveCenterPosition(f)
     if not ShammyTime.GetRadialPositionDB then return end
     local pos = ShammyTime.GetRadialPositionDB()
     local point, relTo, relativePoint, x, y = f:GetPoint(1)
+    if not point then return end  -- safety check
     pos.center = {
         point = point,
         relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent",
@@ -85,6 +79,34 @@ local function SaveCenterPosition(f)
         x = x,
         y = y,
     }
+end
+
+-- Applies saved position to the center ring frame (so it appears where the user last left it).
+-- When pos.center is nil (first load), applies default position and saves it so it persists.
+-- Does NOT apply during drag to prevent overwriting user's drag position.
+local function ApplyCenterPosition(f)
+    if isRadialDragging then return end  -- don't overwrite during drag
+    local pos = ShammyTime.GetRadialPositionDB and ShammyTime.GetRadialPositionDB()
+    if not pos then return end
+    f:ClearAllPoints()
+    if pos.center then
+        local c = pos.center
+        local relTo = (c.relativeTo and _G[c.relativeTo]) or UIParent
+        if relTo then
+            f:SetPoint(c.point or "CENTER", relTo, c.relativePoint or "CENTER", c.x or 0, c.y or 0)
+        else
+            f:SetPoint("CENTER", UIParent, "CENTER", CENTER_DEFAULT_X, CENTER_DEFAULT_Y)
+        end
+    else
+        f:SetPoint("CENTER", UIParent, "CENTER", CENTER_DEFAULT_X, CENTER_DEFAULT_Y)
+        SaveCenterPosition(f)
+    end
+end
+
+-- Global wrapper for repositioning Windfury radial (wrapper frame) after scale change
+function ShammyTime.ApplyCenterRingPosition()
+    local f = _G.ShammyTimeWindfuryRadial
+    if f then ApplyCenterPosition(f) end
 end
 
 -- Current center circle size (diameter) from DB
@@ -115,7 +137,7 @@ local function CreateRadialWrapper()
     radialWrapper:SetScale(GetRadialScale())
     radialWrapper:SetMovable(true)
     radialWrapper:SetClampedToScreen(true)
-    radialWrapper:EnableMouse(false)  -- pass-through so center receives hover/drag
+    radialWrapper:EnableMouse(false)  -- pass-through; center handles drag and syncs wrapper
     radialWrapper:Hide()
     _G.ShammyTimeWindfuryRadial = radialWrapper
     return radialWrapper
@@ -140,16 +162,27 @@ local function CreateCenterRingFrame()
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
-    -- Drag: move the wrapper so the whole radial moves; position saved is wrapper's.
+    -- Drag: center moves itself, then syncs wrapper position after (StartMoving only works on frame that received mouse down)
     f:SetScript("OnDragStart", function(self)
         if ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked then return end
-        if self.wrapper then self.wrapper:StartMoving() end
+        ShammyTime.SetRadialDragging(true)
+        self:StartMoving()
     end)
     f:SetScript("OnDragStop", function(self)
-        if self.wrapper then
-            self.wrapper:StopMovingOrSizing()
-            SaveCenterPosition(self.wrapper)
+        ShammyTime.SetRadialDragging(false)
+        self:StopMovingOrSizing()
+        -- Get center's new screen position
+        local point, _, relPoint, x, y = self:GetPoint(1)
+        -- Move wrapper to match where center was dragged
+        local wrapper = self.wrapper or radialWrapper
+        if wrapper then
+            wrapper:ClearAllPoints()
+            wrapper:SetPoint(point or "CENTER", UIParent, relPoint or "CENTER", x or 0, y or 0)
+            SaveCenterPosition(wrapper)
         end
+        -- Re-anchor center to wrapper's center
+        self:ClearAllPoints()
+        self:SetPoint("CENTER", wrapper, "CENTER", 0, 0)
     end)
     -- Hover: show numbers (quick-peek). Reset hint is in the addon start message in chat.
     f:SetScript("OnEnter", function(self)
@@ -723,7 +756,7 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
         f.title:SetText("Windfury!")
         f.total:SetPoint("CENTER", 0, totY)
     end
-    f:SetScale(GetRadialScale())
+    -- Center frame stays at scale 1; radial scale is on the wrapper only (set in windfuryBubbles:ApplyConfig).
     local rf = f.ringFrame
     -- Cancel any lightning and energy-soften timers/tickers from a previous proc so we start clean
     if rf.energySoftTicker then

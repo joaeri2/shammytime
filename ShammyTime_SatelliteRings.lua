@@ -385,6 +385,31 @@ local SATELLITE_CONFIG = {
     { name = "grass_2", position = 300, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
 }
 
+local function GetMaxSatelliteNudge()
+    local maxNudge = 0
+    for _, cfg in ipairs(SATELLITE_CONFIG) do
+        local offX = cfg.offsetX or 0
+        local offY = cfg.offsetY or 0
+        local nudge = math.sqrt(offX * offX + offY * offY)
+        if nudge > maxNudge then maxNudge = nudge end
+    end
+    return maxNudge
+end
+
+-- Wrapper size is used only for clamping; keep it tight so dragging can reach screen edges.
+function ShammyTime.GetWindfuryRadialWrapperSize()
+    local centerSize = (ShammyTime.GetCenterSize and ShammyTime.GetCenterSize()) or 200
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local gap = db.wfSatelliteGap
+    if gap == nil then gap = 0 end
+    local bubbleScale = GetSatelliteBubbleScale()
+    local centerRadius = centerSize / 2
+    local bubbleCenterRadius = centerRadius + SATELLITE_HALF + gap + GetMaxSatelliteNudge()
+    local bubbleRadius = SATELLITE_HALF * bubbleScale
+    local outerRadius = bubbleCenterRadius + bubbleRadius
+    return math.ceil(outerRadius * 2)
+end
+
 local function GetSatelliteTextureSet(texKey)
     -- Full-design (single texture): AIR_FULL, GRASS_FULL
     if TEX[texKey] then
@@ -561,6 +586,9 @@ function ShammyTime.ApplySatelliteBubbleScale()
     for _, f in pairs(satelliteFrames) do
         if f then f:SetScale(baseScale) end
     end
+    if ShammyTime.ApplyWindfuryRadialWrapperSize then
+        ShammyTime.ApplyWindfuryRadialWrapperSize()
+    end
 end
 
 -- Reapply satellite radius from DB and move all outer bubbles (call when user changes /st circle gap N)
@@ -577,6 +605,9 @@ function ShammyTime.ApplySatelliteRadius()
             f.baseOffsetY = radius * math.sin(angle)
             f:SetPoint("CENTER", centerFrame, "CENTER", f.baseOffsetX / centerScale, f.baseOffsetY / centerScale)
         end
+    end
+    if ShammyTime.ApplyWindfuryRadialWrapperSize then
+        ShammyTime.ApplyWindfuryRadialWrapperSize()
     end
 end
 

@@ -109,6 +109,15 @@ function ShammyTime.ApplyCenterRingPosition()
     if f then ApplyCenterPosition(f) end
 end
 
+-- Resize radial wrapper to match the actual circle+bubbles footprint.
+function ShammyTime.ApplyWindfuryRadialWrapperSize()
+    local f = _G.ShammyTimeWindfuryRadial
+    if not f then return end
+    local size = (ShammyTime.GetWindfuryRadialWrapperSize and ShammyTime.GetWindfuryRadialWrapperSize()) or nil
+    if not size or size <= 0 then return end
+    f:SetSize(size, size)
+end
+
 -- Current center circle size (diameter) from DB
 local function GetCenterSize()
     return (ShammyTime.GetCenterSize and ShammyTime.GetCenterSize()) or 200
@@ -128,7 +137,7 @@ end
 -- Wrapper frame: one scalable container for center + satellites so the whole radial scales as a single object.
 local function CreateRadialWrapper()
     if radialWrapper then return radialWrapper end
-    local WrapperSize = 600
+    local WrapperSize = (ShammyTime.GetWindfuryRadialWrapperSize and ShammyTime.GetWindfuryRadialWrapperSize()) or 600
     radialWrapper = CreateFrame("Frame", "ShammyTimeWindfuryRadial", UIParent)
     radialWrapper:SetFrameStrata("MEDIUM")
     radialWrapper:SetSize(WrapperSize, WrapperSize)
@@ -621,6 +630,7 @@ function ShammyTime.ApplyCenterRingSize()
         f.ringFrame.runes:SetPoint("CENTER", -1 * scale, 7 * scale)
     end
     if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
+    if ShammyTime.ApplyWindfuryRadialWrapperSize then ShammyTime.ApplyWindfuryRadialWrapperSize() end
 end
 
 -- Reposition center text from DB (call when user changes /st circle text ...).

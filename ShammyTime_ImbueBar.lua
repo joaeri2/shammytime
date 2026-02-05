@@ -70,22 +70,40 @@ local function GetLayout()
     return SLOT_MARGIN, SLOT_GAP, SLOT_OFFSET_Y, ICON_SIZE
 end
 
+-- Default position for imbue bar (when no saved position exists)
+local IMBUE_DEFAULT_X, IMBUE_DEFAULT_Y = 0, -260
+
+-- Saves the imbue bar position when the user stops dragging (exact CenterRing pattern).
+local function SaveImbueBarPosition(frame)
+    if not ShammyTime.GetRadialPositionDB then return end
+    local pos = ShammyTime.GetRadialPositionDB()
+    local point, relTo, relativePoint, x, y = frame:GetPoint(1)
+    if not point then return end
+    pos.imbueBar = {
+        point = point,
+        relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent",
+        relativePoint = relativePoint,
+        x = x,
+        y = y,
+    }
+end
+
+-- Applies saved position to the imbue bar frame (exact CenterRing pattern).
 local function ApplyImbueBarPosition(frame)
-    local pos = GetRadialPositionDB and GetRadialPositionDB()
-    if pos and pos.imbueBar then
+    local pos = ShammyTime.GetRadialPositionDB and ShammyTime.GetRadialPositionDB()
+    if not pos then return end
+    frame:ClearAllPoints()
+    if pos.imbueBar then
         local t = pos.imbueBar
         local relTo = (t.relativeTo and _G[t.relativeTo]) or UIParent
         if relTo then
-            frame:ClearAllPoints()
             frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
+        else
+            frame:SetPoint("CENTER", UIParent, "CENTER", IMBUE_DEFAULT_X, IMBUE_DEFAULT_Y)
         end
-    end
-    -- Always normalize to CENTER anchor so scaling in options (or /st imbue scale) doesn't move the bar diagonally
-    local fx, fy = frame:GetCenter()
-    local ux, uy = UIParent:GetCenter()
-    if fx and fy and ux and uy then
-        frame:ClearAllPoints()
-        frame:SetPoint("CENTER", UIParent, "CENTER", fx - ux, fy - uy)
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", IMBUE_DEFAULT_X, IMBUE_DEFAULT_Y)
+        SaveImbueBarPosition(frame)
     end
 end
 
@@ -95,52 +113,43 @@ function ShammyTime.ApplyImbueBarPosition()
     if f then ApplyImbueBarPosition(f) end
 end
 
-local function SaveImbueBarPosition(frame)
-    if not GetRadialPositionDB then return end
-    local pos = GetRadialPositionDB()
-    pos.imbueBar = pos.imbueBar or {}
-    local point, relTo, relativePoint, x, y = frame:GetPoint(1)
-    pos.imbueBar.point = point
-    pos.imbueBar.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
-    pos.imbueBar.relativePoint = relativePoint
-    pos.imbueBar.x = x
-    pos.imbueBar.y = y
-end
-
 local DEFAULT_SHIELD_SCALE = 0.2
 
-local function ApplyShieldPosition(frame)
-    local pos = GetRadialPositionDB and GetRadialPositionDB()
-    if not pos then return end
-    pos.shieldFrame = pos.shieldFrame or {}
-    local t = pos.shieldFrame
-    if t.point and t.relativeTo then
-        local relTo = (t.relativeTo and _G[t.relativeTo]) or UIParent
-        frame:ClearAllPoints()
-        frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
-    else
-        frame:ClearAllPoints()
-        frame:SetPoint("CENTER", UIParent, "CENTER", 250, -180)
-    end
-    -- Normalize to CENTER anchor so changing scale doesn't cause weird movement (anchor stays fixed)
-    local fx, fy = frame:GetCenter()
-    local ux, uy = UIParent:GetCenter()
-    if fx and fy and ux and uy then
-        frame:ClearAllPoints()
-        frame:SetPoint("CENTER", UIParent, "CENTER", fx - ux, fy - uy)
-    end
+-- Default position for shield (when no saved position exists)
+local SHIELD_DEFAULT_X, SHIELD_DEFAULT_Y = 250, -180
+
+-- Saves the shield position when the user stops dragging (exact CenterRing pattern).
+local function SaveShieldPosition(frame)
+    if not ShammyTime.GetRadialPositionDB then return end
+    local pos = ShammyTime.GetRadialPositionDB()
+    local point, relTo, relativePoint, x, y = frame:GetPoint(1)
+    if not point then return end
+    pos.shieldFrame = {
+        point = point,
+        relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent",
+        relativePoint = relativePoint,
+        x = x,
+        y = y,
+    }
 end
 
-local function SaveShieldPosition(frame)
-    if not GetRadialPositionDB then return end
-    local pos = GetRadialPositionDB()
-    pos.shieldFrame = pos.shieldFrame or {}
-    local point, relTo, relativePoint, x, y = frame:GetPoint(1)
-    pos.shieldFrame.point = point
-    pos.shieldFrame.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
-    pos.shieldFrame.relativePoint = relativePoint
-    pos.shieldFrame.x = x
-    pos.shieldFrame.y = y
+-- Applies saved position to the shield frame (exact CenterRing pattern).
+local function ApplyShieldPosition(frame)
+    local pos = ShammyTime.GetRadialPositionDB and ShammyTime.GetRadialPositionDB()
+    if not pos then return end
+    frame:ClearAllPoints()
+    if pos.shieldFrame then
+        local t = pos.shieldFrame
+        local relTo = (t.relativeTo and _G[t.relativeTo]) or UIParent
+        if relTo then
+            frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
+        else
+            frame:SetPoint("CENTER", UIParent, "CENTER", SHIELD_DEFAULT_X, SHIELD_DEFAULT_Y)
+        end
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", SHIELD_DEFAULT_X, SHIELD_DEFAULT_Y)
+        SaveShieldPosition(frame)
+    end
 end
 
 local function SetSlotTexture(icon, iconData)
@@ -526,9 +535,17 @@ local function Init()
     end
 end
 
-if ShammyTime.GetRadialPositionDB then
-    C_Timer.After(0, Init)
-end
+-- Defer creation until PLAYER_LOGIN so SavedVariables and player name (for per-character positions) are ready
+local imbueBarEventFrame = CreateFrame("Frame")
+imbueBarEventFrame:RegisterEvent("PLAYER_LOGIN")
+imbueBarEventFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_LOGIN" then
+        self:UnregisterEvent("PLAYER_LOGIN")
+        if ShammyTime.GetRadialPositionDB then
+            Init()
+        end
+    end
+end)
 
 function ShammyTime.EnsureImbueBarFrame()
     return CreateImbueBarFrame()

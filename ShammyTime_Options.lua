@@ -66,6 +66,7 @@ local function getModuleOption(info, key)
     if key == "inactiveBuff" then return m.fade and m.fade.conditions and m.fade.conditions.inactiveBuff or false end
     if key == "noTotemsPlaced" then return m.fade and m.fade.conditions and m.fade.conditions.noTotemsPlaced or false end
     if key == "outOfRange" then return m.fade and m.fade.conditions and m.fade.conditions.outOfRange or false end
+    if key == "fadeInOnTarget" then return m.fade and m.fade.conditions and m.fade.conditions.fadeInOnTarget or false end
     return nil
 end
 
@@ -83,6 +84,14 @@ local function setModuleOption(info, val, key)
     if key == "inactiveBuff" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.inactiveBuff = val end
     if key == "noTotemsPlaced" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.noTotemsPlaced = val end
     if key == "outOfRange" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.outOfRange = val end
+    if key == "fadeInOnTarget" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.fadeInOnTarget = val end
+    -- When any condition is enabled, turn on fade so the condition takes effect without requiring "Enable Fade" separately
+    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" then
+        local c = m.fade and m.fade.conditions
+        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget) then
+            m.fade.enabled = true
+        end
+    end
     local st = _G.ShammyTime
     if st and st.ApplyAllConfigs then st:ApplyAllConfigs() end
 end
@@ -293,6 +302,7 @@ local function BuildFullExportLines(useColorCodes)
                         line("modules." .. modName .. ".fade.conditions.inactiveBuff = " .. tostring(c.inactiveBuff or false))
                         line("modules." .. modName .. ".fade.conditions.noTotemsPlaced = " .. tostring(c.noTotemsPlaced or false))
                         line("modules." .. modName .. ".fade.conditions.outOfRange = " .. tostring(c.outOfRange or false))
+                        line("modules." .. modName .. ".fade.conditions.fadeInOnTarget = " .. tostring(c.fadeInOnTarget or false))
                     end
                 end
             end
@@ -468,6 +478,16 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs)
                 get = function(info) return getModuleOption(info, "noTarget") end,
                 set = function(info, v) setModuleOption(info, v, "noTarget") end,
             },
+            fadeInOnTarget = {
+                type = "toggle",
+                name = "Fade In When Targeting Enemy",
+                desc = "When enabled, this element fades in slowly when you select an enemy target. When disabled, it appears instantly.",
+                order = 14.5,
+                arg = { module = moduleName },
+                get = function(info) return getModuleOption(info, "fadeInOnTarget") end,
+                set = function(info, v) setModuleOption(info, v, "fadeInOnTarget") end,
+                hidden = function() return moduleName ~= "windfuryBubbles" and moduleName ~= "shamanisticFocus" end,
+            },
             inactiveBuff = {
                 type = "toggle",
                 name = "No Active Buff/Proc",
@@ -489,16 +509,6 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs)
                 type = "header",
                 name = "",
                 order = 50,
-            },
-            preview = {
-                type = "execute",
-                name = "Preview",
-                desc = "Play a short demo of this element.",
-                order = 51,
-                func = function()
-                    local st = _G.ShammyTime
-                    if st and st.DemoModule then st:DemoModule(moduleName) end
-                end,
             },
             resetModule = {
                 type = "execute",

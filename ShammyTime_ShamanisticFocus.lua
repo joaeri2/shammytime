@@ -11,7 +11,7 @@ if not M then return end
 
 local TEX = M.TEX
 local FOCUSED_BUFF_SPELL_ID = 43339  -- "Focused" (Shamanistic Focus proc), TBC
-local FOCUS_FADE_IN_DURATION = 0.06  -- fast off→on so proc feels instant
+local FOCUS_FADE_IN_DURATION = 0.3   -- off→on transition (~300ms so change is visible but quick)
 local FOCUS_FADE_OUT_DURATION = 0.6
 local FOCUS_HOLD_AFTER_OFF = 3.0  -- seconds to hold "on" art after proc ends before fading to off
 local FOCUS_PULSE_MIN = 0.90   -- scale 90%

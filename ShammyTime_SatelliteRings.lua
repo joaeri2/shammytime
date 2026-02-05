@@ -15,16 +15,19 @@ local TEX = M.TEX
 local SATELLITE_SIZE = 150
 local SATELLITE_SCALE = 1.0
 
--- Satellite radius (75). Center radius + gap + this = distance from center to satellite center (so outer rings touch center edge when gap 0).
-local SATELLITE_HALF = 75
+-- Bubble radius (half of SATELLITE_SIZE). Position = circleRadius + bubbleRadius + gap so bubbles touch circle when gap=0.
+-- Scaling is applied only on the root (radialWrapper); children use fixed pixel offsets so nothing drifts on scale change.
+local SATELLITE_HALF = 75  -- bubbleRadius = min(bubbleW,bubbleH)/2
 
 local function GetSatelliteRadius()
     local centerSize = (ShammyTime.GetCenterSize and ShammyTime.GetCenterSize()) or 200
-    local centerRadius = centerSize / 2
+    local circleRadius = centerSize / 2
+    local bubbleRadius = SATELLITE_HALF
     local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
     local gap = db.wfSatelliteGap
     if gap == nil then gap = 0 end
-    return centerRadius + SATELLITE_HALF + gap
+    -- distance = circleRadius + bubbleRadius + gap (recompute on size/gap change; root scale preserves relationship)
+    return circleRadius + bubbleRadius + gap
 end
 
 -- User scale for the small bubbles (0.1–3, default 1)

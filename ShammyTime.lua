@@ -851,6 +851,7 @@ function UpdateAllElementsFadeState()
     end
     local procAnimPlaying = ShammyTime.IsWindfuryProcAnimationPlaying and ShammyTime.IsWindfuryProcAnimationPlaying()
     local hasTarget = UnitExists and UnitExists("target")
+    local hasEnemyTarget = hasTarget and (UnitCanAttack and UnitCanAttack("player", "target"))
     local hasTotems = HasAnyTotem()
     local hasFocusBuff = ShammyTime.HasFocusedBuff and ShammyTime.HasFocusedBuff()
     local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
@@ -866,6 +867,7 @@ function UpdateAllElementsFadeState()
     local fadeContext = {
         inCombat = inCombat,
         hasTarget = hasTarget,
+        hasEnemyTarget = hasEnemyTarget,
         hasTotems = hasTotems,
         noTotemsFaded = noTotemsFaded,
         focusActive = hasFocusBuff,
@@ -893,14 +895,17 @@ function UpdateAllElementsFadeState()
         local circleAlpha, circleFadeOut, circleUseSlowFade, holdHover
         local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryBubbles
         local useModulePath = mod and true
+        -- When "No Active Buff/Proc" is on, apply fade even if "Enable Fade" wasn't checked (so one checkbox is enough)
+        local wfFadeActive = mod and mod.fade and (mod.fade.enabled or (mod.fade.conditions and mod.fade.conditions.inactiveBuff))
         if useModulePath and ShammyTime.EvaluateFade then
-            if mod.fade and mod.fade.enabled then
+            if wfFadeActive then
                 local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("windfuryBubbles", fadeContext)
                 circleAlpha = procAnimPlaying and 1 or (shouldFade and targetAlpha or 1)
                 circleFadeOut = circleAlpha < 1
                 holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
                 if holdHover then circleAlpha = currentAlpha; circleFadeOut = false end
-                circleUseSlowFade = (not holdHover) and useSlowMod and circleFadeOut
+                -- Slow fade-out when conditions say so; slow fade-in only when "Fade In When Targeting Enemy" is on and we have an enemy target
+                circleUseSlowFade = (not holdHover) and ((circleFadeOut and useSlowMod) or (not circleFadeOut and (mod.fade.conditions and mod.fade.conditions.fadeInOnTarget) and fadeContext.hasEnemyTarget))
             else
                 -- Panel: fade disabled = show at full alpha (don't fall back to legacy flat keys)
                 circleAlpha = 1
@@ -994,7 +999,8 @@ function UpdateAllElementsFadeState()
                         local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("shamanisticFocus", fadeContext)
                         focusFaded = shouldFade
                         focusAlpha = shouldFade and targetAlpha or 1
-                        focusUseSlow = useSlowMod
+                        -- Slow fade-out when conditions say so; slow fade-in when "Fade In When Targeting Enemy" is on and we have an enemy target
+                        focusUseSlow = useSlowMod or (not focusFaded and (mod.fade.conditions and mod.fade.conditions.fadeInOnTarget) and fadeContext.hasEnemyTarget)
                     else
                         focusFaded = false
                         focusAlpha = 1

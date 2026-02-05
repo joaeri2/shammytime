@@ -55,6 +55,7 @@ function windfuryBubbles:Create()
     return self.frame
 end
 
+--- Apply config from profile.modules.windfuryBubbles only. Does not touch Shamanistic Focus or other modules.
 function windfuryBubbles:ApplyConfig()
     local cfg = getModuleConfig("windfuryBubbles")
     if not cfg then return end
@@ -206,6 +207,7 @@ function shamanisticFocus:Create()
     return self.frame
 end
 
+--- Apply config from profile.modules.shamanisticFocus and profile.focusFrame only. Never read windfury or other module settings.
 function shamanisticFocus:ApplyConfig()
     local cfg = getModuleConfig("shamanisticFocus")
     if not cfg then return end
@@ -213,7 +215,7 @@ function shamanisticFocus:ApplyConfig()
     local st = _G.ShammyTime
     local f = self.frame or (st and st.GetShamanisticFocusFrame and st.GetShamanisticFocusFrame())
     if not f then return end
-    -- Position first, then scale, then re-apply position so the frame doesn't drift (same pattern as ApplyShamanisticFocusScale)
+    -- Position from focusFrame; scale/alpha from this module only (not windfuryBubbles). Position first, then scale, then re-apply position so the frame doesn't drift.
     local db = st and st.GetDB and st.GetDB()
     if db and db.focusFrame then
         local ff = db.focusFrame

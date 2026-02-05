@@ -27,6 +27,7 @@ local function moduleDefaults(enabled, scale, alpha)
                 inactiveBuff = false,
                 noTotemsPlaced = false,
                 outOfRange = false,
+                fadeInOnTarget = false,  -- when true: slow fade-in when selecting an enemy target (windfury/focus only)
             },
         },
     }
@@ -551,13 +552,14 @@ function ShammyTime:SaveAllCurrentPositions()
     end
 end
 
+--- Stop demo: only stop animations and timers. Do NOT call layout (SetPoint, ClearAllPoints, ApplyAllConfigs, etc.).
 function ShammyTime:StopDemo()
     local addon = self  -- Capture for closures
     addon.demoActive = false
     if addon.db and addon.db.profile and addon.db.profile.global then
         addon.db.profile.global.demoMode = false
     end
-    -- Stop all module demos
+    -- Stop all module demos (animations/timers only; modules must not touch layout in DemoStop)
     if addon.Modules then
         for name, mod in pairs(addon.Modules) do
             if mod and mod.DemoStop then
@@ -565,9 +567,8 @@ function ShammyTime:StopDemo()
             end
         end
     end
-    -- Save current positions so ApplyAllConfigs doesn't move visuals
-    if addon.SaveAllCurrentPositions then addon:SaveAllCurrentPositions() end
-    addon:ApplyAllConfigs()
+    -- Refresh fade state (alpha only); do NOT call ApplyAllConfigs or SaveAllCurrentPositions
+    if addon.UpdateAllElementsFadeState then addon:UpdateAllElementsFadeState() end
 end
 
 -- Module registry (optional; modules can register themselves)

@@ -20,9 +20,9 @@ Do now:
 5. Run `/st print` to export settings
 6. Copy the output and paste it here so defaults can be updated in code
 
-- [] Ensure that the scaling options for the bubbles/circles windfury element scale properly together. Example of how to do it: Create a single parent container frame for the circle + bubble and only scale/resize the parent (not the textures individually). Make the circle fill the container. Position the bubble by anchoring its CENTER to the container CENTER with offsets computed from sizes: distance = circleRadius + bubbleRadius (circleRadius = min(containerW,containerH)/2, bubbleRadius = min(bubbleW,bubbleH)/2). Use x = distance*cos(angle), y = distance*sin(angle) (or fixed directions like right/top). Recalculate on size/scale changes so the bubble always stays touching the circle edge.
+- [x] Ensure that the scaling options for the bubbles/circles windfury element scale properly together. Example of how to do it: Create a single parent container frame for the circle + bubble and only scale/resize the parent (not the textures individually). Make the circle fill the container. Position the bubble by anchoring its CENTER to the container CENTER with offsets computed from sizes: distance = circleRadius + bubbleRadius (circleRadius = min(containerW,containerH)/2, bubbleRadius = min(bubbleW,bubbleH)/2). Use x = distance*cos(angle), y = distance*sin(angle) (or fixed directions like right/top). Recalculate on size/scale changes so the bubble always stays touching the circle edge.
 
-- [] Make sure that for each element the scaling ensures that the Elements stay in place and that the text is increased properly and not scaled in such a way that it will pixelate be beneath. You can find GPT's example of how to do this
+- [x] Make sure that for each element the scaling ensures that the Elements stay in place and that the text is increased properly and not scaled in such a way that it will pixelate be beneath. You can find GPT's example of how to do this
 Got it 🙂 Keep it simple: one slider-ish scale (+/- ~30%), same assets, and absolutely no drifting.
 
 Here are instructions you can paste to your dev AI:
@@ -50,7 +50,7 @@ This guarantees positions don’t drift because anchors and offsets scale togeth
 
 That’s it: a single anchored root + scale root only + bubble position derived from sizes = everything grows/shrinks in place without sliding around.
 
-- [] Clicking the stop demo button moves assets around, specifically the totem bar. The demo buttons should not affect any thing besides starting or stopping the animations.
+- [x] Clicking the stop demo button moves assets around, specifically the totem bar. The demo buttons should not affect any thing besides starting or stopping the animations.
 
 Info from GPT: Totally. This is almost always happening because the “stop demo” code is accidentally touching layout state (anchors, size, scale, alpha, strata, parent, or a shared table of positions). The fix is to hard-separate “animation state” from “layout state” ✅
 
@@ -72,16 +72,16 @@ Expected behavior:
 	•	Clicking Stop Demo should leave all frames exactly where they were (same anchors/offsets). Only animation playback stops and visuals return to their normal non-demo state.
 
 
-- [] When the shamanistic focus is enabled when coming from its faded state the change from the off the off picture to the own picture is too slow. It needs to be quicker I wanted to roughly take 300 ms.
+- [x] When the shamanistic focus is enabled when coming from its faded state the change from the off the off picture to the own picture is too slow. It needs to be quicker I wanted to roughly take 300 ms.
 
-- [] Remove all preview buttons in each module. Its enough with the one in general.
+- [x] Remove all preview buttons in each module. Its enough with the one in general.
 
-- [] The fade in option when you have a target should slowly fade in the windfury bubbles when you select an enemy. So two things: Slow fade in, and enemy target only. BUT very impotant when this option is not enabled the windfury bubbles should not fade in, but appear instantly like the current behavior.
+- [x] The fade in option when you have a target should slowly fade in the windfury bubbles when you select an enemy. So two things: Slow fade in, and enemy target only. BUT very impotant when this option is not enabled the windfury bubbles should not fade in, but appear instantly like the current behavior.
 
-- [] The fade in option when you have a target should slowly fade in the shamanistic focus when you select an enemy. So two things: Slow fade in, and enemy target only.
+- [x] The fade in option when you have a target should slowly fade in the shamanistic focus when you select an enemy. So two things: Slow fade in, and enemy target only.
 
-- [] The windfury bubbles does not fade out when the "no active buff/pric is enabled. Bug. 
+- [x] The windfury bubbles does not fade out when the "no active buff/pric is enabled. Bug. 
 
-- [] The shamanistic focus is affected by settings when i change windfury bubbles settings. Bug. 
+- [x] The shamanistic focus is affected by settings when i change windfury bubbles settings. Bug. 
 
 

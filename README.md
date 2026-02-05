@@ -9,37 +9,53 @@ When the addon loads you’ll see: **ShammyTime loaded.** Type **/st** for infor
 
 ---
 
-## What You Get
+## Screenshots
 
-| Element | What to expect |
-|--------|----------------|
-| **Windfury circle** | A center ring plus satellite “bubbles” showing MIN, MAX, AVG, PROCS, PROC%, CRIT%. When Windfury procs, the center shows “Windfury!” and the total damage. Right-click the circle to reset all statistics. You can scale it, set text positions, and show/hide numbers. |
-| **Totem bar** | Four totem slots (Fire, Earth, Water, Air) with countdown timers. “Gone” feedback when a totem dies; red overlay when you’re too far from a totem to benefit. |
-| **Weapon imbue bar** | Shows your current imbue (Flametongue, Frostbrand, Rockbiter, Windfury Weapon) and time left. |
-| **Shamanistic Focus** | TBC proc: after a melee crit you get “Focused” for 15s; next Shock costs 60% less. The element lights up with a timer while the buff is active. |
-| **Lightning/Water Shield** | Shows shield charges and (where applicable) time left. |
+### Windfury Circle
 
-All elements can be shown/hidden, scaled, and faded (e.g. out of combat, when no totems, when not procced). Use the **settings panel** (**/st options**) to configure everything.
+Animated; plays an electric strike on crit. Center shows "Windfury!" and total; satellites show MIN, MAX, AVG, PROCS, PROC%, CRIT%. Numbers on hover or always. Right-click to reset.
+
+![Windfury Bubbles no numbers](Screenshots/Windfury%20Bubbles%20no%20numbers.png) ![Windfury Bubbles with numbers](Screenshots/Windfury%20Bubbles%20with%20numbers.png) ![Windfury Bubbles Critical Strike](Screenshots/Windfury%20Bubbles%20Critical%20Strike.png)
 
 ---
 
-## Windfury Circle
+### Totem Bar
 
-When you have **Windfury Weapon** on your weapon, the addon tracks Windfury Attack damage and shows:
+Fire, Earth, Water, Air with timers. Red overlay when out of range; "Gone" when a totem dies or expires.
 
-- **Center ring** — “Windfury!” and TOTAL damage for the last proc (and optional always-visible numbers).
-- **Satellite bubbles** — MIN, MAX, AVG, PROCS, PROC%, CRIT% (session stats).
-
-Stats are session-based (since login or since you last reset). **Right-click the Windfury circle** to reset. Use the settings panel to show/hide, scale, and lock frames (when unlocked you can drag to reposition).
+![Totem Bar with totems](Screenshots/Totem%20Bar%20with%20totems.png) ![Totem Bar without totems](Screenshots/Totem%20Bar%20without%20totems.png)
 
 ---
 
-## Totem Bar
+### Weapon Imbue Bar
 
-- **Slots** — Fire, Earth, Water, Air with countdown timers. Empty slots show a dimmed elemental icon.
-- **“Gone” feedback** — When a totem dies or expires, that slot flashes red with a cooldown sweep.
-- **Too far from totem** — If you’re too far to benefit, that slot gets a **red overlay**. For totems that give you a buff (e.g. Mana Spring, Strength of Earth), the overlay shows when the totem is down but you don’t have the buff. For totems that don’t give a buff (e.g. Searing Totem, Windfury Totem), the addon estimates distance from where you placed it; **that check only works outdoors**, not in instances.
-Show/hide and options are in the settings panel.
+Current imbue and time left (Flametongue, Frostbrand, Rockbiter, Windfury Weapon).
+
+![Weapon Imbue Bar](Screenshots/Weapon%20Imbue%20Bar%20with%20Imbue.png)
+
+---
+
+### Shamanistic Focus
+
+Lights up with a timer after a melee crit; next Shock costs 60% less for 15s.
+
+![Shamanistic Focus ON](Screenshots/Shamanistic%20Focus%20ON.png) ![Shamanistic Focus OFF](Screenshots/Shamanistic%20Focus%20OFF.png)
+
+---
+
+### Lightning/Water Shield
+
+Shield charges (and time left where applicable).
+
+![Shield ON](Screenshots/Shield%20ON.png) ![Shield OFF](Screenshots/Shield%20OFF.png)
+
+---
+
+### Settings & Quick Commands
+
+**/st options** opens the panel; **/st** lists slash commands. All elements can be shown/hidden, scaled, and faded in settings.
+
+![Settings](Screenshots/Settings.png) ![CMD](Screenshots/CMD.png)
 
 ---
 

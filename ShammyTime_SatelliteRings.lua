@@ -105,9 +105,8 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f:SetFrameLevel(5)
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     f:SetScale(GetSatelliteBubbleScale())
-    local parentScale = parentFrame and parentFrame:GetScale()
-    if not parentScale or parentScale <= 0 then parentScale = 1 end
-    f:SetPoint("CENTER", parentFrame, "CENTER", offsetX / parentScale, offsetY / parentScale)
+    -- Center (parent) has scale 1; use raw offsets so the whole radial scales as one with the wrapper
+    f:SetPoint("CENTER", parentFrame, "CENTER", offsetX, offsetY)
     local dbLocked = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked
     f:EnableMouse(not dbLocked)   -- hover for quick-peek; when locked, click-through
     f:EnableMouseWheel(false)
@@ -537,15 +536,16 @@ function ShammyTime.ResetSatellitePositions()
     end
 end
 
--- Re-position satellites so they stay visually fixed when the center ring's scale changes (master/module scale).
--- Call after setting center:SetScale(effScale). Offsets in parent space = baseOffset/centerScale so visual position stays the same.
+-- Re-position satellites. Scale is on the radial wrapper (center has scale 1), so use raw base offsets.
+-- centerScale is only used when caller still uses old per-center scale; pass 1 for wrapper-based scaling.
 function ShammyTime.ApplySatellitePositionsForCenterScale(centerScale)
     local centerFrame = GetCenterFrame()
-    if not centerFrame or not centerScale or centerScale <= 0 then return end
+    if not centerFrame then return end
+    local div = (centerScale and centerScale > 0) and centerScale or 1
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX ~= nil and f.baseOffsetY ~= nil then
-            local sx = f.baseOffsetX / centerScale
-            local sy = f.baseOffsetY / centerScale
+            local sx = f.baseOffsetX / div
+            local sy = f.baseOffsetY / div
             f:SetPoint("CENTER", centerFrame, "CENTER", sx, sy)
         end
     end

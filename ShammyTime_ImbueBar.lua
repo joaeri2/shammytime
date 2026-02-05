@@ -39,10 +39,14 @@ local SLOT_FRAME_ALPHA = 0.94
 local EMPTY_ICON = 135847  -- Frostbrand-style empty slot
 
 -- Elemental shield (Lightning Shield / Water Shield): off texture base, on texture fades in with alpha when active; orb count 1–3.
--- 1:1 display (512×426 = texture size in pixels).
+-- Assets are 256×213; render as a square (1:1) by center-cropping the extra width.
 local SHIELD_GAP = 16
-local SHIELD_ICON_WIDTH = 512
-local SHIELD_ICON_HEIGHT = 426
+local SHIELD_TEX_W = 256
+local SHIELD_TEX_H = 213
+local SHIELD_ICON_SIZE = SHIELD_TEX_H -- square output size
+local SHIELD_TEX_SQUARE_RATIO = SHIELD_TEX_H / SHIELD_TEX_W
+local SHIELD_TEX_CROP_LEFT = (1 - SHIELD_TEX_SQUARE_RATIO) / 2
+local SHIELD_TEX_CROP_RIGHT = 1 - SHIELD_TEX_CROP_LEFT
 local SHIELD_FADE_DURATION = 0.25  -- seconds for "on" overlay to fade in/out (light turning on/off)
 local SHIELD_COUNT_FONT_SIZE = 18  -- orb count (1–3) text
 local SHIELD_COUNT_COLOR = { 0.95, 0.9, 0.7 }  -- light gold for count
@@ -68,14 +72,15 @@ end
 
 local function ApplyImbueBarPosition(frame)
     local pos = GetRadialPositionDB and GetRadialPositionDB()
-    if not pos or not pos.imbueBar then return end
-    local t = pos.imbueBar
-    local relTo = (t.relativeTo and _G[t.relativeTo]) or UIParent
-    if relTo then
-        frame:ClearAllPoints()
-        frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
+    if pos and pos.imbueBar then
+        local t = pos.imbueBar
+        local relTo = (t.relativeTo and _G[t.relativeTo]) or UIParent
+        if relTo then
+            frame:ClearAllPoints()
+            frame:SetPoint(t.point or "CENTER", relTo, t.relativePoint or "CENTER", t.x or 0, t.y or 0)
+        end
     end
-    -- Normalize to CENTER anchor so changing scale doesn't cause weird movement (anchor stays fixed)
+    -- Always normalize to CENTER anchor so scaling in options (or /st imbue scale) doesn't move the bar diagonally
     local fx, fy = frame:GetCenter()
     local ux, uy = UIParent:GetCenter()
     if fx and fy and ux and uy then
@@ -420,7 +425,7 @@ local function CreateShieldFrame()
 
     local f = CreateFrame("Frame", "ShammyTimeShieldFrame", UIParent)
     f:SetFrameStrata("MEDIUM")
-    f:SetSize(SHIELD_ICON_WIDTH + 8, SHIELD_ICON_HEIGHT + 50)
+    f:SetSize(SHIELD_ICON_SIZE + 8, SHIELD_ICON_SIZE + 50)
     ApplyShieldPosition(f)
     f:SetScale(scale)
     f.baseScale = scale
@@ -438,9 +443,10 @@ local function CreateShieldFrame()
     end)
 
     local shieldOff = f:CreateTexture(nil, "ARTWORK")
-    shieldOff:SetSize(SHIELD_ICON_WIDTH, SHIELD_ICON_HEIGHT)
+    shieldOff:SetSize(SHIELD_ICON_SIZE, SHIELD_ICON_SIZE)
     shieldOff:SetPoint("TOP", 0, ICON_OFFSET_TOP)
-    shieldOff:SetTexCoord(0, 1, 0, 1)
+    -- Crop horizontally so the displayed shape is square (1:1)
+    shieldOff:SetTexCoord(SHIELD_TEX_CROP_LEFT, SHIELD_TEX_CROP_RIGHT, 0, 1)
     shieldOff:SetTexture(shieldTexOff)
     shieldOff:SetVertexColor(1, 1, 1)
     shieldOff:SetAlpha(1)
@@ -448,9 +454,10 @@ local function CreateShieldFrame()
     f.shieldOff = shieldOff
 
     local shieldOn = f:CreateTexture(nil, "OVERLAY")
-    shieldOn:SetSize(SHIELD_ICON_WIDTH, SHIELD_ICON_HEIGHT)
+    shieldOn:SetSize(SHIELD_ICON_SIZE, SHIELD_ICON_SIZE)
     shieldOn:SetPoint("TOP", 0, ICON_OFFSET_TOP)
-    shieldOn:SetTexCoord(0, 1, 0, 1)
+    -- Same crop as the base layer so the overlay aligns perfectly.
+    shieldOn:SetTexCoord(SHIELD_TEX_CROP_LEFT, SHIELD_TEX_CROP_RIGHT, 0, 1)
     shieldOn:SetTexture(shieldTexOn)
     shieldOn:SetVertexColor(1, 1, 1)
     shieldOn:SetAlpha(0)
@@ -490,6 +497,8 @@ function ShammyTime.ApplyShieldScale()
     local scale = (db.shieldScale and db.shieldScale >= 0.05 and db.shieldScale <= 2) and db.shieldScale or DEFAULT_SHIELD_SCALE
     shieldFrame.baseScale = scale
     shieldFrame:SetScale(scale)
+    -- Re-apply saved position after scale so the frame doesn't jump (same as Shamanistic Focus)
+    if ShammyTime.ApplyShieldPosition then ShammyTime.ApplyShieldPosition() end
 end
 
 function ShammyTime.ApplyShieldPosition()
@@ -532,7 +541,7 @@ function ShammyTime.RefreshImbueBar()
     end
 end
 
--- Apply saved scale (called when user changes /st imbue scale X)
+-- Apply saved scale (called when user changes /st imbue scale X). Re-apply position after scale so the bar doesn't jump (same as Shamanistic Focus).
 function ShammyTime.ApplyImbueBarScale()
     if not imbueBarFrame then return end
     local scale = (GetDB and GetDB().imbueBarScale) or DEFAULT_IMBUE_BAR_SCALE
@@ -540,6 +549,7 @@ function ShammyTime.ApplyImbueBarScale()
     if not imbueBarFrame.imbuePulseTicker then
         imbueBarFrame:SetScale(scale)
     end
+    if ShammyTime.ApplyImbueBarPosition then ShammyTime.ApplyImbueBarPosition() end
 end
 
 -- Reapply layout (margin, gap, offsetY, iconSize) so you can move/resize icons without /reload

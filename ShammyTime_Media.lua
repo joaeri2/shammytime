@@ -63,8 +63,9 @@ M.TEX = {
     FOCUS_ON  = M.MEDIA .. "shamanistic_focus_on.tga",
     FOCUS_OFF = M.MEDIA .. "shamanistic_focus_off.tga",
     -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha)
-    LIGHTNING_SHIELD_OFF = M.MEDIA .. "lightning_shield_off.tga",
-    LIGHTNING_SHIELD_ON  = M.MEDIA .. "lightning_shield_on.tga",
+    -- Note: assets are 256×213; code crops to a square (1:1) when rendering.
+    LIGHTNING_SHIELD_OFF = M.MEDIA .. "lightning_shield_off_256_213.tga",
+    LIGHTNING_SHIELD_ON  = M.MEDIA .. "lightning_shield_on_256_213.tga",
 }
 
 -- Optional font (use GameFontNormal etc. if not set)

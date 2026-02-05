@@ -137,8 +137,170 @@ local function resetSatelliteOverrides(bubbleName)
 end
 
 --------------------------------------------------------------------------------
--- Export Settings (for Developer use)
+-- Export Settings (100% coverage: all menu settings, bubbles, offsets, modules)
 --------------------------------------------------------------------------------
+local function BuildFullExportLines(useColorCodes)
+    local p = getDB()
+    local lines = {}
+    local function sec(s) -- section header
+        if useColorCodes then
+            table.insert(lines, "|cff888888-- " .. s .. ":|r")
+        else
+            table.insert(lines, "-- " .. s)
+        end
+    end
+    local function line(s)
+        table.insert(lines, s)
+    end
+
+    if not p then
+        if useColorCodes then
+            table.insert(lines, "|cffff0000ShammyTime: No profile loaded.|r")
+        else
+            table.insert(lines, "ShammyTime: No profile loaded.")
+        end
+        return lines
+    end
+
+    sec("Global")
+    line("locked = " .. tostring(p.locked))
+    if p.global then
+        line("masterScale = " .. tostring(p.global.masterScale or 1))
+        line("masterAlpha = " .. tostring(p.global.masterAlpha or 1))
+        line("demoMode = " .. tostring(p.global.demoMode or false))
+        line("devMode = " .. tostring(p.global.devMode or false))
+    end
+    line("")
+    sec("Main frame position")
+    line("point = " .. tostring(p.point or "CENTER"))
+    line("relativeTo = " .. tostring(p.relativeTo or "UIParent"))
+    line("relativePoint = " .. tostring(p.relativePoint or "CENTER"))
+    line("x = " .. tostring(p.x or 0))
+    line("y = " .. tostring(p.y or -180))
+    line("scale = " .. tostring(p.scale or 1))
+    line("")
+    sec("Windfury frame position")
+    line("wfPoint = " .. tostring(p.wfPoint or "TOP"))
+    line("wfRelativeTo = " .. tostring(p.wfRelativeTo or "ShammyTimeFrame"))
+    line("wfRelativePoint = " .. tostring(p.wfRelativePoint or "BOTTOM"))
+    line("wfX = " .. tostring(p.wfX or 0))
+    line("wfY = " .. tostring(p.wfY or -4))
+    line("wfScale = " .. tostring(p.wfScale or 1))
+    line("wfLocked = " .. tostring(p.wfLocked or false))
+    line("windfuryTrackerEnabled = " .. tostring(p.windfuryTrackerEnabled ~= false))
+    line("")
+    sec("Show/hide elements")
+    line("wfRadialEnabled = " .. tostring(p.wfRadialEnabled))
+    line("wfTotemBarEnabled = " .. tostring(p.wfTotemBarEnabled))
+    line("wfFocusEnabled = " .. tostring(p.wfFocusEnabled))
+    line("wfImbueBarEnabled = " .. tostring(p.wfImbueBarEnabled))
+    line("wfShieldEnabled = " .. tostring(p.wfShieldEnabled))
+    line("wfAlwaysShowNumbers = " .. tostring(p.wfAlwaysShowNumbers))
+    line("")
+    sec("Fade settings")
+    line("wfFadeOutOfCombat = " .. tostring(p.wfFadeOutOfCombat))
+    line("wfFadeWhenNotProcced = " .. tostring(p.wfFadeWhenNotProcced))
+    line("wfFocusFadeWhenNotProcced = " .. tostring(p.wfFocusFadeWhenNotProcced))
+    line("wfFadeWhenNoTotems = " .. tostring(p.wfFadeWhenNoTotems))
+    line("wfNoTotemsFadeDelay = " .. tostring(p.wfNoTotemsFadeDelay or 5))
+    line("wfImbueFadeWhenLongDuration = " .. tostring(p.wfImbueFadeWhenLongDuration))
+    line("wfImbueFadeThresholdSec = " .. tostring(p.wfImbueFadeThresholdSec or 120))
+    line("")
+    sec("Center ring")
+    line("wfRadialScale = " .. tostring(p.wfRadialScale or 1))
+    line("wfCenterSize = " .. tostring(p.wfCenterSize or "nil"))
+    line("wfCenterTextTitleY = " .. tostring(p.wfCenterTextTitleY or 0))
+    line("wfCenterTextTotalY = " .. tostring(p.wfCenterTextTotalY or 0))
+    line("wfCenterTextCriticalY = " .. tostring(p.wfCenterTextCriticalY or 0))
+    line("fontCircleTitle = " .. tostring(p.fontCircleTitle or 20))
+    line("fontCircleTotal = " .. tostring(p.fontCircleTotal or 14))
+    line("fontCircleCritical = " .. tostring(p.fontCircleCritical or 20))
+    line("")
+    sec("Satellite bubbles (global: gap, scale, text offsets)")
+    line("wfSatelliteGap = " .. tostring(p.wfSatelliteGap or "nil"))
+    line("wfSatelliteBubbleScale = " .. tostring(p.wfSatelliteBubbleScale or 1))
+    line("wfSatelliteLabelX = " .. tostring(p.wfSatelliteLabelX or 0))
+    line("wfSatelliteLabelY = " .. tostring(p.wfSatelliteLabelY or 0))
+    line("wfSatelliteValueX = " .. tostring(p.wfSatelliteValueX or 0))
+    line("wfSatelliteValueY = " .. tostring(p.wfSatelliteValueY or 0))
+    line("fontSatelliteLabel = " .. tostring(p.fontSatelliteLabel or 8))
+    line("fontSatelliteValue = " .. tostring(p.fontSatelliteValue or 13))
+    line("")
+    sec("Per-satellite overrides (small bubbles: labelX/Y, valueX/Y, labelSize, valueSize)")
+    if p.wfSatelliteOverrides and next(p.wfSatelliteOverrides) then
+        for name, ov in pairs(p.wfSatelliteOverrides) do
+            if type(ov) == "table" and next(ov) then
+                line("wfSatelliteOverrides[\"" .. tostring(name) .. "\"] = {")
+                for k, v in pairs(ov) do
+                    line("    " .. tostring(k) .. " = " .. tostring(v) .. ",")
+                end
+                line("}")
+            end
+        end
+    else
+        line("wfSatelliteOverrides = nil")
+    end
+    line("")
+    sec("Totem bar")
+    line("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
+    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 7))
+    line("")
+    sec("Shamanistic Focus (position and scale)")
+    if p.focusFrame then
+        line("focusFrame.point = " .. tostring(p.focusFrame.point or "CENTER"))
+        line("focusFrame.relativeTo = " .. tostring(p.focusFrame.relativeTo or "UIParent"))
+        line("focusFrame.relativePoint = " .. tostring(p.focusFrame.relativePoint or "CENTER"))
+        line("focusFrame.x = " .. tostring(p.focusFrame.x or 0))
+        line("focusFrame.y = " .. tostring(p.focusFrame.y or -150))
+        line("focusFrame.scale = " .. tostring(p.focusFrame.scale or 0.8))
+        line("focusFrame.locked = " .. tostring(p.focusFrame.locked or false))
+    end
+    line("")
+    sec("Imbue bar (scale, layout, offsets, font)")
+    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.4))
+    line("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
+    line("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
+    line("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
+    line("imbueBarIconSize = " .. tostring(p.imbueBarIconSize or "nil"))
+    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 20))
+    line("")
+    sec("Shield indicator")
+    line("shieldScale = " .. tostring(p.shieldScale or 0.2))
+    line("shieldCountX = " .. tostring(p.shieldCountX or 0))
+    line("shieldCountY = " .. tostring(p.shieldCountY or -50))
+    line("")
+    sec("Modules (per-element: enabled, scale, alpha, fade)")
+    if p.modules then
+        for modName in pairs(p.modules) do
+            local m = p.modules[modName]
+            if type(m) == "table" then
+                line("modules." .. modName .. ".enabled = " .. tostring(m.enabled ~= false))
+                line("modules." .. modName .. ".scale = " .. tostring(m.scale or 1))
+                line("modules." .. modName .. ".alpha = " .. tostring(m.alpha or 1))
+                if m.pos and type(m.pos) == "table" then
+                    line("modules." .. modName .. ".pos.point = " .. tostring(m.pos.point or "CENTER"))
+                    line("modules." .. modName .. ".pos.relPoint = " .. tostring(m.pos.relPoint or "CENTER"))
+                    line("modules." .. modName .. ".pos.x = " .. tostring(m.pos.x or 0))
+                    line("modules." .. modName .. ".pos.y = " .. tostring(m.pos.y or 0))
+                end
+                if m.fade and type(m.fade) == "table" then
+                    line("modules." .. modName .. ".fade.enabled = " .. tostring(m.fade.enabled or false))
+                    line("modules." .. modName .. ".fade.inactiveAlpha = " .. tostring(m.fade.inactiveAlpha or 0))
+                    local c = m.fade.conditions
+                    if c and type(c) == "table" then
+                        line("modules." .. modName .. ".fade.conditions.outOfCombat = " .. tostring(c.outOfCombat or false))
+                        line("modules." .. modName .. ".fade.conditions.noTarget = " .. tostring(c.noTarget or false))
+                        line("modules." .. modName .. ".fade.conditions.inactiveBuff = " .. tostring(c.inactiveBuff or false))
+                        line("modules." .. modName .. ".fade.conditions.noTotemsPlaced = " .. tostring(c.noTotemsPlaced or false))
+                        line("modules." .. modName .. ".fade.conditions.outOfRange = " .. tostring(c.outOfRange or false))
+                    end
+                end
+            end
+        end
+    end
+    return lines
+end
+
 local function ExportSettings()
     local p = getDB()
     if not p then print("|cffff0000ShammyTime:|r No profile loaded.") return end
@@ -147,88 +309,9 @@ local function ExportSettings()
     print("|cffffff00  ShammyTime Settings Export|r")
     print("|cffffff00═══════════════════════════════════════|r")
     print("")
-    print("|cff888888-- Global:|r")
-    print("locked = " .. tostring(p.locked))
-    if p.global then
-        print("masterScale = " .. tostring(p.global.masterScale or 1))
-        print("masterAlpha = " .. tostring(p.global.masterAlpha or 1))
+    for _, ln in ipairs(BuildFullExportLines(true)) do
+        print(ln)
     end
-    print("")
-    print("|cff888888-- Show/hide elements:|r")
-    print("wfRadialEnabled = " .. tostring(p.wfRadialEnabled))
-    print("wfTotemBarEnabled = " .. tostring(p.wfTotemBarEnabled))
-    print("wfFocusEnabled = " .. tostring(p.wfFocusEnabled))
-    print("wfImbueBarEnabled = " .. tostring(p.wfImbueBarEnabled))
-    print("wfShieldEnabled = " .. tostring(p.wfShieldEnabled))
-    print("wfAlwaysShowNumbers = " .. tostring(p.wfAlwaysShowNumbers))
-    print("")
-    print("|cff888888-- Fade settings:|r")
-    print("wfFadeOutOfCombat = " .. tostring(p.wfFadeOutOfCombat))
-    print("wfFadeWhenNotProcced = " .. tostring(p.wfFadeWhenNotProcced))
-    print("wfFocusFadeWhenNotProcced = " .. tostring(p.wfFocusFadeWhenNotProcced))
-    print("wfFadeWhenNoTotems = " .. tostring(p.wfFadeWhenNoTotems))
-    print("wfNoTotemsFadeDelay = " .. tostring(p.wfNoTotemsFadeDelay or 5))
-    print("wfImbueFadeWhenLongDuration = " .. tostring(p.wfImbueFadeWhenLongDuration))
-    print("wfImbueFadeThresholdSec = " .. tostring(p.wfImbueFadeThresholdSec or 120))
-    print("")
-    print("|cff888888-- Center ring:|r")
-    print("wfRadialScale = " .. tostring(p.wfRadialScale or 1))
-    print("wfCenterSize = " .. tostring(p.wfCenterSize or "nil"))
-    print("wfCenterTextTitleY = " .. tostring(p.wfCenterTextTitleY or 0))
-    print("wfCenterTextTotalY = " .. tostring(p.wfCenterTextTotalY or 0))
-    print("wfCenterTextCriticalY = " .. tostring(p.wfCenterTextCriticalY or 0))
-    print("fontCircleTitle = " .. tostring(p.fontCircleTitle or 20))
-    print("fontCircleTotal = " .. tostring(p.fontCircleTotal or 14))
-    print("fontCircleCritical = " .. tostring(p.fontCircleCritical or 20))
-    print("")
-    print("|cff888888-- Satellite bubbles (global):|r")
-    print("wfSatelliteGap = " .. tostring(p.wfSatelliteGap or "nil"))
-    print("wfSatelliteBubbleScale = " .. tostring(p.wfSatelliteBubbleScale or 1))
-    print("wfSatelliteLabelX = " .. tostring(p.wfSatelliteLabelX or 0))
-    print("wfSatelliteLabelY = " .. tostring(p.wfSatelliteLabelY or 0))
-    print("wfSatelliteValueX = " .. tostring(p.wfSatelliteValueX or 0))
-    print("wfSatelliteValueY = " .. tostring(p.wfSatelliteValueY or 0))
-    print("fontSatelliteLabel = " .. tostring(p.fontSatelliteLabel or 8))
-    print("fontSatelliteValue = " .. tostring(p.fontSatelliteValue or 13))
-    print("")
-    print("|cff888888-- Per-satellite overrides:|r")
-    if p.wfSatelliteOverrides and next(p.wfSatelliteOverrides) then
-        for name, ov in pairs(p.wfSatelliteOverrides) do
-            if type(ov) == "table" and next(ov) then
-                print("wfSatelliteOverrides[\"" .. name .. "\"] = {")
-                for k, v in pairs(ov) do
-                    print("    " .. k .. " = " .. tostring(v) .. ",")
-                end
-                print("}")
-            end
-        end
-    else
-        print("wfSatelliteOverrides = nil")
-    end
-    print("")
-    print("|cff888888-- Totem bar:|r")
-    print("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
-    print("fontTotemTimer = " .. tostring(p.fontTotemTimer or 7))
-    print("")
-    print("|cff888888-- Shamanistic Focus:|r")
-    if p.focusFrame then
-        print("focusFrame.scale = " .. tostring(p.focusFrame.scale or 0.8))
-        print("focusFrame.x = " .. tostring(p.focusFrame.x or 0))
-        print("focusFrame.y = " .. tostring(p.focusFrame.y or -150))
-    end
-    print("")
-    print("|cff888888-- Imbue bar:|r")
-    print("imbueBarScale = " .. tostring(p.imbueBarScale or 0.4))
-    print("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
-    print("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
-    print("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
-    print("imbueBarIconSize = " .. tostring(p.imbueBarIconSize or "nil"))
-    print("fontImbueTimer = " .. tostring(p.fontImbueTimer or 20))
-    print("")
-    print("|cff888888-- Shield indicator:|r")
-    print("shieldScale = " .. tostring(p.shieldScale or 0.2))
-    print("shieldCountX = " .. tostring(p.shieldCountX or 0))
-    print("shieldCountY = " .. tostring(p.shieldCountY or -50))
     print("")
     print("|cffffff00═══════════════════════════════════════|r")
     print("|cff00ff00Copy above and paste to developer.|r")
@@ -239,7 +322,7 @@ end
 _G.ShammyTime.ExportSettings = ExportSettings
 
 --------------------------------------------------------------------------------
--- Copy Text Settings to Clipboard (via popup EditBox)
+-- Export All to Clipboard (via popup EditBox) - 100% settings coverage
 --------------------------------------------------------------------------------
 local copyFrame = nil
 
@@ -297,45 +380,16 @@ local function ShowCopyPopup(title, text)
     copyFrame.editBox:HighlightText()
 end
 
-local function CopyTextSettings()
-    local p = getDB()
-    if not p then return end
-    local lines = {}
-    table.insert(lines, "-- ShammyTime Text Settings --")
-    table.insert(lines, "")
-    table.insert(lines, "-- Center Ring Text Positions:")
-    table.insert(lines, "wfCenterTextTitleY = " .. tostring(p.wfCenterTextTitleY or 0))
-    table.insert(lines, "wfCenterTextTotalY = " .. tostring(p.wfCenterTextTotalY or 0))
-    table.insert(lines, "wfCenterTextCriticalY = " .. tostring(p.wfCenterTextCriticalY or 0))
-    table.insert(lines, "")
-    table.insert(lines, "-- Center Ring Font Sizes:")
-    table.insert(lines, "fontCircleTitle = " .. tostring(p.fontCircleTitle or 20))
-    table.insert(lines, "fontCircleTotal = " .. tostring(p.fontCircleTotal or 14))
-    table.insert(lines, "fontCircleCritical = " .. tostring(p.fontCircleCritical or 20))
-    table.insert(lines, "")
-    table.insert(lines, "-- Satellite Bubbles Text Positions:")
-    table.insert(lines, "wfSatelliteLabelX = " .. tostring(p.wfSatelliteLabelX or 0))
-    table.insert(lines, "wfSatelliteLabelY = " .. tostring(p.wfSatelliteLabelY or 0))
-    table.insert(lines, "wfSatelliteValueX = " .. tostring(p.wfSatelliteValueX or 0))
-    table.insert(lines, "wfSatelliteValueY = " .. tostring(p.wfSatelliteValueY or 0))
-    table.insert(lines, "")
-    table.insert(lines, "-- Satellite Bubbles Font Sizes:")
-    table.insert(lines, "fontSatelliteLabel = " .. tostring(p.fontSatelliteLabel or 8))
-    table.insert(lines, "fontSatelliteValue = " .. tostring(p.fontSatelliteValue or 13))
-    table.insert(lines, "")
-    table.insert(lines, "-- Totem Bar Font:")
-    table.insert(lines, "fontTotemTimer = " .. tostring(p.fontTotemTimer or 7))
-    table.insert(lines, "")
-    table.insert(lines, "-- Imbue Bar Font:")
-    table.insert(lines, "fontImbueTimer = " .. tostring(p.fontImbueTimer or 20))
-    table.insert(lines, "")
-    table.insert(lines, "-- Shield Indicator Text Position:")
-    table.insert(lines, "shieldCountX = " .. tostring(p.shieldCountX or 0))
-    table.insert(lines, "shieldCountY = " .. tostring(p.shieldCountY or -50))
-    ShowCopyPopup("ShammyTime Text Settings", table.concat(lines, "\n"))
+local function ExportAllToClipboard()
+    local header = { "ShammyTime - All Settings (100% coverage)", "Copy everything below; paste to developer or backup.", "" }
+    local body = BuildFullExportLines(false)
+    local full = {}
+    for _, ln in ipairs(header) do table.insert(full, ln) end
+    for _, ln in ipairs(body) do table.insert(full, ln) end
+    ShowCopyPopup("ShammyTime - Export All to Clipboard", table.concat(full, "\n"))
 end
 
-_G.ShammyTime.CopyTextSettings = CopyTextSettings
+_G.ShammyTime.CopyTextSettings = ExportAllToClipboard
 
 --------------------------------------------------------------------------------
 -- Module Options Builder (simplified)
@@ -760,12 +814,12 @@ function ShammyTime:SetupOptions()
                         order = 1,
                         func = ExportSettings,
                     },
-                    copyTextSettings = {
+                    exportAllToClipboard = {
                         type = "execute",
-                        name = "Copy Text Settings",
-                        desc = "Open a popup with text/font settings that you can select and copy (Ctrl+C).",
+                        name = "Export All to Clipboard",
+                        desc = "Open a popup with ALL settings (elements, scales, positions, bubbles, offsets, modules, fade) for copy/paste.",
                         order = 2,
-                        func = CopyTextSettings,
+                        func = ExportAllToClipboard,
                     },
                     ---------------------------------------------------------
                     -- Center Ring

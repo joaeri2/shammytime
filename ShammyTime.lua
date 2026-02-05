@@ -492,7 +492,9 @@ local function ShowWindfuryRadial()
     local db = GetDB()
     if not db.wfRadialEnabled then return end
     if ShammyTime.EnsureCenterRingExists then ShammyTime.EnsureCenterRingExists() end
+    local wrapper = _G.ShammyTimeWindfuryRadial
     local center = _G.ShammyTimeCenterRing
+    if wrapper then wrapper:Show() end
     if center then
         center:Show()
         if center.textFrame then center.textFrame:Show() end
@@ -507,13 +509,10 @@ local function ShowWindfuryRadial()
     UpdateAllElementsFadeState()
 end
 
--- Hide Windfury radial (center ring + satellites).
+-- Hide Windfury radial (center ring + satellites). Hiding the wrapper hides the whole radial as one.
 local function HideWindfuryRadial()
-    local center = _G.ShammyTimeCenterRing
-    if center then
-        center:Hide()
-        if center.textFrame then center.textFrame:Hide() end
-    end
+    local wrapper = _G.ShammyTimeWindfuryRadial
+    if wrapper then wrapper:Hide() end
     if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
 end
 
@@ -809,8 +808,10 @@ end
 function UpdateAllElementsFadeState()
     -- During Play Demo, keep all elements visible at full alpha
     if ShammyTime.demoActive then
+        local wrapper = _G.ShammyTimeWindfuryRadial
         local center = _G.ShammyTimeCenterRing
-        if center then center:Show(); center:SetAlpha(1) end
+        if wrapper then wrapper:Show(); wrapper:SetAlpha(1) end
+        if center then center:Show() end
         if ShammyTime.SetSatelliteFadeAlpha then ShammyTime.SetSatelliteFadeAlpha(1) end
         if ShammyTime.EnsureWindfuryTotemBarFrame then
             local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
@@ -878,16 +879,17 @@ function UpdateAllElementsFadeState()
     local useModuleFade = ShammyTime.EvaluateFade and ShammyTime.db and ShammyTime.db.profile and ShammyTime.db.profile.modules
 
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
+    local wrapper = _G.ShammyTimeWindfuryRadial
     local center = _G.ShammyTimeCenterRing
     if not db.wfRadialEnabled then
-        if center then center:Hide() end
+        if wrapper then wrapper:Hide() end
         if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
     else
         -- Lock fade-out as soon as we're not procced (not just when alpha < 0.01) so we never briefly restore to 1 during fade = no blink
         if not procAnimPlaying and not wfProcced then circleFadeOutStarted = true end
         -- Reset circleFadeOutStarted when circle should be shown (e.g. when fade rules are turned off and wfRadialShown is true)
         if wfProcced then circleFadeOutStarted = false end
-        local currentAlpha = (center and center.GetAlpha and center:GetAlpha()) or 0
+        local currentAlpha = (wrapper and wrapper.GetAlpha and wrapper:GetAlpha()) or 0
         local circleAlpha, circleFadeOut, circleUseSlowFade, holdHover
         local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryBubbles
         local useModulePath = mod and true
@@ -917,14 +919,15 @@ function UpdateAllElementsFadeState()
             circleUseSlowFade = (not holdHover) and useSlowFade and circleFadeOut
         end
         local effAlphaWf = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("windfuryBubbles")) or 1
-        if center then
-            center:Show()
-            SetOrAnimateFade(center, effAlphaWf * circleAlpha, circleUseSlowFade, circleFadeOut)
+        if wrapper then
+            wrapper:Show()
+            SetOrAnimateFade(wrapper, effAlphaWf * circleAlpha, circleUseSlowFade, circleFadeOut)
+            if center then center:Show() end
             -- Satellites: only when center exists; deferred retry next frame so they're not missing when center was just created
             if circleAlpha >= 0.01 and ShammyTime.ShowAllSatellites then
                 ShammyTime.ShowAllSatellites()
                 C_Timer.After(0, function()
-                    if center and center:IsShown() and (center:GetAlpha() or 0) >= 0.01 and ShammyTime.ShowAllSatellites then
+                    if wrapper and wrapper:IsShown() and (wrapper:GetAlpha() or 0) >= 0.01 and ShammyTime.ShowAllSatellites then
                         ShammyTime.ShowAllSatellites()
                     end
                 end)
@@ -1858,8 +1861,11 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         local num = tonumber(arg:match("^(%S+)"))
         if num and num >= 0.5 and num <= 2 then
             db.wfRadialScale = num
-            local center = _G.ShammyTimeCenterRing
-            if center then center:SetScale(num) end
+            local wrapper = _G.ShammyTimeWindfuryRadial
+            if wrapper then
+                wrapper:SetScale(num)
+                if ShammyTime.ApplyCenterRingPosition then ShammyTime.ApplyCenterRingPosition() end
+            end
             print(C.green .. "ShammyTime: Windfury circles scale " .. ("%.2f"):format(num) .. " (overall size)." .. C.r)
         elseif arg and arg:gsub("^%s+", ""):gsub("%s+$", "") ~= "" then
             print(C.red .. "ShammyTime: Scale 0.5–2. " .. C.gold .. "/st scale 0.8" .. C.r .. C.red .. " — Resizes the Windfury bubbles. Totem/focus/imbue: /st totem scale, /st focus scale, /st imbue scale." .. C.r)
@@ -2022,8 +2028,11 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local num = tonumber(scaleArg)
             if num and num >= 0.5 and num <= 2 then
                 db.wfRadialScale = num
-                local center = _G.ShammyTimeCenterRing
-                if center then center:SetScale(num) end
+                local wrapper = _G.ShammyTimeWindfuryRadial
+                if wrapper then
+                    wrapper:SetScale(num)
+                    if ShammyTime.ApplyCenterRingPosition then ShammyTime.ApplyCenterRingPosition() end
+                end
                 print(C.green .. "ShammyTime: Circle scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
                 print(C.red .. "ShammyTime: Circle scale 0.5–2. " .. C.gold .. "/st circle scale 0.8" .. C.r)
@@ -2111,7 +2120,10 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if num and num >= 0.5 and num <= 2 then
                 db.wfTotemBarScale = num
                 local bar = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
-                if bar then bar:SetScale(num) end
+                if bar then
+                    bar:SetScale(num)
+                    if ShammyTime.ApplyTotemBarPosition then ShammyTime.ApplyTotemBarPosition() end
+                end
                 print(C.green .. "ShammyTime: Totem bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
                 print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st adv totembar scale 1" .. C.r)

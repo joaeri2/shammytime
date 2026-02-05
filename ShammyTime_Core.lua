@@ -506,6 +506,51 @@ function ShammyTime:PlayDemo()
     end)
 end
 
+--- Save current on-screen position of all draggable elements so ApplyAllConfigs doesn't move them.
+function ShammyTime:SaveAllCurrentPositions()
+    local posDB = self.GetRadialPositionDB and self:GetRadialPositionDB()
+    if not posDB then return end
+    local function saveFramePos(frame, key)
+        if not frame or not frame.GetPoint then return end
+        local point, relTo, relativePoint, x, y = frame:GetPoint(1)
+        posDB[key] = {
+            point = point,
+            relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent",
+            relativePoint = relativePoint,
+            x = x,
+            y = y,
+        }
+    end
+    local wrapper = _G.ShammyTimeWindfuryRadial
+    if wrapper then saveFramePos(wrapper, "center") end
+    local totemBar = _G.ShammyTimeWindfuryTotemBarFrame
+    if totemBar then saveFramePos(totemBar, "totemBar") end
+    local imbueBar = _G.ShammyTimeImbueBarFrame
+    if imbueBar then saveFramePos(imbueBar, "imbueBar") end
+    local shield = _G.ShammyTimeShieldFrame
+    if shield then saveFramePos(shield, "shieldFrame") end
+    local focusFrame = self.GetShamanisticFocusFrame and self:GetShamanisticFocusFrame()
+    if focusFrame and self.db and self.db.profile then
+        local p = self.db.profile
+        local point, relTo, relativePoint, x, y = focusFrame:GetPoint(1)
+        p.focusFrame = p.focusFrame or {}
+        local ff = p.focusFrame
+        ff.point = point
+        ff.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+        ff.relativePoint = relativePoint
+        ff.x = x
+        ff.y = y
+        if p.modules and p.modules.shamanisticFocus then
+            p.modules.shamanisticFocus.pos = p.modules.shamanisticFocus.pos or {}
+            local pos = p.modules.shamanisticFocus.pos
+            pos.point = point
+            pos.relPoint = relativePoint
+            pos.x = x
+            pos.y = y
+        end
+    end
+end
+
 function ShammyTime:StopDemo()
     local addon = self  -- Capture for closures
     addon.demoActive = false
@@ -520,6 +565,8 @@ function ShammyTime:StopDemo()
             end
         end
     end
+    -- Save current positions so ApplyAllConfigs doesn't move visuals
+    if addon.SaveAllCurrentPositions then addon:SaveAllCurrentPositions() end
     addon:ApplyAllConfigs()
 end
 

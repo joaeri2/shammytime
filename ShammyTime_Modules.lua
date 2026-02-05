@@ -66,14 +66,16 @@ function windfuryBubbles:ApplyConfig()
     if db then
         db.wfRadialScale = moduleScale
     end
-    local center = self.frame or _G.ShammyTimeCenterRing
-    if center then
-        -- Position first, then scale, so the anchor stays fixed and bubbles don't drift
+    -- Scale and position apply to the single wrapper so the whole radial (center + satellites) scales as one object.
+    -- Re-apply position after scale (same pattern as Shamanistic Focus) so the radial stays in place and doesn't jump diagonally.
+    local wrapper = _G.ShammyTimeWindfuryRadial
+    if wrapper then
         if st and st.ApplyCenterRingPosition then st.ApplyCenterRingPosition() end
-        center:SetScale(effScale)
-        center:SetAlpha(effAlpha)
-        -- Satellites are children of center; offset in parent space so they don't move visually when center scales
-        if st and st.ApplySatellitePositionsForCenterScale then st.ApplySatellitePositionsForCenterScale(effScale) end
+        wrapper:SetScale(effScale)
+        wrapper:SetAlpha(effAlpha)
+        if st and st.ApplyCenterRingPosition then st.ApplyCenterRingPosition() end  -- re-anchor after scale so position doesn't drift
+        -- Center has scale 1; satellites use fixed offsets (no per-bubble scaling from this slider)
+        if st and st.ApplySatellitePositionsForCenterScale then st.ApplySatellitePositionsForCenterScale(1) end
     end
     if st and st.SetSatelliteFadeAlpha then
         st.SetSatelliteFadeAlpha(1)
@@ -93,12 +95,12 @@ function windfuryBubbles:DemoStart()
     self:DemoStop()
     local st = _G.ShammyTime
     if st and st.EnsureCenterRingExists then st.EnsureCenterRingExists() end
+    if st and st.ApplyCenterRingPosition then st.ApplyCenterRingPosition() end
+    local wrapper = _G.ShammyTimeWindfuryRadial
     local center = _G.ShammyTimeCenterRing
+    if wrapper then wrapper:Show(); wrapper:SetAlpha(1) end
     if center then
-        -- Re-apply saved position so demo doesn't shift the bubbles
-        if st and st.ApplyCenterRingPosition then st.ApplyCenterRingPosition() end
         center:Show()
-        center:SetAlpha(1)
         if center.textFrame then center.textFrame:Show() end
     end
     if st and st.ShowAllSatellites then st.ShowAllSatellites() end
@@ -163,10 +165,11 @@ function totemBar:ApplyConfig()
     if db then db.wfTotemBarScale = moduleScale end
     local bar = self.frame or (st and st.EnsureWindfuryTotemBarFrame and st.EnsureWindfuryTotemBarFrame())
     if bar then
-        -- Position first, then scale, so the bar doesn't move diagonally when master scale changes
+        -- Position first, then scale, then re-apply position so the bar doesn't move diagonally (same as Shamanistic Focus)
         if st and st.ApplyTotemBarPosition then st.ApplyTotemBarPosition() end
         bar:SetScale(effScale)
         bar:SetAlpha(effAlpha)
+        if st and st.ApplyTotemBarPosition then st.ApplyTotemBarPosition() end
     end
 end
 
@@ -210,7 +213,7 @@ function shamanisticFocus:ApplyConfig()
     local st = _G.ShammyTime
     local f = self.frame or (st and st.GetShamanisticFocusFrame and st.GetShamanisticFocusFrame())
     if not f then return end
-    -- Position first, then scale, so the frame doesn't drift when master scale changes
+    -- Position first, then scale, then re-apply position so the frame doesn't drift (same pattern as ApplyShamanisticFocusScale)
     local db = st and st.GetDB and st.GetDB()
     if db and db.focusFrame then
         local ff = db.focusFrame
@@ -224,6 +227,14 @@ function shamanisticFocus:ApplyConfig()
     local effScale, effAlpha = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     f:SetScale(effScale)
     f:SetAlpha(effAlpha)
+    if db and db.focusFrame then
+        local ff = db.focusFrame
+        local relTo = (ff.relativeTo and _G[ff.relativeTo]) or UIParent
+        if relTo then
+            f:ClearAllPoints()
+            f:SetPoint(ff.point or "CENTER", relTo, ff.relativePoint or "CENTER", ff.x or 0, ff.y or -150)
+        end
+    end
 end
 
 function shamanisticFocus:SetEnabled(enabled)

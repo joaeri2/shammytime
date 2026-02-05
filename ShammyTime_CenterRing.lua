@@ -10,7 +10,8 @@ local M = ShammyTime_Media
 if not M then return end
 
 local TEX = M.TEX
-local centerFrame      -- main draggable center ring frame (created once)
+local centerFrame      -- main center ring frame (created once; child of radialWrapper)
+local radialWrapper    -- single scalable container for center + satellites (created once)
 local totemBarFrame    -- separate draggable totem bar frame (created once)
 
 -- ========== Timing constants ==========
@@ -66,9 +67,9 @@ local function ApplyCenterPosition(f)
     end
 end
 
--- Global wrapper for repositioning center ring after scale change
+-- Global wrapper for repositioning Windfury radial (wrapper frame) after scale change
 function ShammyTime.ApplyCenterRingPosition()
-    local f = _G.ShammyTimeCenterRing
+    local f = _G.ShammyTimeWindfuryRadial
     if f then ApplyCenterPosition(f) end
 end
 
@@ -102,31 +103,53 @@ local function GetCenterTextOffsets()
     }
 end
 
+-- Wrapper frame: one scalable container for center + satellites so the whole radial scales as a single object.
+local function CreateRadialWrapper()
+    if radialWrapper then return radialWrapper end
+    local WrapperSize = 600
+    radialWrapper = CreateFrame("Frame", "ShammyTimeWindfuryRadial", UIParent)
+    radialWrapper:SetFrameStrata("MEDIUM")
+    radialWrapper:SetSize(WrapperSize, WrapperSize)
+    radialWrapper:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    ApplyCenterPosition(radialWrapper)
+    radialWrapper:SetScale(GetRadialScale())
+    radialWrapper:SetMovable(true)
+    radialWrapper:SetClampedToScreen(true)
+    radialWrapper:EnableMouse(false)  -- pass-through so center receives hover/drag
+    radialWrapper:Hide()
+    _G.ShammyTimeWindfuryRadial = radialWrapper
+    return radialWrapper
+end
+
 -- Creates the main center ring frame once; subsequent calls return the same frame.
+-- Center is a child of the radial wrapper so scale applies to the whole radial as one.
 -- Contains: ring subframe (textures + proc animation), text frame ("Windfury!", "TOTAL: xxx"), and behavior (drag, right-click reset).
 local function CreateCenterRingFrame()
     if centerFrame then return centerFrame end
 
+    CreateRadialWrapper()
     local centerSize = GetCenterSize()
-    local f = CreateFrame("Frame", "ShammyTimeCenterRing", UIParent)
+    local f = CreateFrame("Frame", "ShammyTimeCenterRing", radialWrapper)
     f.wfProcAnimPlaying = false
+    f.wrapper = radialWrapper
     f:SetFrameStrata("MEDIUM")
     f:SetSize(centerSize, centerSize)
-    f:SetScale(GetRadialScale())
-    f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    ApplyCenterPosition(f)
+    f:SetScale(1)  -- scale is on wrapper only so center + satellites scale as one
+    f:SetPoint("CENTER", radialWrapper, "CENTER", 0, 0)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
-    -- Drag: only when addon is not locked (lock is in main addon options).
+    -- Drag: move the wrapper so the whole radial moves; position saved is wrapper's.
     f:SetScript("OnDragStart", function(self)
         if ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB().locked then return end
-        self:StartMoving()
+        if self.wrapper then self.wrapper:StartMoving() end
     end)
     f:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        SaveCenterPosition(self)
+        if self.wrapper then
+            self.wrapper:StopMovingOrSizing()
+            SaveCenterPosition(self.wrapper)
+        end
     end)
     -- Hover: show numbers (quick-peek). Reset hint is in the addon start message in chat.
     f:SetScript("OnEnter", function(self)

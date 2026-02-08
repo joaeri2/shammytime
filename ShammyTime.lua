@@ -1054,7 +1054,10 @@ function UpdateAllElementsFadeState()
                         focusUseSlow = false
                     end
                 else
-                    focusFaded = fadedCombat or db.wfFocusFadeWhenNotProcced
+                    -- Legacy path: fade when not procced should only fade when the buff is NOT active.
+                    -- Previously this always faded when wfFocusFadeWhenNotProcced was true, even
+                    -- during an active proc, keeping the frame at alpha 0 and hiding the ON image.
+                    focusFaded = fadedCombat or (db.wfFocusFadeWhenNotProcced and not hasFocusBuff)
                     focusAlpha = focusFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
                     focusUseSlow = useSlowFade
                 end
@@ -1067,7 +1070,16 @@ function UpdateAllElementsFadeState()
             end
             focusFrame:Show()
             local effAlphaFocus = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("shamanisticFocus")) or 1
-            SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, focusUseSlow, focusFaded)
+            -- When focus buff is active and frame should be fully visible, snap frame alpha
+            -- instantly (useSlowFade = false) so the overlay's quick 0.3s fade-in is visible
+            -- immediately. The slow 1.5s frame animation otherwise masks the ON image.
+            -- NOTE: cannot use `x and false or y` in Lua — false is falsy, so the idiom
+            -- always returns y. Use an explicit if/else instead.
+            if hasFocusBuff and not focusFaded then
+                SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, false, false)
+            else
+                SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, focusUseSlow, focusFaded)
+            end
             -- Sync "on/off" overlay: pass our computed hasFocusBuff so focus shows "on" even if UNIT_AURA/event order lags.
             if (not testActive) and ShammyTime.UpdateShamanisticFocusVisual then
                 ShammyTime.UpdateShamanisticFocusVisual(hasFocusBuff)

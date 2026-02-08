@@ -85,11 +85,14 @@ local function setModuleOption(info, val, key)
     if key == "noTotemsPlaced" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.noTotemsPlaced = val end
     if key == "outOfRange" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.outOfRange = val end
     if key == "fadeInOnTarget" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.fadeInOnTarget = val end
-    -- When any condition is enabled, turn on fade so the condition takes effect without requiring "Enable Fade" separately
+    -- When any condition is enabled, turn on fade so the condition takes effect without requiring "Enable Fade" separately.
+    -- When all conditions are off, turn off fade so the "Enable Fade" checkbox stays in sync.
     if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" then
         local c = m.fade and m.fade.conditions
         if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget) then
             m.fade.enabled = true
+        else
+            if m.fade then m.fade.enabled = false end
         end
     end
     local st = _G.ShammyTime
@@ -630,12 +633,12 @@ function ShammyTime:SetupOptions()
                     reloadBox = {
                         type = "group",
                         inline = true,
-                        name = "|cffffcc00Important|r",
+                        name = "|cffffcc00Note|r",
                         order = 1,
                         args = {
                             reloadNotice = {
                                 type = "description",
-                                name = "|cff00ff00Please type |cffffcc00/reload|r |cff00ff00after you change settings so that all options are applied correctly.|r\n",
+                                name = "|cff00ff00Settings apply in real time.|r No |cffffcc00/reload|r needed.\n",
                                 order = 1,
                                 width = "full",
                             },

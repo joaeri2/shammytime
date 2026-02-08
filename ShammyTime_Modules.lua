@@ -69,17 +69,15 @@ function windfuryBubbles:ApplyConfig()
     end
     -- Scale and position apply to the single wrapper so the whole radial (center + satellites) scales as one object.
     -- Re-apply position after scale (same pattern as Shamanistic Focus) so the radial stays in place and doesn't jump diagonally.
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha
+    -- (setting it here would cause all modules to blink when any single setting changes).
     local wrapper = _G.ShammyTimeWindfuryRadial
     if wrapper then
         if st and st.ApplyCenterRingPosition then st.ApplyCenterRingPosition() end
         wrapper:SetScale(effScale)
-        wrapper:SetAlpha(effAlpha)
         if st and st.ApplyCenterRingPosition then st.ApplyCenterRingPosition() end  -- re-anchor after scale so position doesn't drift
         -- Center has scale 1; satellites use fixed offsets (no per-bubble scaling from this slider)
         if st and st.ApplySatellitePositionsForCenterScale then st.ApplySatellitePositionsForCenterScale(1) end
-    end
-    if st and st.SetSatelliteFadeAlpha then
-        st.SetSatelliteFadeAlpha(1)
     end
 end
 
@@ -164,9 +162,9 @@ function totemBar:ApplyConfig()
     local bar = self.frame or (st and st.EnsureWindfuryTotemBarFrame and st.EnsureWindfuryTotemBarFrame())
     if bar then
         -- Position first, then scale, then re-apply position so the bar doesn't move diagonally (same as Shamanistic Focus)
+        -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
         if st and st.ApplyTotemBarPosition then st.ApplyTotemBarPosition() end
         bar:SetScale(effScale)
-        bar:SetAlpha(effAlpha)
         if st and st.ApplyTotemBarPosition then st.ApplyTotemBarPosition() end
     end
 end
@@ -223,9 +221,9 @@ function shamanisticFocus:ApplyConfig()
         end
     end
     local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
-    local effScale, effAlpha = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
-    f:SetAlpha(effAlpha)
     if db and db.focusFrame then
         local ff = db.focusFrame
         local relTo = (ff.relativeTo and _G[ff.relativeTo]) or UIParent
@@ -284,9 +282,9 @@ function weaponImbueBar:ApplyConfig()
         st.ApplyImbueBarPosition()
     end
     local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.4
-    local effScale, effAlpha = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
-    f:SetAlpha(effAlpha)
     if st and st.ApplyImbueBarPosition then
         st.ApplyImbueBarPosition()
     end
@@ -337,9 +335,9 @@ function shieldIndicator:ApplyConfig()
         st.ApplyShieldPosition()
     end
     local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.05 and cfg.scale <= 3) and cfg.scale or 0.2
-    local effScale, effAlpha = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
-    f:SetAlpha(effAlpha)
     if st and st.ApplyShieldPosition then
         st.ApplyShieldPosition()
     end

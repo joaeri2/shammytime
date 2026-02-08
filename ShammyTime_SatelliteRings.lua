@@ -487,6 +487,7 @@ local SATELLITE_FADE_STAGGER = 0.2  -- next starts when previous has 500ms left
 function ShammyTime.StartSatelliteTextChainFade()
     ShammyTime.radialNumbersVisible = false
     EnsureAllSatellites()
+    local count = #SATELLITE_CONFIG
     for i, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
         if f and f.textFrame and f.textFrame:IsShown() and f.textFrame.fadeOutAnim then
@@ -499,6 +500,12 @@ function ShammyTime.StartSatelliteTextChainFade()
             end)
         end
     end
+    -- After the last satellite text has faded, re-evaluate fade state so the circle fades out
+    -- promptly instead of waiting for the 15-second grace timer.
+    local chainDuration = (count - 1) * SATELLITE_FADE_STAGGER + SATELLITE_FADE_DURATION
+    C_Timer.After(chainDuration + 0.1, function()
+        if ShammyTime.UpdateAllElementsFadeState then ShammyTime.UpdateAllElementsFadeState() end
+    end)
 end
 
 -- Show all satellite text frames (for hover quick-peek)
@@ -741,7 +748,10 @@ end
 
 function ShammyTime.ToggleSatellites()
     EnsureAllSatellites()
-    local anyShown = satelliteFrames.CRIT and satelliteFrames.CRIT:IsShown()
+    local anyShown = false
+    for _, f in pairs(satelliteFrames) do
+        if f and f:IsShown() then anyShown = true; break end
+    end
     if anyShown then
         HideAllSatellites()
     else

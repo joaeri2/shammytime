@@ -304,6 +304,11 @@ function ShammyTime:OnResetAll()
     noTotemsFaded = false
     circleFadeOutStarted = false
     if noTotemsFadeTimer then noTotemsFadeTimer:Cancel(); noTotemsFadeTimer = nil end
+    if wfPopupTimer then wfPopupTimer:Cancel(); wfPopupTimer = nil end
+    if fadeGraceTimer then fadeGraceTimer:Cancel(); fadeGraceTimer = nil end
+    if focusFadeHoldTimer then focusFadeHoldTimer:Cancel(); focusFadeHoldTimer = nil end
+    if wfTestTimer then wfTestTimer:Cancel(); wfTestTimer = nil end
+    if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel(); wfRadialHideNumbersTimer = nil end
 end
 
 -- Reset all settings (delegate to Core AceDB reset + ApplyAllConfigs, which calls OnResetAll).
@@ -394,6 +399,7 @@ local function FlushWindfuryProc()
     local crits = wfProcBuffer.crits
     wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
     for _, st in ipairs({ wfPull, wfSession }) do
+        st.procs = (st.procs or 0) + 1  -- atomic with damage so avg is never transiently deflated
         st.total = st.total + procTotal
         st.count = (st.count or 0) + hits
         if st.min == nil or procTotal < st.min then st.min = procTotal end
@@ -434,14 +440,14 @@ local function RecordWindfuryHit(amount, isCrit)
     if isNewProc and wfProcBuffer.total > 0 then
         FlushWindfuryProc()
     end
+    if isNewProc then
+        ShammyTime.lastProcHadCrit = nil  -- reset so stale crits from disabled radial don't carry over
+    end
     wfProcBuffer.total = wfProcBuffer.total + amount
     wfProcBuffer.hits = wfProcBuffer.hits + 1
     if isCrit then wfProcBuffer.crits = wfProcBuffer.crits + 1 end
-    for _, st in ipairs({ wfPull, wfSession }) do
-        if isNewProc then st.procs = (st.procs or 0) + 1 end
-    end
     ScheduleWindfuryUpdate()
-    SaveWindfuryDB()
+    -- Note: SaveWindfuryDB is called in FlushWindfuryProc after stats are fully committed (atomic with procs/total/min/max)
     -- When proc window closes (0.4s after last hit), flush so 1-hit procs get committed to min/max/avg
     if wfPopupTimer then wfPopupTimer:Cancel() end
     wfPopupTimer = C_Timer.NewTimer(0.4, function()
@@ -644,6 +650,8 @@ function ShammyTime.OnRadialHoverEnter()
         end
     end
     StartRadialNumbersFadeIn()
+    -- Immediately re-evaluate fade so the circle returns to full opacity while hovered
+    if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
 end
 
 function ShammyTime.OnRadialHoverLeave()
@@ -653,6 +661,8 @@ function ShammyTime.OnRadialHoverLeave()
         wfRadialHideNumbersTimer = nil
         StartRadialNumbersFadeOut()
     end)
+    -- Immediately re-evaluate fade so the circle fades back to its target alpha
+    if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
 end
 
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
@@ -677,7 +687,16 @@ ShammyTime.FlushWindfuryProcIfClosed = FlushWindfuryProcIfClosed  -- avoid split
 local function ApplyElementMouseState()
     local db = GetDB()
     local useMouse = not db.locked
-    local function visible(f) return f and f:IsShown() and (f:GetAlpha() or 1) >= 0.01 end
+    local function visible(f)
+        if not f or not f:IsShown() then return false end
+        local alpha = f:GetAlpha() or 1
+        -- Also account for parent alpha (e.g. center ring is child of the wrapper which may be faded to 0)
+        local parent = f:GetParent()
+        if parent and parent ~= UIParent and parent.GetAlpha then
+            alpha = alpha * (parent:GetAlpha() or 1)
+        end
+        return alpha >= 0.01
+    end
     local center = _G.ShammyTimeCenterRing
     if center then
         center:EnableMouse(visible(center) and true or false)
@@ -782,9 +801,15 @@ end
 -- Set alpha on frame; when useSlowFade and target changed, animate over duration instead of instant.
 local function SetOrAnimateFade(frame, targetAlpha, useSlowFade, fadeOut)
     if not frame then return end
-    -- When restoring to full opacity, force update if frame is currently faded (fixes focus/imbue staying transparent after turning "fade out of combat" off)
-    if targetAlpha >= 0.99 and (frame:GetAlpha() or 1) < 0.5 then
-        frame._stFadeTarget = nil
+    -- Clear cache if frame alpha has drifted from cached target (e.g. ApplyConfig reset it).
+    -- SKIP this check when a fade animation is in progress: GetAlpha() returns the BASE alpha
+    -- (before animation), not the visual alpha, so the "drift" is just the ongoing animation.
+    -- Without this guard, every UNIT_AURA during combat restarts the animation (snap to base → blink).
+    if not frame._stFadeAg then
+        local currentAlpha = frame:GetAlpha() or 1
+        if frame._stFadeTarget and math.abs(currentAlpha - frame._stFadeTarget) > 0.01 then
+            frame._stFadeTarget = nil
+        end
     end
     if frame._stFadeTarget and math.abs(frame._stFadeTarget - targetAlpha) < 0.01 then return end
     local duration = useSlowFade and (fadeOut and FADE_ANIM_OUT_DURATION or FADE_ANIM_IN_DURATION) or 0
@@ -925,7 +950,7 @@ function UpdateAllElementsFadeState()
                 circleAlpha = procAnimPlaying and 1 or (shouldFade and targetAlpha or 1)
                 circleFadeOut = circleAlpha < 1
                 holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
-                if holdHover then circleAlpha = currentAlpha; circleFadeOut = false end
+                if holdHover then circleAlpha = 1; circleFadeOut = false end
                 -- Slow fade-out when conditions say so; slow fade-in only when "Fade In When Targeting Enemy" is on and we have an enemy target
                 circleUseSlowFade = (not holdHover) and ((circleFadeOut and useSlowMod) or (not circleFadeOut and (mod.fade.conditions and mod.fade.conditions.fadeInOnTarget) and fadeContext.hasEnemyTarget))
             else
@@ -940,7 +965,7 @@ function UpdateAllElementsFadeState()
             circleFadeOut = circleAlpha < 1
             holdHover = ShammyTime.circleHovered and currentAlpha >= 0.01 and circleFadeOut and not procAnimPlaying
             if holdHover then
-                circleAlpha = currentAlpha
+                circleAlpha = 1
                 circleFadeOut = false
             end
             circleUseSlowFade = (not holdHover) and useSlowFade and circleFadeOut
@@ -1513,6 +1538,12 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Reset pull when entering combat so new pull starts fresh; last pull persists out of combat
         if GetDB().windfuryTrackerEnabled then ResetWindfuryPull() end
+        -- Cancel test mode so simulated procs don't contaminate real combat stats
+        if wfTestTimer then
+            wfTestTimer:Cancel()
+            wfTestTimer = nil
+            if ShammyTime.StopShamanisticFocusTest then ShammyTime.StopShamanisticFocusTest() end
+        end
         UpdateAllElementsFadeState()
     elseif event == "PLAYER_REGEN_ENABLED" then
         UpdateAllElementsFadeState()

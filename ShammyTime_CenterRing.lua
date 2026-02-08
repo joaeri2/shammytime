@@ -405,6 +405,8 @@ local function CreateCenterRingFrame()
     end)
     -- When the proc animation (energy + runes + rotation) finishes: stop scale ticker, reset ring scale to 1, reset satellite positions, then start timers for text fade and satellite number fade. Lightning pulses are started separately when the *scale* ticker ends (see PlayCenterRingProc).
     local function onProcAnimEnd()
+        -- Skip cleanup when Stop() was called to restart the animation for a new proc (avoids race: spurious fade timer + wfProcAnimPlaying briefly false)
+        if ringFrame._suppressAnimEnd then return end
         if ringFrame.energySoftTicker then
             ringFrame.energySoftTicker:Cancel()
             ringFrame.energySoftTicker = nil
@@ -790,8 +792,10 @@ function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     rf.energy:SetAlpha(0.12)
     rf.runes:SetAlpha(0)
     rf:SetScale(1)
+    rf._suppressAnimEnd = true   -- prevent onProcAnimEnd from firing during Stop-before-new-Play
     rf.procAnim:Stop()
     rf.procAnim:Play()
+    rf._suppressAnimEnd = nil
     -- Ring scale + satellite positions: ticker does a quick expand (pop), short hold, then slow retract. When the ticker finishes, we start the delayed lightning pulses.
     if rf.satelliteTicker then
         rf.satelliteTicker:Cancel()

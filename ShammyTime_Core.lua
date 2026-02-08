@@ -460,6 +460,20 @@ function ShammyTime:ApplyAllConfigs()
         end
     end
 
+    -- Clear fade cache on all module frames so UpdateAllElementsFadeState() re-evaluates from scratch.
+    -- ApplyConfig() above resets frame alpha without updating _stFadeTarget, which would cause the
+    -- fade system to think the frame is already at the correct alpha and skip the update.
+    local framesToClearCache = {
+        _G.ShammyTimeWindfuryRadial,
+        _G.ShammyTimeWindfuryTotemBarFrame,
+        _G.ShammyTimeImbueBarFrame,
+        _G.ShammyTimeShieldFrame,
+        ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame() or nil,
+    }
+    for _, frame in ipairs(framesToClearCache) do
+        if frame then frame._stFadeTarget = nil end
+    end
+
     if self.ApplyElementVisibility then self:ApplyElementVisibility() end
     if self.ApplyLockStateToAllFrames then self:ApplyLockStateToAllFrames() end
     if self.ApplyElementMouseState then self:ApplyElementMouseState() end

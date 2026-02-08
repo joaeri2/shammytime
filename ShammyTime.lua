@@ -767,9 +767,23 @@ end
 ShammyTime.ApplyElementVisibility = ApplyElementVisibility
 
 -- Animate a frame's alpha to target over duration (used for slow fade when wfFadeOutOfCombat is on). Stops any in-progress fade on the frame.
+-- When an animation is stopped mid-flight, WoW snaps the visual alpha back to the base alpha
+-- (the value from the last SetAlpha call before the animation started). To avoid a visible
+-- "breath" pulse, we track the animation parameters and approximate the current visual alpha
+-- so we can set the base alpha to match before stopping.
 local function AnimateFrameToAlpha(frame, targetAlpha, duration)
     if not frame or not frame.CreateAnimationGroup then return end
     if frame._stFadeAg then
+        -- Approximate the current visual alpha before stopping, to prevent the snap-back.
+        -- WoW's SetSmoothing("OUT") uses an ease-out curve ≈ 1-(1-t)^2; linear is close enough
+        -- for a seamless transition and avoids the jarring pulse entirely.
+        local st = frame._stFadeStart
+        if st then
+            local elapsed = GetTime() - st
+            local progress = math.min(elapsed / (frame._stFadeDur or 1), 1)
+            local approx = (frame._stFadeFrom or 0) + ((frame._stFadeTo or 0) - (frame._stFadeFrom or 0)) * progress
+            frame:SetAlpha(approx)
+        end
         frame._stFadeAg:Stop()
         frame._stFadeAg = nil
     end
@@ -780,6 +794,11 @@ local function AnimateFrameToAlpha(frame, targetAlpha, duration)
         return
     end
     frame._stFadeTarget = targetAlpha
+    -- Store animation params so we can approximate visual alpha if interrupted
+    frame._stFadeFrom = fromAlpha
+    frame._stFadeTo = targetAlpha
+    frame._stFadeDur = duration
+    frame._stFadeStart = GetTime()
     local ag = frame:CreateAnimationGroup()
     local anim = ag:CreateAnimation("Alpha")
     anim:SetFromAlpha(fromAlpha)
@@ -789,6 +808,7 @@ local function AnimateFrameToAlpha(frame, targetAlpha, duration)
     ag:SetScript("OnFinished", function()
         frame:SetAlpha(targetAlpha)
         if frame._stFadeAg == ag then frame._stFadeAg = nil end
+        frame._stFadeStart = nil
         if targetAlpha < 0.01 and ShammyTime.ApplyElementMouseState then ShammyTime.ApplyElementMouseState() end
     end)
     ag:SetScript("OnStop", function()
@@ -817,6 +837,15 @@ local function SetOrAnimateFade(frame, targetAlpha, useSlowFade, fadeOut)
         AnimateFrameToAlpha(frame, targetAlpha, duration)
     else
         if frame._stFadeAg then
+            -- Same snap-back prevention as in AnimateFrameToAlpha: set base alpha to
+            -- the approximate visual alpha before stopping to avoid a visible pulse.
+            local st = frame._stFadeStart
+            if st then
+                local elapsed = GetTime() - st
+                local progress = math.min(elapsed / (frame._stFadeDur or 1), 1)
+                local approx = (frame._stFadeFrom or 0) + ((frame._stFadeTo or 0) - (frame._stFadeFrom or 0)) * progress
+                frame:SetAlpha(approx)
+            end
             frame._stFadeAg:Stop()
             frame._stFadeAg = nil
         end
@@ -1524,6 +1553,7 @@ else
     eventFrame:RegisterEvent("UNIT_AURA")
     eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 end
+eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         RestoreWindfuryDB()
@@ -1558,6 +1588,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
         end
         UpdateAllElementsFadeState()
     elseif event == "PLAYER_REGEN_ENABLED" then
+        UpdateAllElementsFadeState()
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        -- Re-evaluate fade so "No Target" and "Fade In When Targeting Enemy" conditions
+        -- update immediately when the player targets or clears a target.
         UpdateAllElementsFadeState()
     end
 end)

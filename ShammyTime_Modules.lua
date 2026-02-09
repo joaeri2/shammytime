@@ -361,3 +361,69 @@ function shieldIndicator:DemoStop()
 end
 
 ShammyTime.Modules.shieldIndicator = shieldIndicator
+
+-- ---------------------------------------------------------------------------
+-- WF Impact (Windfury Totem party damage feed)
+-- ---------------------------------------------------------------------------
+local wfImpact = {
+    frame = nil,
+    demoTimer = nil,
+}
+
+function wfImpact:Create()
+    local api = _G.ShammyTime_WFImpact
+    if api and api.EnsureFrame then
+        self.frame = api.EnsureFrame()
+    end
+    return self.frame
+end
+
+function wfImpact:ApplyConfig()
+    local cfg = getModuleConfig("wfImpact")
+    if not cfg then return end
+    self:Create()
+    local api = _G.ShammyTime_WFImpact
+    if api and api.ApplyConfig then
+        api.ApplyConfig()
+    end
+end
+
+function wfImpact:SetEnabled(enabled)
+    local p = ShammyTime.db.profile
+    if p.modules and p.modules.wfImpact then p.modules.wfImpact.enabled = enabled end
+    p.wfImpactEnabled = enabled
+    local api = _G.ShammyTime_WFImpact
+    if api and api.SetEnabled then api.SetEnabled(enabled) end
+end
+
+function wfImpact:DemoStart()
+    self:DemoStop()
+    self:Create()
+    local api = _G.ShammyTime_WFImpact
+    if api and api.Simulate then
+        api.Simulate()
+    end
+    -- Repeat every 3s while demo is active
+    local mod = self
+    self.demoTimer = C_Timer.NewTicker(3, function()
+        local addon = _G.ShammyTime
+        if not mod.demoTimer or (addon and not addon.demoActive) then
+            if mod.demoTimer then
+                mod.demoTimer:Cancel()
+                mod.demoTimer = nil
+            end
+            return
+        end
+        local a = _G.ShammyTime_WFImpact
+        if a and a.Simulate then a.Simulate() end
+    end)
+end
+
+function wfImpact:DemoStop()
+    if self.demoTimer then
+        self.demoTimer:Cancel()
+        self.demoTimer = nil
+    end
+end
+
+ShammyTime.Modules.wfImpact = wfImpact

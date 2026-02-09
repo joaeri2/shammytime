@@ -16,6 +16,7 @@ local wfWindowTotal = 0
 local wfWindowHits = 0
 local wfWindowTimer = nil
 local wfRadialShownForThisProc = false  -- true once we've shown the radial for this proc (to avoid replaying animation)
+local wfPendingTotemSwings = 0  -- how many SWING_DAMAGE events to attribute to WF Totem proc (0 = personal imbue / none)
 
 -- Clear any in-flight Windfury proc window (used on stats reset)
 function ShammyTime.ResetWindfuryProcWindow()
@@ -27,6 +28,7 @@ function ShammyTime.ResetWindfuryProcWindow()
     wfWindowTotal = 0
     wfWindowHits = 0
     wfRadialShownForThisProc = false
+    wfPendingTotemSwings = 0
 end
 
 local function GetDB()
@@ -123,9 +125,43 @@ local function OnCombatLog()
     if subevent == "SPELL_EXTRA_ATTACKS" then
         local srcGUID = select(4, CombatLogGetCurrentEventInfo())
         if srcGUID == UnitGUID("player") then
+            local spellId    = select(12, CombatLogGetCurrentEventInfo())
+            local extraCount = select(15, CombatLogGetCurrentEventInfo())
             wfWindowTotal = 0
             wfWindowHits = 0
+            -- WF Totem (spell 8516) delivers damage as SWING_DAMAGE, not SPELL_DAMAGE.
+            -- Track expected swing count so we can attribute them in the SWING_DAMAGE handler below.
+            if spellId == 8516 then
+                wfPendingTotemSwings = (extraCount and extraCount > 0) and extraCount or 1
+            else
+                wfPendingTotemSwings = 0
+            end
             StartProcWindow(true)  -- showInstant: show radial immediately on proc
+        end
+        return
+    end
+
+    -- WF Totem procs: attribute next N SWING_DAMAGE events from the player to the proc window
+    if (subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED") and wfExpectingDamage and wfPendingTotemSwings > 0 then
+        local srcGUID = select(4, CombatLogGetCurrentEventInfo())
+        if srcGUID == UnitGUID("player") then
+            local amount = select(12, CombatLogGetCurrentEventInfo())  -- SWING_DAMAGE: amount is at index 12
+            if amount and amount > 0 then
+                wfWindowTotal = wfWindowTotal + amount
+                wfWindowHits = wfWindowHits + 1
+                wfPendingTotemSwings = wfPendingTotemSwings - 1
+                -- Close window when all expected swings captured (or hit max of 2)
+                if wfPendingTotemSwings <= 0 or wfWindowHits >= 2 then
+                    if wfWindowTimer then
+                        wfWindowTimer:Cancel()
+                        wfWindowTimer = nil
+                    end
+                    wfExpectingDamage = false
+                    wfPendingTotemSwings = 0
+                    ShammyTime_Windfury_ShowRadial(wfWindowTotal, wfRadialShownForThisProc)
+                    wfRadialShownForThisProc = false
+                end
+            end
         end
         return
     end

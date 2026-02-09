@@ -20,6 +20,11 @@ local FOCUS_PULSE_PERIOD = 1.0 -- seconds per full cycle (100% -> 80% -> 100%)
 
 local focusFrame
 local lastFocusedActive = false
+-- CLEU-tracked buff state: set true on SPELL_AURA_APPLIED/REFRESH, false on SPELL_AURA_REMOVED.
+-- This is the PRIMARY buff indicator because UnitAura can lag behind CLEU by one or more frames
+-- for proc-triggered buffs on TBC Anniversary clients. HasFocusedBuff() checks this first, then
+-- falls back to UnitAura as a secondary source (e.g. after /reload when CLEU history is lost).
+local focusedBuffFromCLEU = false
 -- Test mode: proc every 10s, then fade out after hold (like real life)
 local FOCUS_TEST_INTERVAL = 10
 local FOCUS_TEST_HOLD = 4  -- seconds "on" before fading out
@@ -59,15 +64,22 @@ local function GetDB()
     return db
 end
 
--- WoW UnitAura return order can differ: 10-return has spellId at v10, 11-return at v11. Match by spellId or name.
+-- Check for the "Focused" buff (Shamanistic Focus proc).
+-- Primary source: CLEU-tracked state (focusedBuffFromCLEU), which updates instantly when the
+-- combat log records SPELL_AURA_APPLIED / SPELL_AURA_REMOVED for spell 43339. This avoids the
+-- UnitAura lag that causes the ON image to never show on first proc.
+-- Secondary source: UnitAura scan, which catches the buff after /reload (no CLEU history) or
+-- if the combat log event was missed. Checks spellId at both v10 and v11 positions.
 local function HasFocusedBuff()
+    -- CLEU is the authoritative, immediate source
+    if focusedBuffFromCLEU then return true end
+    -- Fallback: scan UnitAura (covers /reload, login with active buff, etc.)
     for i = 1, 40 do
-        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
-        if not v1 then break end
-        local spellId = (type(v4) == "string") and v10 or v11
-        if spellId == FOCUSED_BUFF_SPELL_ID then return true end
-        if v1 == "Focused" then return true end
-        if v1 and type(v1) == "string" and v1:find("Focus", 1, true) then return true end
+        local name, _, _, _, _, _, _, _, _, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not name then break end
+        if v10 == FOCUSED_BUFF_SPELL_ID or v11 == FOCUSED_BUFF_SPELL_ID then return true end
+        if name == "Focused" then return true end
+        if type(name) == "string" and name:find("Focus", 1, true) then return true end
     end
     return false
 end
@@ -393,24 +405,62 @@ function ShammyTime.ApplyShamanisticFocusScale()
     end
 end
 
--- Defer creation until ADDON_LOADED so SavedVariables (position) are loaded first
+-- Defer creation until ADDON_LOADED so SavedVariables (position) are loaded first.
+-- Also register COMBAT_LOG_EVENT_UNFILTERED as a secondary detection path: UNIT_AURA can
+-- be delayed or missing for proc-triggered buffs on some TBC Anniversary clients, so we
+-- also detect SPELL_AURA_APPLIED / SPELL_AURA_REMOVED for "Focused" (spell 43339) directly
+-- from the combat log. This fires immediately on proc and explains the "works on second proc"
+-- symptom: the first crit's UNIT_AURA was delayed, but the second crit's combat log events
+-- cause additional aura traffic that finally triggers detection.
+local playerGUID  -- cached on ADDON_LOADED; UnitGUID("player") is not available at file load time
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 if eventFrame.RegisterUnitEvent then
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 else
     eventFrame:RegisterEvent("UNIT_AURA")
 end
-eventFrame:SetScript("OnEvent", function(_, event, unit, addon)
-    if event == "ADDON_LOADED" and addon == "ShammyTime" then
+eventFrame:SetScript("OnEvent", function(_, event, arg1)
+    if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         eventFrame:UnregisterEvent("ADDON_LOADED")
+        playerGUID = UnitGUID and UnitGUID("player") or nil
         CreateFocusFrame()
         focusFrame:Show()
         UpdateFocus()
         return
     end
-    if event == "UNIT_AURA" and unit ~= "player" then return end
-    if event == "UNIT_AURA" and not focusTestActive then UpdateFocus() end
+    if event == "UNIT_AURA" then
+        if arg1 ~= "player" then return end
+        if not focusTestActive then UpdateFocus() end
+        return
+    end
+    if event == "COMBAT_LOG_EVENT_UNFILTERED" and not focusTestActive then
+        -- CombatLogGetCurrentEventInfo() returns: timestamp, subevent, hideCaster,
+        -- sourceGUID, sourceName, sourceFlags, sourceRaidFlags,
+        -- destGUID, destName, destFlags, destRaidFlags, spellId, ...
+        if not CombatLogGetCurrentEventInfo then return end
+        local _, subevent, _, _, _, _, _, destGUID, _, _, _, spellId = CombatLogGetCurrentEventInfo()
+        if spellId ~= FOCUSED_BUFF_SPELL_ID then return end
+        if subevent ~= "SPELL_AURA_APPLIED" and subevent ~= "SPELL_AURA_REMOVED"
+           and subevent ~= "SPELL_AURA_REFRESH" then return end
+        -- Verify it's on the player (not a party member with same talent)
+        if not playerGUID then playerGUID = UnitGUID and UnitGUID("player") or nil end
+        if destGUID ~= playerGUID then return end
+        -- Update CLEU-tracked state BEFORE calling UpdateFocus / UpdateAllElementsFadeState
+        -- so HasFocusedBuff() returns the correct value immediately (UnitAura may still lag).
+        if subevent == "SPELL_AURA_APPLIED" or subevent == "SPELL_AURA_REFRESH" then
+            focusedBuffFromCLEU = true
+        elseif subevent == "SPELL_AURA_REMOVED" then
+            focusedBuffFromCLEU = false
+        end
+        UpdateFocus()
+        -- Also nudge the main addon's fade system so frame alpha updates immediately
+        if ShammyTime.UpdateAllElementsFadeState then
+            ShammyTime.UpdateAllElementsFadeState()
+        end
+        return
+    end
 end)
 
 ShammyTime.HasFocusedBuff = HasFocusedBuff

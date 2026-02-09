@@ -51,6 +51,7 @@ local DEFAULTS = {
             shamanisticFocus = moduleDefaults(true, 0.9, 1.0),
             totemBar = moduleDefaults(true, 1.2, 1.0),
             weaponImbueBar = moduleDefaults(true, 0.35, 1.0),
+            wfImpact = moduleDefaults(true, 1.3, 1.0),
         },
         -- Flat keys (existing code)
         point = "CENTER",
@@ -110,6 +111,14 @@ local DEFAULTS = {
             air = { labelY = 14, valueY = -5 },
             grass = { labelY = 14, valueY = -5 },
         },
+        -- WF Impact (Windfury Totem party damage feed)
+        wfImpactEnabled = true,
+        wfImpactOffsetX = 0,
+        wfImpactOffsetY = -26,
+        wfImpactFontScroll = 15,
+        wfImpactFontTotal = 16,
+        wfImpactScrollDuration = 2.0,
+        wfImpactScrollDistance = 115,
         imbueBarScale = 0.35,
         imbueBarMargin = nil,
         imbueBarGap = nil,
@@ -395,6 +404,7 @@ function ShammyTime:ApplyAllConfigs()
     if p.wfFocusEnabled == nil then p.wfFocusEnabled = true end
     if p.wfImbueBarEnabled == nil then p.wfImbueBarEnabled = true end
     if p.wfShieldEnabled == nil then p.wfShieldEnabled = true end
+    if p.wfImpactEnabled == nil then p.wfImpactEnabled = true end
     if p.fontShieldCount == nil then p.fontShieldCount = p.fontImbueTimer or 86 end
     -- Sync flat keys from modules so existing code sees them
     if p.modules then
@@ -403,6 +413,7 @@ function ShammyTime:ApplyAllConfigs()
         if p.modules.shamanisticFocus then p.wfFocusEnabled = (p.modules.shamanisticFocus.enabled ~= false) end
         if p.modules.weaponImbueBar then p.wfImbueBarEnabled = (p.modules.weaponImbueBar.enabled ~= false) end
         if p.modules.shieldIndicator then p.wfShieldEnabled = (p.modules.shieldIndicator.enabled ~= false) end
+        if p.modules.wfImpact then p.wfImpactEnabled = (p.modules.wfImpact.enabled ~= false) end
         if p.modules.windfuryBubbles then p.wfRadialScale = p.modules.windfuryBubbles.scale or p.wfRadialScale end
         if p.modules.totemBar then p.wfTotemBarScale = p.modules.totemBar.scale or p.wfTotemBarScale end
         if p.modules.shieldIndicator then p.shieldScale = p.modules.shieldIndicator.scale or p.shieldScale end

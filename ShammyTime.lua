@@ -261,6 +261,9 @@ local lastWfHitTime = 0  -- used to group hits into one proc (0.4s window)
 local wfProcBuffer = { total = 0, hits = 0, crits = 0 }
 -- Timer to flush Windfury proc buffer after 0.4s (so 1-hit procs get committed to min/max/avg)
 local wfPopupTimer = nil
+-- Pending WF Totem proc for the player (when no WF Weapon imbue, totem procs
+-- fire as SPELL_EXTRA_ATTACKS 8516 + SWING_DAMAGE instead of SPELL_DAMAGE 25584).
+local pendingTotemWF = nil  -- { count = N, expiresAt = t } or nil
 local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
 local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
 local wfTestTimer = nil  -- /st test: global test (circle + Windfury + Shamanistic Focus); one proc immediately, then every 10s
@@ -460,6 +463,7 @@ end
 local function ResetWindfuryPull()
     wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
     wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
+    pendingTotemWF = nil  -- clear stale WF Totem proc window
     if wfPopupTimer then
         wfPopupTimer:Cancel()
         wfPopupTimer = nil
@@ -767,9 +771,23 @@ end
 ShammyTime.ApplyElementVisibility = ApplyElementVisibility
 
 -- Animate a frame's alpha to target over duration (used for slow fade when wfFadeOutOfCombat is on). Stops any in-progress fade on the frame.
+-- When an animation is stopped mid-flight, WoW snaps the visual alpha back to the base alpha
+-- (the value from the last SetAlpha call before the animation started). To avoid a visible
+-- "breath" pulse, we track the animation parameters and approximate the current visual alpha
+-- so we can set the base alpha to match before stopping.
 local function AnimateFrameToAlpha(frame, targetAlpha, duration)
     if not frame or not frame.CreateAnimationGroup then return end
     if frame._stFadeAg then
+        -- Approximate the current visual alpha before stopping, to prevent the snap-back.
+        -- WoW's SetSmoothing("OUT") uses an ease-out curve ≈ 1-(1-t)^2; linear is close enough
+        -- for a seamless transition and avoids the jarring pulse entirely.
+        local st = frame._stFadeStart
+        if st then
+            local elapsed = GetTime() - st
+            local progress = math.min(elapsed / (frame._stFadeDur or 1), 1)
+            local approx = (frame._stFadeFrom or 0) + ((frame._stFadeTo or 0) - (frame._stFadeFrom or 0)) * progress
+            frame:SetAlpha(approx)
+        end
         frame._stFadeAg:Stop()
         frame._stFadeAg = nil
     end
@@ -780,6 +798,11 @@ local function AnimateFrameToAlpha(frame, targetAlpha, duration)
         return
     end
     frame._stFadeTarget = targetAlpha
+    -- Store animation params so we can approximate visual alpha if interrupted
+    frame._stFadeFrom = fromAlpha
+    frame._stFadeTo = targetAlpha
+    frame._stFadeDur = duration
+    frame._stFadeStart = GetTime()
     local ag = frame:CreateAnimationGroup()
     local anim = ag:CreateAnimation("Alpha")
     anim:SetFromAlpha(fromAlpha)
@@ -789,6 +812,7 @@ local function AnimateFrameToAlpha(frame, targetAlpha, duration)
     ag:SetScript("OnFinished", function()
         frame:SetAlpha(targetAlpha)
         if frame._stFadeAg == ag then frame._stFadeAg = nil end
+        frame._stFadeStart = nil
         if targetAlpha < 0.01 and ShammyTime.ApplyElementMouseState then ShammyTime.ApplyElementMouseState() end
     end)
     ag:SetScript("OnStop", function()
@@ -817,6 +841,15 @@ local function SetOrAnimateFade(frame, targetAlpha, useSlowFade, fadeOut)
         AnimateFrameToAlpha(frame, targetAlpha, duration)
     else
         if frame._stFadeAg then
+            -- Same snap-back prevention as in AnimateFrameToAlpha: set base alpha to
+            -- the approximate visual alpha before stopping to avoid a visible pulse.
+            local st = frame._stFadeStart
+            if st then
+                local elapsed = GetTime() - st
+                local progress = math.min(elapsed / (frame._stFadeDur or 1), 1)
+                local approx = (frame._stFadeFrom or 0) + ((frame._stFadeTo or 0) - (frame._stFadeFrom or 0)) * progress
+                frame:SetAlpha(approx)
+            end
             frame._stFadeAg:Stop()
             frame._stFadeAg = nil
         end
@@ -1054,7 +1087,10 @@ function UpdateAllElementsFadeState()
                         focusUseSlow = false
                     end
                 else
-                    focusFaded = fadedCombat or db.wfFocusFadeWhenNotProcced
+                    -- Legacy path: fade when not procced should only fade when the buff is NOT active.
+                    -- Previously this always faded when wfFocusFadeWhenNotProcced was true, even
+                    -- during an active proc, keeping the frame at alpha 0 and hiding the ON image.
+                    focusFaded = fadedCombat or (db.wfFocusFadeWhenNotProcced and not hasFocusBuff)
                     focusAlpha = focusFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
                     focusUseSlow = useSlowFade
                 end
@@ -1067,7 +1103,16 @@ function UpdateAllElementsFadeState()
             end
             focusFrame:Show()
             local effAlphaFocus = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("shamanisticFocus")) or 1
-            SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, focusUseSlow, focusFaded)
+            -- When focus buff is active and frame should be fully visible, snap frame alpha
+            -- instantly (useSlowFade = false) so the overlay's quick 0.3s fade-in is visible
+            -- immediately. The slow 1.5s frame animation otherwise masks the ON image.
+            -- NOTE: cannot use `x and false or y` in Lua — false is falsy, so the idiom
+            -- always returns y. Use an explicit if/else instead.
+            if hasFocusBuff and not focusFaded then
+                SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, false, false)
+            else
+                SetOrAnimateFade(focusFrame, effAlphaFocus * focusAlpha, focusUseSlow, focusFaded)
+            end
             -- Sync "on/off" overlay: pass our computed hasFocusBuff so focus shows "on" even if UNIT_AURA/event order lags.
             if (not testActive) and ShammyTime.UpdateShamanisticFocusVisual then
                 ShammyTime.UpdateShamanisticFocusVisual(hasFocusBuff)
@@ -1464,16 +1509,63 @@ local function OnCombatLogWindfury(...)
     else
         subevent = select(2, ...)
     end
-    -- Windfury procs only on white (auto) swings; WF Attack hits cannot proc WF. Count eligible swings for proc rate.
-    if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED" then
-        if db.windfuryTrackerEnabled then
-            local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
+
+    -- WF Totem proc detection: SPELL_EXTRA_ATTACKS with spell 8516 "Windfury Totem"
+    -- fires BEFORE the extra swings land. Only track for the player (bubbles are player-only).
+    if subevent == "SPELL_EXTRA_ATTACKS" then
+        if CombatLogGetCurrentEventInfo then
+            local sourceGUID = select(4, CombatLogGetCurrentEventInfo())
             if sourceGUID and sourceGUID == UnitGUID("player") then
-                RecordEligibleSwing()
+                local spellId   = select(12, CombatLogGetCurrentEventInfo())
+                local spellName = select(13, CombatLogGetCurrentEventInfo())
+                local extraCount = select(15, CombatLogGetCurrentEventInfo())
+                -- Match WF Totem buff (spell 8516) or by name
+                local isWFTotem = (spellId and spellId == 8516)
+                              or (spellName and (spellName == "Windfury Totem" or (spellName:find("Windfury Totem", 1, true) == 1)))
+                if isWFTotem then
+                    local count = (extraCount and extraCount > 0) and extraCount or 1
+                    pendingTotemWF = {
+                        count     = count,
+                        expiresAt = GetTime() + (ShammyTime_Media and ShammyTime_Media.WF_CORRELATION_WINDOW or 0.4),
+                    }
+                end
             end
         end
         return
     end
+
+    -- Every player SWING_DAMAGE counts as a white hit (denominator for proc%).
+    -- WF Totem extra swings are also SWING_DAMAGE so they're included in the total.
+    if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED" then
+        if db.windfuryTrackerEnabled then
+            local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
+            if sourceGUID and sourceGUID == UnitGUID("player") then
+                -- Always count as a white hit for proc rate denominator
+                RecordEligibleSwing()
+                -- Additionally attribute to WF Totem if a pending proc window is open
+                if pendingTotemWF and GetTime() <= pendingTotemWF.expiresAt and pendingTotemWF.count > 0 then
+                    local dmgAmount = (CombatLogGetCurrentEventInfo and select(12, CombatLogGetCurrentEventInfo())) or select(11, ...)
+                    -- SWING_DAMAGE crit flag is at index 18 (after the 11 standard prefix fields)
+                    local critFlag = CombatLogGetCurrentEventInfo and select(18, CombatLogGetCurrentEventInfo())
+                    local isCrit = (critFlag == true or critFlag == 1)
+                    if dmgAmount and dmgAmount > 0 then
+                        RecordWindfuryHit(dmgAmount, isCrit)
+                        pendingTotemWF.count = pendingTotemWF.count - 1
+                        if pendingTotemWF.count <= 0 then
+                            pendingTotemWF = nil
+                        end
+                    end
+                end
+            end
+        end
+        return
+    end
+
+    -- Clean up expired pending totem WF (cheap, runs on any non-swing/non-extra-attack subevent)
+    if pendingTotemWF and GetTime() > pendingTotemWF.expiresAt then
+        pendingTotemWF = nil
+    end
+
     if subevent ~= "SPELL_DAMAGE" and subevent ~= "SPELL_DAMAGE_CRIT" then return end
 
     local sourceGUID, sourceName, spellId, spellName, amount, isCrit
@@ -1512,6 +1604,7 @@ else
     eventFrame:RegisterEvent("UNIT_AURA")
     eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 end
+eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         RestoreWindfuryDB()
@@ -1546,6 +1639,10 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
         end
         UpdateAllElementsFadeState()
     elseif event == "PLAYER_REGEN_ENABLED" then
+        UpdateAllElementsFadeState()
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        -- Re-evaluate fade so "No Target" and "Fade In When Targeting Enemy" conditions
+        -- update immediately when the player targets or clears a target.
         UpdateAllElementsFadeState()
     end
 end)

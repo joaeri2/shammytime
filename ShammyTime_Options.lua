@@ -408,7 +408,7 @@ _G.ShammyTime.CopyTextSettings = ExportAllToClipboard
 --------------------------------------------------------------------------------
 -- Module Options Builder (simplified)
 --------------------------------------------------------------------------------
-local function CreateModuleOptions(moduleName, displayName, extraArgs)
+local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
     local opts = {
         type = "group",
         name = displayName,
@@ -528,6 +528,17 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs)
             },
         },
     }
+    -- Strip fade options when they don't apply (e.g. WF Totem Damage feed)
+    if noFade then
+        opts.args.fadeHeader = nil
+        opts.args.fadeEnabled = nil
+        opts.args.inactiveAlpha = nil
+        opts.args.outOfCombat = nil
+        opts.args.noTarget = nil
+        opts.args.fadeInOnTarget = nil
+        opts.args.inactiveBuff = nil
+        opts.args.noTotemsPlaced = nil
+    end
     -- Merge extra args if provided
     if extraArgs then
         for k, v in pairs(extraArgs) do
@@ -1086,6 +1097,143 @@ function ShammyTime:SetupOptions()
                             end,
                         },
                     }),
+                    wfImpact = CreateModuleOptions("wfImpact", "WF Totem Damage", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Ever wondered how much your Windfury Totem actually contributes to your party's damage? " ..
+                                           "This shows a live scrolling damage feed whenever you or your party members land bonus hits from " ..
+                                           "your totem — right above it, so you can feel the impact in real time.\n\n" ..
+                                           "When combat ends, a total is shown so you can see how much extra damage your totem brought to the fight.\n\n" ..
+                                           "|cffaaaaaa" .. "Damage values are estimated based on combat log events." .. "|r\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                        -- Position
+                        posHeader = {
+                            type = "header",
+                            name = "Position Offset",
+                            order = 4.0,
+                        },
+                        posDesc = {
+                            type = "description",
+                            name = "Adjusts where the damage text appears relative to your Windfury Totem slot on the totem bar.",
+                            order = 4.01,
+                        },
+                        wfImpactOffsetX = {
+                            type = "range",
+                            name = "X Offset",
+                            desc = "Horizontal offset from the WF totem slot.",
+                            min = -200, max = 200, step = 1,
+                            order = 4.1,
+                            get = function() return getFlatDB("wfImpactOffsetX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("wfImpactOffsetX", v)
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.ApplyPosition then api.ApplyPosition() end
+                            end,
+                        },
+                        wfImpactOffsetY = {
+                            type = "range",
+                            name = "Y Offset",
+                            desc = "Vertical offset above the WF totem slot.",
+                            min = -200, max = 200, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("wfImpactOffsetY", -26) end,
+                            set = function(_, v)
+                                setFlatDB("wfImpactOffsetY", v)
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.ApplyPosition then api.ApplyPosition() end
+                            end,
+                        },
+                        -- Text Sizes
+                        textHeader = {
+                            type = "header",
+                            name = "Text Sizes",
+                            order = 5.0,
+                        },
+                        wfImpactFontScroll = {
+                            type = "range",
+                            name = "Scrolling Text Font",
+                            desc = "Font size for the scrolling damage lines.",
+                            min = 6, max = 32, step = 1,
+                            order = 5.1,
+                            get = function() return getFlatDB("wfImpactFontScroll", 15) end,
+                            set = function(_, v)
+                                setFlatDB("wfImpactFontScroll", v)
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.UpdateScrollPool then api.UpdateScrollPool() end
+                            end,
+                        },
+                        wfImpactFontTotal = {
+                            type = "range",
+                            name = "Total Popup Font",
+                            desc = "Font size for the end-of-combat total popup.",
+                            min = 6, max = 32, step = 1,
+                            order = 5.2,
+                            get = function() return getFlatDB("wfImpactFontTotal", 16) end,
+                            set = function(_, v)
+                                setFlatDB("wfImpactFontTotal", v)
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.UpdateScrollPool then api.UpdateScrollPool() end
+                            end,
+                        },
+                        -- Animation / Scroll Speed
+                        animHeader = {
+                            type = "header",
+                            name = "Animation",
+                            order = 6.0,
+                        },
+                        wfImpactScrollDuration = {
+                            type = "range",
+                            name = "Scroll Duration",
+                            desc = "How long each damage line is visible (seconds). Lower = faster scroll.",
+                            min = 0.3, max = 3.0, step = 0.1,
+                            order = 6.1,
+                            get = function() return getFlatDB("wfImpactScrollDuration", 2.0) end,
+                            set = function(_, v)
+                                setFlatDB("wfImpactScrollDuration", v)
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.UpdateScrollPool then api.UpdateScrollPool() end
+                            end,
+                        },
+                        wfImpactScrollDistance = {
+                            type = "range",
+                            name = "Scroll Distance",
+                            desc = "How far each damage line travels upward (pixels).",
+                            min = 20, max = 150, step = 5,
+                            order = 6.2,
+                            get = function() return getFlatDB("wfImpactScrollDistance", 115) end,
+                            set = function(_, v)
+                                setFlatDB("wfImpactScrollDistance", v)
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.UpdateScrollPool then api.UpdateScrollPool() end
+                            end,
+                        },
+                        -- Test button
+                        testHeader = {
+                            type = "header",
+                            name = "Preview",
+                            order = 7.0,
+                        },
+                        testButton = {
+                            type = "execute",
+                            name = "Preview Damage Feed",
+                            desc = "Shows a preview with fake damage numbers so you can see how it looks and adjust your settings.",
+                            order = 7.1,
+                            func = function()
+                                local api = _G.ShammyTime_WFImpact
+                                if api and api.Simulate then api.Simulate() end
+                            end,
+                        },
+                    }, true),  -- noFade: fade settings don't apply to the damage feed
                 },
             },
             -----------------------------------------------------------------

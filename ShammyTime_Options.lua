@@ -408,7 +408,7 @@ _G.ShammyTime.CopyTextSettings = ExportAllToClipboard
 --------------------------------------------------------------------------------
 -- Module Options Builder (simplified)
 --------------------------------------------------------------------------------
-local function CreateModuleOptions(moduleName, displayName, extraArgs)
+local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
     local opts = {
         type = "group",
         name = displayName,
@@ -528,6 +528,17 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs)
             },
         },
     }
+    -- Strip fade options when they don't apply (e.g. WF Totem Damage feed)
+    if noFade then
+        opts.args.fadeHeader = nil
+        opts.args.fadeEnabled = nil
+        opts.args.inactiveAlpha = nil
+        opts.args.outOfCombat = nil
+        opts.args.noTarget = nil
+        opts.args.fadeInOnTarget = nil
+        opts.args.inactiveBuff = nil
+        opts.args.noTotemsPlaced = nil
+    end
     -- Merge extra args if provided
     if extraArgs then
         for k, v in pairs(extraArgs) do
@@ -1222,7 +1233,7 @@ function ShammyTime:SetupOptions()
                                 if api and api.Simulate then api.Simulate() end
                             end,
                         },
-                    }),
+                    }, true),  -- noFade: fade settings don't apply to the damage feed
                 },
             },
             -----------------------------------------------------------------

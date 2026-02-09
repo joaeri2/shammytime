@@ -261,6 +261,9 @@ local lastWfHitTime = 0  -- used to group hits into one proc (0.4s window)
 local wfProcBuffer = { total = 0, hits = 0, crits = 0 }
 -- Timer to flush Windfury proc buffer after 0.4s (so 1-hit procs get committed to min/max/avg)
 local wfPopupTimer = nil
+-- Pending WF Totem proc for the player (when no WF Weapon imbue, totem procs
+-- fire as SPELL_EXTRA_ATTACKS 8516 + SWING_DAMAGE instead of SPELL_DAMAGE 25584).
+local pendingTotemWF = nil  -- { count = N, expiresAt = t } or nil
 local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
 local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
 local wfTestTimer = nil  -- /st test: global test (circle + Windfury + Shamanistic Focus); one proc immediately, then every 10s
@@ -460,6 +463,7 @@ end
 local function ResetWindfuryPull()
     wfPull.total, wfPull.count, wfPull.procs, wfPull.min, wfPull.max, wfPull.crits, wfPull.swings = 0, 0, 0, nil, nil, 0, 0
     wfProcBuffer.total, wfProcBuffer.hits, wfProcBuffer.crits = 0, 0, 0
+    pendingTotemWF = nil  -- clear stale WF Totem proc window
     if wfPopupTimer then
         wfPopupTimer:Cancel()
         wfPopupTimer = nil
@@ -1505,16 +1509,63 @@ local function OnCombatLogWindfury(...)
     else
         subevent = select(2, ...)
     end
-    -- Windfury procs only on white (auto) swings; WF Attack hits cannot proc WF. Count eligible swings for proc rate.
-    if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED" then
-        if db.windfuryTrackerEnabled then
-            local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
+
+    -- WF Totem proc detection: SPELL_EXTRA_ATTACKS with spell 8516 "Windfury Totem"
+    -- fires BEFORE the extra swings land. Only track for the player (bubbles are player-only).
+    if subevent == "SPELL_EXTRA_ATTACKS" then
+        if CombatLogGetCurrentEventInfo then
+            local sourceGUID = select(4, CombatLogGetCurrentEventInfo())
             if sourceGUID and sourceGUID == UnitGUID("player") then
-                RecordEligibleSwing()
+                local spellId   = select(12, CombatLogGetCurrentEventInfo())
+                local spellName = select(13, CombatLogGetCurrentEventInfo())
+                local extraCount = select(15, CombatLogGetCurrentEventInfo())
+                -- Match WF Totem buff (spell 8516) or by name
+                local isWFTotem = (spellId and spellId == 8516)
+                              or (spellName and (spellName == "Windfury Totem" or (spellName:find("Windfury Totem", 1, true) == 1)))
+                if isWFTotem then
+                    local count = (extraCount and extraCount > 0) and extraCount or 1
+                    pendingTotemWF = {
+                        count     = count,
+                        expiresAt = GetTime() + (ShammyTime_Media and ShammyTime_Media.WF_CORRELATION_WINDOW or 0.4),
+                    }
+                end
             end
         end
         return
     end
+
+    -- Every player SWING_DAMAGE counts as a white hit (denominator for proc%).
+    -- WF Totem extra swings are also SWING_DAMAGE so they're included in the total.
+    if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED" then
+        if db.windfuryTrackerEnabled then
+            local sourceGUID = (CombatLogGetCurrentEventInfo and select(4, CombatLogGetCurrentEventInfo())) or select(3, ...)
+            if sourceGUID and sourceGUID == UnitGUID("player") then
+                -- Always count as a white hit for proc rate denominator
+                RecordEligibleSwing()
+                -- Additionally attribute to WF Totem if a pending proc window is open
+                if pendingTotemWF and GetTime() <= pendingTotemWF.expiresAt and pendingTotemWF.count > 0 then
+                    local dmgAmount = (CombatLogGetCurrentEventInfo and select(12, CombatLogGetCurrentEventInfo())) or select(11, ...)
+                    -- SWING_DAMAGE crit flag is at index 18 (after the 11 standard prefix fields)
+                    local critFlag = CombatLogGetCurrentEventInfo and select(18, CombatLogGetCurrentEventInfo())
+                    local isCrit = (critFlag == true or critFlag == 1)
+                    if dmgAmount and dmgAmount > 0 then
+                        RecordWindfuryHit(dmgAmount, isCrit)
+                        pendingTotemWF.count = pendingTotemWF.count - 1
+                        if pendingTotemWF.count <= 0 then
+                            pendingTotemWF = nil
+                        end
+                    end
+                end
+            end
+        end
+        return
+    end
+
+    -- Clean up expired pending totem WF (cheap, runs on any non-swing/non-extra-attack subevent)
+    if pendingTotemWF and GetTime() > pendingTotemWF.expiresAt then
+        pendingTotemWF = nil
+    end
+
     if subevent ~= "SPELL_DAMAGE" and subevent ~= "SPELL_DAMAGE_CRIT" then return end
 
     local sourceGUID, sourceName, spellId, spellName, amount, isCrit

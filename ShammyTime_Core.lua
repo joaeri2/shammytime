@@ -499,6 +499,128 @@ function ShammyTime:ApplyAllConfigs()
     if self.UpdateAllElementsFadeState then self:UpdateAllElementsFadeState() end
 end
 
+--------------------------------------------------------------------------------
+-- Presets: quickly switch between "always visible" and "smart fade" configs
+--------------------------------------------------------------------------------
+
+--- Preset: Always Visible – disable all fade settings so every module stays on screen.
+function ShammyTime:ApplyPresetAlwaysVisible()
+    local p = self.db and self.db.profile
+    if not p or not p.modules then return end
+    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator" }
+    for _, name in ipairs(moduleNames) do
+        local m = p.modules[name]
+        if m then
+            m.fade = m.fade or {}
+            m.fade.enabled = false
+            m.fade.inactiveAlpha = 0
+            m.fade.conditions = m.fade.conditions or {}
+            m.fade.conditions.outOfCombat = false
+            m.fade.conditions.noTarget = false
+            m.fade.conditions.inactiveBuff = false
+            m.fade.conditions.noTotemsPlaced = false
+            m.fade.conditions.outOfRange = false
+            m.fade.conditions.fadeInOnTarget = false
+        end
+    end
+    -- Sync legacy flat keys
+    p.wfFadeOutOfCombat = false
+    p.wfFadeWhenNotProcced = false
+    p.wfFocusFadeWhenNotProcced = false
+    p.wfFadeWhenNoTotems = false
+    p.wfImbueFadeWhenLongDuration = false
+    self:ApplyAllConfigs()
+    print("|cff00ff00ShammyTime:|r Preset applied: |cffffffffAlways Visible|r – all fade disabled.")
+end
+
+--- Preset: Smart Fade – context-aware fading so modules disappear when irrelevant.
+--- Matches the recommended settings:
+---   Shamanistic Focus  → fade when buff not active
+---   Totem Bar          → fade when no totems placed (5s delay)
+---   Weapon Imbue Bar   → fade when no short-duration imbue (threshold 120s)
+---   Shield Indicator   → fade when out of combat
+---   Windfury Bubbles   → fade when not recently procced
+function ShammyTime:ApplyPresetSmartFade()
+    local p = self.db and self.db.profile
+    if not p or not p.modules then return end
+
+    -- Shamanistic Focus: fade when buff not active
+    local sf = p.modules.shamanisticFocus
+    if sf then
+        sf.fade = sf.fade or {}
+        sf.fade.enabled = true
+        sf.fade.inactiveAlpha = 0
+        sf.fade.conditions = sf.fade.conditions or {}
+        sf.fade.conditions.outOfCombat = false
+        sf.fade.conditions.noTarget = false
+        sf.fade.conditions.inactiveBuff = true
+        sf.fade.conditions.fadeInOnTarget = false
+    end
+
+    -- Totem Bar: fade when no totems placed
+    local tb = p.modules.totemBar
+    if tb then
+        tb.fade = tb.fade or {}
+        tb.fade.enabled = true
+        tb.fade.inactiveAlpha = 0
+        tb.fade.conditions = tb.fade.conditions or {}
+        tb.fade.conditions.outOfCombat = false
+        tb.fade.conditions.noTarget = false
+        tb.fade.conditions.inactiveBuff = false
+        tb.fade.conditions.noTotemsPlaced = true
+        tb.fade.conditions.outOfRange = false
+    end
+    p.wfNoTotemsFadeDelay = 5
+
+    -- Weapon Imbue Bar: fade when no short-duration imbue
+    local wb = p.modules.weaponImbueBar
+    if wb then
+        wb.fade = wb.fade or {}
+        wb.fade.enabled = true
+        wb.fade.inactiveAlpha = 0
+        wb.fade.conditions = wb.fade.conditions or {}
+        wb.fade.conditions.outOfCombat = false
+        wb.fade.conditions.noTarget = false
+        wb.fade.conditions.inactiveBuff = true
+    end
+    p.wfImbueFadeThresholdSec = 120
+
+    -- Shield Indicator: fade when out of combat
+    local si = p.modules.shieldIndicator
+    if si then
+        si.fade = si.fade or {}
+        si.fade.enabled = true
+        si.fade.inactiveAlpha = 0
+        si.fade.conditions = si.fade.conditions or {}
+        si.fade.conditions.outOfCombat = true
+        si.fade.conditions.noTarget = false
+        si.fade.conditions.inactiveBuff = false
+    end
+
+    -- Windfury Bubbles: fade when not recently procced
+    local wf = p.modules.windfuryBubbles
+    if wf then
+        wf.fade = wf.fade or {}
+        wf.fade.enabled = true
+        wf.fade.inactiveAlpha = 0
+        wf.fade.conditions = wf.fade.conditions or {}
+        wf.fade.conditions.outOfCombat = false
+        wf.fade.conditions.noTarget = false
+        wf.fade.conditions.inactiveBuff = true
+        wf.fade.conditions.fadeInOnTarget = false
+    end
+
+    -- Sync legacy flat keys
+    p.wfFadeOutOfCombat = false
+    p.wfFadeWhenNotProcced = true
+    p.wfFocusFadeWhenNotProcced = true
+    p.wfFadeWhenNoTotems = true
+    p.wfImbueFadeWhenLongDuration = true
+
+    self:ApplyAllConfigs()
+    print("|cff00ff00ShammyTime:|r Preset applied: |cffffffffSmart Fade|r – modules fade when not needed.")
+end
+
 --- Reset all to defaults
 function ShammyTime:ResetAllToDefaults()
     self.db:ResetProfile()

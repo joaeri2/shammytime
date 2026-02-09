@@ -279,6 +279,10 @@ local noTotemsFadeTimer = nil
 local noTotemsFaded = false  -- true when radial has been faded due to no totems
 local fadeGraceTimer = nil  -- one-shot: re-apply fade state when "procced" grace period ends (so "fade when not procced" takes effect)
 local focusFadeHoldTimer = nil  -- delay focus fade-out so off art shows before frame fades
+local imbueFadeHoldTimer = nil  -- delay imbue bar fade-out so icon shows briefly after imbue is applied
+local imbueFadeHoldUntil = nil  -- GetTime() deadline: hold imbue bar at full alpha until this time
+local imbueWasActiveLastCheck = false  -- track imbue state transitions (no-imbue → has-imbue)
+local IMBUE_APPLY_HOLD_SEC = 2  -- seconds to hold imbue bar visible after imbue is applied
 local circleFadeOutStarted = false  -- true once circle has started fading out; don't restore to 1 until next proc (avoids blink)
 ShammyTime.circleHovered = false  -- true while mouse is over center ring; pauses fade-out (no revive from 0)
 ShammyTime.radialNumbersVisible = false  -- true when radial numbers should be shown (prevents late re-show after fade)
@@ -310,6 +314,9 @@ function ShammyTime:OnResetAll()
     if wfPopupTimer then wfPopupTimer:Cancel(); wfPopupTimer = nil end
     if fadeGraceTimer then fadeGraceTimer:Cancel(); fadeGraceTimer = nil end
     if focusFadeHoldTimer then focusFadeHoldTimer:Cancel(); focusFadeHoldTimer = nil end
+    if imbueFadeHoldTimer then imbueFadeHoldTimer:Cancel(); imbueFadeHoldTimer = nil end
+    imbueFadeHoldUntil = nil
+    imbueWasActiveLastCheck = false
     if wfTestTimer then wfTestTimer:Cancel(); wfTestTimer = nil end
     if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel(); wfRadialHideNumbersTimer = nil end
 end
@@ -1123,6 +1130,23 @@ function UpdateAllElementsFadeState()
     if imbueBar then
         if not db.wfImbueBarEnabled then imbueBar:Hide()
         else
+            -- Detect no-imbue → has-imbue transition: hold bar visible for IMBUE_APPLY_HOLD_SEC
+            -- so the player sees the icon appear before the bar fades out.
+            local imbueIsActive = imbueProcced and true or false
+            if imbueIsActive and not imbueWasActiveLastCheck then
+                -- Imbue just applied: hold bar at full alpha, refresh content
+                imbueFadeHoldUntil = GetTime() + IMBUE_APPLY_HOLD_SEC
+                if ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
+                -- Schedule re-evaluation after hold so the bar fades out
+                if imbueFadeHoldTimer then imbueFadeHoldTimer:Cancel() end
+                imbueFadeHoldTimer = C_Timer.NewTimer(IMBUE_APPLY_HOLD_SEC + 0.05, function()
+                    imbueFadeHoldTimer = nil
+                    imbueFadeHoldUntil = nil
+                    UpdateAllElementsFadeState()
+                end)
+            end
+            imbueWasActiveLastCheck = imbueIsActive
+
             local imbueFaded, imbueAlpha, imbueUseSlow
             local mod = useModuleFade and ShammyTime.db.profile.modules.weaponImbueBar
             if mod and ShammyTime.EvaluateFade then
@@ -1145,6 +1169,13 @@ function UpdateAllElementsFadeState()
                 imbueAlpha = imbueFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
                 imbueUseSlow = useSlowFade
             end
+
+            -- Hold override: keep bar at full alpha during the hold period after imbue application
+            if imbueFadeHoldUntil and GetTime() < imbueFadeHoldUntil and imbueFaded then
+                imbueFaded = false
+                imbueAlpha = 1
+            end
+
             imbueBar:Show()
             if imbueAlpha >= 0.99 and ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
             local effAlphaImbue = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("weaponImbueBar")) or 1
@@ -1626,6 +1657,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
             UpdateAllElementsFadeState()
         end
     elseif event == "UNIT_INVENTORY_CHANGED" and arg1 == "player" then
+        -- Weapon imbue apply/remove fires UNIT_INVENTORY_CHANGED (not always UNIT_AURA)
+        -- so re-evaluate fade state to reflect the new imbue status.
+        UpdateAllElementsFadeState()
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         OnCombatLogWindfury(...)
     elseif event == "PLAYER_REGEN_DISABLED" then

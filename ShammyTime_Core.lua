@@ -281,7 +281,10 @@ function ShammyTime:EvaluateFade(moduleName, context)
         if moduleName == "shamanisticFocus" and not context.focusActive then
             shouldFade = true
         elseif moduleName == "weaponImbueBar" then
-            if not context.imbueActive or (context.imbueShortTime == false) then
+            -- Only fade when an imbue IS active but has plenty of time left.
+            -- When no imbue is registered at all, keep the bar visible so the
+            -- player notices they need to apply one.
+            if context.imbueActive and not context.imbueShortTime then
                 shouldFade = true
             end
         elseif moduleName == "windfuryBubbles" and not context.wfProcced and not context.procAnimPlaying then

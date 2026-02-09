@@ -701,6 +701,101 @@ local function CreateWindfuryTotemBarFrame()
         self:StopMovingOrSizing()
         SaveTotemBarPosition(self)
     end)
+    -- Tooltip: show last fight + cumulative session WF damage breakdown on hover
+    local function AddPlayerLines(api, playerList, total, hits, totalR, totalG, totalB)
+        if playerList and #playerList > 0 then
+            for _, pp in ipairs(playerList) do
+                local r, g, b = 1, 0.82, 0
+                if api.GetClassColor then
+                    r, g, b = api.GetClassColor(pp.guid)
+                end
+                local name = api.ShortName and api.ShortName(pp.name) or pp.name
+                local dmgStr = "+" .. api.FormatNumber(pp.damage)
+                local avg = pp.hits > 0 and math.floor(pp.damage / pp.hits) or 0
+                local detailStr = pp.hits .. (pp.hits == 1 and " hit" or " hits") .. ", avg " .. api.FormatNumber(avg)
+                GameTooltip:AddDoubleLine(
+                    name,
+                    dmgStr .. "  |cffaaaaaa(" .. detailStr .. ")|r",
+                    r, g, b,
+                    1, 1, 1
+                )
+            end
+        end
+        -- Total line
+        local totalAvg = hits > 0 and math.floor(total / hits) or 0
+        local totalDetail = hits .. " hits, avg " .. api.FormatNumber(totalAvg)
+        GameTooltip:AddDoubleLine(
+            "Total",
+            "+" .. api.FormatNumber(total) .. "  |cffaaaaaa(" .. totalDetail .. ")|r",
+            totalR, totalG, totalB,
+            totalR, totalG, totalB
+        )
+    end
+    f:SetScript("OnEnter", function(self)
+        local api = _G.ShammyTime_WFImpact
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine("Totem Bar", 0.2, 0.8, 1)
+        if api and api.GetSessionStats then
+            local sessionTotal, sessionHits, sessionStart, fights = api.GetSessionStats()
+            local lastTotal, lastHits, lastPerPlayer = 0, 0, {}
+            if api.GetLastFight then
+                lastTotal, lastHits, lastPerPlayer = api.GetLastFight()
+            end
+            if sessionTotal and sessionTotal > 0 then
+                -- === Last Fight ===
+                if lastTotal and lastTotal > 0 and lastPerPlayer and #lastPerPlayer > 0 then
+                    GameTooltip:AddLine(" ")
+                    GameTooltip:AddLine("Last Fight", 1, 0.82, 0)
+                    AddPlayerLines(api, lastPerPlayer, lastTotal, lastHits, 0.7, 0.7, 0.7)
+                end
+                -- === Session Total ===
+                local duration = ""
+                if sessionStart then
+                    local secs = math.floor(GetTime() - sessionStart)
+                    if secs < 60 then
+                        duration = secs .. "s"
+                    elseif secs < 3600 then
+                        duration = math.floor(secs / 60) .. "m"
+                    else
+                        duration = string.format("%dh %dm", math.floor(secs / 3600), math.floor((secs % 3600) / 60))
+                    end
+                end
+                local subtitle = fights .. (fights == 1 and " fight" or " fights")
+                if duration ~= "" then subtitle = subtitle .. ", " .. duration end
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("Session" .. "  |cff888888(" .. subtitle .. ")|r", 1, 0.82, 0)
+                local sessionPerPlayer = api.GetPerPlayer and api.GetPerPlayer()
+                AddPlayerLines(api, sessionPerPlayer, sessionTotal, sessionHits, 0.2, 1, 0.2)
+            else
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("No WF bonus damage recorded yet.", 0.5, 0.5, 0.5)
+            end
+        end
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Right-click to reset stats", 0.5, 0.5, 0.5)
+        if ShammyTime and ShammyTime.GetDB and not ShammyTime.GetDB().locked then
+            GameTooltip:AddLine("Drag to move", 0.5, 0.5, 0.5)
+        end
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    -- Right-click to reset WF stats
+    f:SetScript("OnMouseUp", function(self, button)
+        if button == "RightButton" then
+            local api = _G.ShammyTime_WFImpact
+            if api and api.ResetStats then
+                api.ResetStats()
+                print("|cff00ccff[WF Impact]|r Stats reset.")
+                -- Refresh tooltip immediately
+                if GameTooltip:IsOwned(self) then
+                    GameTooltip:Hide()
+                    self:GetScript("OnEnter")(self)
+                end
+            end
+        end
+    end)
     f.totemBar = f:CreateTexture(nil, "OVERLAY")
     f.totemBar:SetTexture(TEX.TOTEM_BAR)
     f.totemBar:SetAllPoints(f)

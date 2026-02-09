@@ -91,13 +91,25 @@ local DEFAULT_OFFSET_Y        = -26
 -- State
 -- ---------------------------------------------------------------------------
 local state = {
-    wfTotemActive  = false,
-    inCombat       = false,
-    wfBonusTotal   = 0,
-    pendingExtra   = {},   -- [sourceGUID] = { count = N, expiresAt = t }
-    hitCount       = 0,    -- total attributed swings this combat
-    debug          = false, -- /wfimpact debug
-    enabled        = true,  -- runtime enabled flag (synced from DB)
+    wfTotemActive      = false,
+    inCombat           = false,
+    pendingExtra       = {},   -- [sourceGUID] = { count = N, expiresAt = t }
+    -- Per-fight (reset each combat, used for the end-of-combat popup)
+    fightTotal         = 0,
+    fightHits          = 0,
+    fightPerPlayer     = {},   -- [sourceGUID] = { name=, damage=, hits=, guid= }
+    -- Last-fight snapshot (survives into next combat for tooltip)
+    lastFightTotal     = 0,
+    lastFightHits      = 0,
+    lastFightPerPlayer = {},   -- sorted array from previous fight
+    -- Cumulative session (persists across fights, reset by user)
+    sessionTotal       = 0,
+    sessionHits        = 0,
+    sessionStart       = nil,  -- GetTime() when session/reset started
+    perPlayer          = {},   -- [sourceGUID] = { name=, damage=, hits=, guid= }
+    fights             = 0,    -- number of fights with WF procs
+    debug              = false, -- /wfimpact debug
+    enabled            = true,  -- runtime enabled flag (synced from DB)
 }
 
 -- ---------------------------------------------------------------------------
@@ -453,18 +465,50 @@ end
 -- ---------------------------------------------------------------------------
 local function OnCombatStart()
     state.inCombat = true
-    state.wfBonusTotal = 0
-    state.hitCount = 0
+    state.fightTotal = 0
+    state.fightHits  = 0
+    wipe(state.fightPerPlayer)
     wipe(state.pendingExtra)
     HideTotalPopup()
+    -- Lazy-init session start time
+    if not state.sessionStart then
+        state.sessionStart = GetTime()
+    end
 end
 
 local function OnCombatEnd()
     state.inCombat = false
-    if state.wfBonusTotal > 0 then
-        ShowTotalPopup(state.wfBonusTotal, state.hitCount)
+    if state.fightTotal > 0 then
+        state.fights = state.fights + 1
+        -- Snapshot per-fight breakdown for "Last Fight" tooltip section
+        state.lastFightTotal = state.fightTotal
+        state.lastFightHits  = state.fightHits
+        local snapshot = {}
+        for _, pp in pairs(state.fightPerPlayer) do
+            snapshot[#snapshot + 1] = { name = pp.name, damage = pp.damage, hits = pp.hits, guid = pp.guid }
+        end
+        table.sort(snapshot, function(a, b) return a.damage > b.damage end)
+        state.lastFightPerPlayer = snapshot
+        ShowTotalPopup(state.fightTotal, state.fightHits)
     end
     wipe(state.pendingExtra)
+end
+
+local function ResetStats()
+    state.sessionTotal = 0
+    state.sessionHits  = 0
+    state.fights       = 0
+    state.sessionStart = GetTime()
+    wipe(state.perPlayer)
+    -- Also reset per-fight and last-fight
+    state.fightTotal = 0
+    state.fightHits  = 0
+    state.lastFightTotal = 0
+    state.lastFightHits  = 0
+    wipe(state.fightPerPlayer)
+    state.lastFightPerPlayer = {}
+    wipe(state.pendingExtra)
+    HideTotalPopup()
 end
 
 -- ---------------------------------------------------------------------------
@@ -564,8 +608,28 @@ local function OnCombatLogEvent()
         if pending and GetTime() <= pending.expiresAt and pending.count > 0 then
             local dmgAmount = select(12, CombatLogGetCurrentEventInfo())
             if dmgAmount and dmgAmount > 0 then
-                state.wfBonusTotal = state.wfBonusTotal + dmgAmount
-                state.hitCount = state.hitCount + 1
+                -- Per-fight (for end-of-combat popup)
+                state.fightTotal = state.fightTotal + dmgAmount
+                state.fightHits  = state.fightHits + 1
+                -- Cumulative session
+                state.sessionTotal = state.sessionTotal + dmgAmount
+                state.sessionHits  = state.sessionHits + 1
+                -- Per-player accumulation (session-level)
+                local pp = state.perPlayer[sourceGUID]
+                if not pp then
+                    pp = { name = pending.name or sourceName, damage = 0, hits = 0, guid = sourceGUID }
+                    state.perPlayer[sourceGUID] = pp
+                end
+                pp.damage = pp.damage + dmgAmount
+                pp.hits = pp.hits + 1
+                -- Per-player accumulation (fight-level)
+                local fp = state.fightPerPlayer[sourceGUID]
+                if not fp then
+                    fp = { name = pending.name or sourceName, damage = 0, hits = 0, guid = sourceGUID }
+                    state.fightPerPlayer[sourceGUID] = fp
+                end
+                fp.damage = fp.damage + dmgAmount
+                fp.hits = fp.hits + 1
                 pending.count = pending.count - 1
                 SpawnScrollLine(pending.name or sourceName, dmgAmount, sourceGUID)
                 if state.debug then
@@ -776,11 +840,8 @@ SlashCmdList["WFIMPACT"] = function(msg)
     elseif msg == "test" or msg == "sim" then
         SimulateWFProcs()
     elseif msg == "reset" then
-        state.wfBonusTotal = 0
-        state.hitCount = 0
-        wipe(state.pendingExtra)
-        HideTotalPopup()
-        print("|cff00ccff[WF Impact]|r State reset.")
+        ResetStats()
+        print("|cff00ccff[WF Impact]|r Stats reset.")
     elseif msg == "debug" then
         state.debug = not state.debug
         if state.debug then
@@ -794,8 +855,8 @@ SlashCmdList["WFIMPACT"] = function(msg)
         print("  Enabled: " .. tostring(state.enabled))
         print("  Totem active: " .. tostring(state.wfTotemActive))
         print("  In combat: " .. tostring(state.inCombat))
-        print("  Bonus total: " .. FormatNumber(state.wfBonusTotal))
-        print("  Hit count: " .. tostring(state.hitCount))
+        print("  Session total: " .. FormatNumber(state.sessionTotal) .. " (" .. state.sessionHits .. " hits, " .. state.fights .. " fights)")
+        print("  This fight: " .. FormatNumber(state.fightTotal) .. " (" .. state.fightHits .. " hits)")
         print("  Debug: " .. tostring(state.debug))
     else
         print("|cff00ccff[WF Impact]|r Commands:")
@@ -841,4 +902,23 @@ ShammyTime_WFImpact = {
     ToggleLock         = ToggleLock,
     CheckTotem         = CheckWindfuryTotemActive,
     UpdateScrollPool   = UpdateScrollPoolSettings,
+    FormatNumber       = FormatNumber,
+    ShortName          = ShortName,
+    GetClassColor      = GetClassColorForGUID,
+    ResetStats         = ResetStats,
+    GetSessionStats    = function()
+        return state.sessionTotal, state.sessionHits, state.sessionStart, state.fights
+    end,
+    GetPerPlayer       = function()
+        -- Return a sorted snapshot of the cumulative per-player table
+        local sorted = {}
+        for _, pp in pairs(state.perPlayer) do
+            sorted[#sorted + 1] = { name = pp.name, damage = pp.damage, hits = pp.hits, guid = pp.guid }
+        end
+        table.sort(sorted, function(a, b) return a.damage > b.damage end)
+        return sorted
+    end,
+    GetLastFight       = function()
+        return state.lastFightTotal, state.lastFightHits, state.lastFightPerPlayer
+    end,
 }

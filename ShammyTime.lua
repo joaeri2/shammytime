@@ -707,7 +707,7 @@ local function ApplyElementMouseState()
     end
     if ShammyTime.EnsureWindfuryTotemBarFrame then
         local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
-        if bar then bar:EnableMouse(visible(bar) and useMouse or false) end
+        if bar then bar:EnableMouse(visible(bar)) end  -- always mouse-enabled for tooltip; drag gated by lock
     end
     local focusFrame = ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame()
     if focusFrame then focusFrame:EnableMouse(visible(focusFrame) and useMouse or false) end

@@ -279,6 +279,10 @@ local noTotemsFadeTimer = nil
 local noTotemsFaded = false  -- true when radial has been faded due to no totems
 local fadeGraceTimer = nil  -- one-shot: re-apply fade state when "procced" grace period ends (so "fade when not procced" takes effect)
 local focusFadeHoldTimer = nil  -- delay focus fade-out so off art shows before frame fades
+local imbueFadeHoldTimer = nil  -- delay imbue bar fade-out so icon shows briefly after imbue is applied
+local imbueFadeHoldUntil = nil  -- GetTime() deadline: hold imbue bar at full alpha until this time
+local imbueWasActiveLastCheck = false  -- track imbue state transitions (no-imbue → has-imbue)
+local IMBUE_APPLY_HOLD_SEC = 2  -- seconds to hold imbue bar visible after imbue is applied
 local circleFadeOutStarted = false  -- true once circle has started fading out; don't restore to 1 until next proc (avoids blink)
 ShammyTime.circleHovered = false  -- true while mouse is over center ring; pauses fade-out (no revive from 0)
 ShammyTime.radialNumbersVisible = false  -- true when radial numbers should be shown (prevents late re-show after fade)
@@ -310,6 +314,9 @@ function ShammyTime:OnResetAll()
     if wfPopupTimer then wfPopupTimer:Cancel(); wfPopupTimer = nil end
     if fadeGraceTimer then fadeGraceTimer:Cancel(); fadeGraceTimer = nil end
     if focusFadeHoldTimer then focusFadeHoldTimer:Cancel(); focusFadeHoldTimer = nil end
+    if imbueFadeHoldTimer then imbueFadeHoldTimer:Cancel(); imbueFadeHoldTimer = nil end
+    imbueFadeHoldUntil = nil
+    imbueWasActiveLastCheck = false
     if wfTestTimer then wfTestTimer:Cancel(); wfTestTimer = nil end
     if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel(); wfRadialHideNumbersTimer = nil end
 end
@@ -707,7 +714,7 @@ local function ApplyElementMouseState()
     end
     if ShammyTime.EnsureWindfuryTotemBarFrame then
         local bar = ShammyTime.EnsureWindfuryTotemBarFrame()
-        if bar then bar:EnableMouse(visible(bar) and useMouse or false) end
+        if bar then bar:EnableMouse(visible(bar)) end  -- always mouse-enabled for tooltip; drag gated by lock
     end
     local focusFrame = ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame()
     if focusFrame then focusFrame:EnableMouse(visible(focusFrame) and useMouse or false) end
@@ -1123,6 +1130,23 @@ function UpdateAllElementsFadeState()
     if imbueBar then
         if not db.wfImbueBarEnabled then imbueBar:Hide()
         else
+            -- Detect no-imbue → has-imbue transition: hold bar visible for IMBUE_APPLY_HOLD_SEC
+            -- so the player sees the icon appear before the bar fades out.
+            local imbueIsActive = imbueProcced and true or false
+            if imbueIsActive and not imbueWasActiveLastCheck then
+                -- Imbue just applied: hold bar at full alpha, refresh content
+                imbueFadeHoldUntil = GetTime() + IMBUE_APPLY_HOLD_SEC
+                if ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
+                -- Schedule re-evaluation after hold so the bar fades out
+                if imbueFadeHoldTimer then imbueFadeHoldTimer:Cancel() end
+                imbueFadeHoldTimer = C_Timer.NewTimer(IMBUE_APPLY_HOLD_SEC + 0.05, function()
+                    imbueFadeHoldTimer = nil
+                    imbueFadeHoldUntil = nil
+                    UpdateAllElementsFadeState()
+                end)
+            end
+            imbueWasActiveLastCheck = imbueIsActive
+
             local imbueFaded, imbueAlpha, imbueUseSlow
             local mod = useModuleFade and ShammyTime.db.profile.modules.weaponImbueBar
             if mod and ShammyTime.EvaluateFade then
@@ -1145,6 +1169,13 @@ function UpdateAllElementsFadeState()
                 imbueAlpha = imbueFaded and (fadedCombat and FADE_OUT_OF_COMBAT_ALPHA or FADE_ALPHA) or 1
                 imbueUseSlow = useSlowFade
             end
+
+            -- Hold override: keep bar at full alpha during the hold period after imbue application
+            if imbueFadeHoldUntil and GetTime() < imbueFadeHoldUntil and imbueFaded then
+                imbueFaded = false
+                imbueAlpha = 1
+            end
+
             imbueBar:Show()
             if imbueAlpha >= 0.99 and ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
             local effAlphaImbue = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("weaponImbueBar")) or 1
@@ -1300,6 +1331,39 @@ end
 
 -- Returns main hand and off hand weapon imbue data for the imbue bar (left = MH, right = OH).
 -- Returns: { mainHand = { icon, expirationTime, name, spellId } or nil, offHand = { ... } or nil }
+-- Scan player auras for weapon imbue buffs. Returns a table of { icon, name, spellId }
+-- entries keyed by lowercase imbue name prefix (e.g. "frostbrand", "windfury").
+-- Used as a fallback when the enchant ID isn't in our hardcoded tables.
+local cachedImbueAuras = nil
+local cachedImbueAurasTime = 0
+local function ScanWeaponImbueAuras()
+    local now = GetTime()
+    -- Cache for 0.5s to avoid scanning 40 auras every frame
+    if cachedImbueAuras and (now - cachedImbueAurasTime) < 0.5 then return cachedImbueAuras end
+    local result = {}
+    for i = 1, 40 do
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then break end
+        local auraName = v1
+        local is10 = (type(v4) == "string")
+        local auraIcon = is10 and v2 or v3
+        local auraSpellId = is10 and v10 or v11
+        -- Check by spell ID first (most reliable)
+        if auraSpellId and WEAPON_IMBUE_SPELL_IDS[auraSpellId] then
+            result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId }
+        else
+            -- Fallback: match by name
+            local lower = auraName and auraName:lower() or ""
+            if lower:find("flametongue") or lower:find("frostbrand") or lower:find("rockbiter") or lower:find("windfury") then
+                result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId }
+            end
+        end
+    end
+    cachedImbueAuras = result
+    cachedImbueAurasTime = now
+    return result
+end
+
 function ShammyTime.GetWeaponImbuePerHand()
     local out = { mainHand = nil, offHand = nil }
     if not GetWeaponEnchantInfo then return out end
@@ -1308,7 +1372,21 @@ function ShammyTime.GetWeaponImbuePerHand()
         if not hasEnchant or not expMs or expMs <= 0 or not enchantId then return nil end
         local spellId = WEAPON_IMBUE_ENCHANT_TO_SPELL[enchantId]
         local name = (spellId and GetSpellInfo and GetSpellInfo(spellId)) or "Weapon Imbue"
-        local icon = WEAPON_IMBUE_ENCHANT_ICONS[enchantId] or WEAPON_IMBUE_ICON_ID
+        -- Icon priority: GetSpellTexture (always correct from game DB) > hardcoded table > aura scan > generic
+        local icon = (spellId and GetSpellTexture and GetSpellTexture(spellId))
+                  or WEAPON_IMBUE_ENCHANT_ICONS[enchantId]
+        if not icon then
+            -- Unknown enchant ID: scan player auras for a matching imbue buff
+            local auras = ScanWeaponImbueAuras()
+            if auras and #auras > 0 then
+                -- Use the first matching aura icon; also grab spellId/name if we didn't have one
+                local a = auras[1]
+                icon = a.icon
+                if not spellId then spellId = a.spellId end
+                if name == "Weapon Imbue" then name = a.name or name end
+            end
+        end
+        icon = icon or WEAPON_IMBUE_ICON_ID
         local remainingSec = (type(expMs) == "number" and expMs / 1000) or 0
         local expirationTime = GetTime() + remainingSec
         return { icon = icon, expirationTime = expirationTime, name = name, spellId = spellId }
@@ -1626,6 +1704,9 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
             UpdateAllElementsFadeState()
         end
     elseif event == "UNIT_INVENTORY_CHANGED" and arg1 == "player" then
+        -- Weapon imbue apply/remove fires UNIT_INVENTORY_CHANGED (not always UNIT_AURA)
+        -- so re-evaluate fade state to reflect the new imbue status.
+        UpdateAllElementsFadeState()
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         OnCombatLogWindfury(...)
     elseif event == "PLAYER_REGEN_DISABLED" then

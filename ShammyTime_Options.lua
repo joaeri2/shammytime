@@ -788,6 +788,40 @@ function ShammyTime:SetupOptions()
                             if addon and addon.ApplyAllConfigs then addon:ApplyAllConfigs() end
                         end,
                     },
+                    presetsHeader = {
+                        type = "header",
+                        name = "Presets",
+                        order = 4,
+                    },
+                    presetsDesc = {
+                        type = "description",
+                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings — scale, position, and other options stay the same.\n",
+                        order = 4.1,
+                    },
+                    presetAlwaysVisible = {
+                        type = "execute",
+                        name = "Always Visible",
+                        desc = "Disable all fade: every module stays fully visible at all times.",
+                        order = 4.2,
+                        confirm = true,
+                        confirmText = "Apply the 'Always Visible' preset? This will disable all fade settings on every module.",
+                        func = function()
+                            local st = _G.ShammyTime
+                            if st and st.ApplyPresetAlwaysVisible then st:ApplyPresetAlwaysVisible() end
+                        end,
+                    },
+                    presetSmartFade = {
+                        type = "execute",
+                        name = "Smart Fade",
+                        desc = "Context-aware fading: modules disappear when not relevant (e.g. no buff active, no totems placed, out of combat).",
+                        order = 4.3,
+                        confirm = true,
+                        confirmText = "Apply the 'Smart Fade' preset? This will enable recommended fade settings on every module.",
+                        func = function()
+                            local st = _G.ShammyTime
+                            if st and st.ApplyPresetSmartFade then st:ApplyPresetSmartFade() end
+                        end,
+                    },
                     profile = {
                         type = "select",
                         name = "Profile",

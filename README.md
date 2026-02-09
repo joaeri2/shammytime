@@ -27,6 +27,14 @@ Fire, Earth, Water, Air with timers. Red overlay when out of range; "Gone" when 
 
 ---
 
+### WF Totem Damage
+
+Tracks the bonus damage your Windfury Totem gives to party members. Scrolling combat text floats each hit above your character, and a running total is shown below. Hover over the Air totem slot to see a per-player breakdown with damage and hit counts. Right-click the tooltip to reset stats.
+
+![Windfury Totem Party Damage](Screenshots/Windfury%20Totem%20Party%20Damage.png) ![Windfury Totem Party Damage Total](Screenshots/Windfury%20Totem%20Party%20Damage%20Total.png) ![Windfury Totem Tooltip](Screenshots/Windfury%20Totem%20Tooltip.png)
+
+---
+
 ### Weapon Imbue Bar
 
 Current imbue and time left (Flametongue, Frostbrand, Rockbiter, Windfury Weapon).
@@ -48,6 +56,14 @@ Lights up with a timer after a melee crit; next Shock costs 60% less for 15s.
 Shield charges (and time left where applicable).
 
 ![Shield ON](Screenshots/Shield%20ON.png) ![Shield OFF](Screenshots/Shield%20OFF.png)
+
+---
+
+### Presets
+
+Quickly set the fade behaviour for every module at once. **Always Visible** keeps everything on screen, while **Smart Fade** hides elements when they're not needed (out of combat, no target, etc.). Only fade settings are changed — scale, position, and other options stay the same.
+
+![Presets Smart Fade](Screenshots/Presets%20Smart%20Fade.png)
 
 ---
 

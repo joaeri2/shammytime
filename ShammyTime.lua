@@ -1331,6 +1331,39 @@ end
 
 -- Returns main hand and off hand weapon imbue data for the imbue bar (left = MH, right = OH).
 -- Returns: { mainHand = { icon, expirationTime, name, spellId } or nil, offHand = { ... } or nil }
+-- Scan player auras for weapon imbue buffs. Returns a table of { icon, name, spellId }
+-- entries keyed by lowercase imbue name prefix (e.g. "frostbrand", "windfury").
+-- Used as a fallback when the enchant ID isn't in our hardcoded tables.
+local cachedImbueAuras = nil
+local cachedImbueAurasTime = 0
+local function ScanWeaponImbueAuras()
+    local now = GetTime()
+    -- Cache for 0.5s to avoid scanning 40 auras every frame
+    if cachedImbueAuras and (now - cachedImbueAurasTime) < 0.5 then return cachedImbueAuras end
+    local result = {}
+    for i = 1, 40 do
+        local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
+        if not v1 then break end
+        local auraName = v1
+        local is10 = (type(v4) == "string")
+        local auraIcon = is10 and v2 or v3
+        local auraSpellId = is10 and v10 or v11
+        -- Check by spell ID first (most reliable)
+        if auraSpellId and WEAPON_IMBUE_SPELL_IDS[auraSpellId] then
+            result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId }
+        else
+            -- Fallback: match by name
+            local lower = auraName and auraName:lower() or ""
+            if lower:find("flametongue") or lower:find("frostbrand") or lower:find("rockbiter") or lower:find("windfury") then
+                result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId }
+            end
+        end
+    end
+    cachedImbueAuras = result
+    cachedImbueAurasTime = now
+    return result
+end
+
 function ShammyTime.GetWeaponImbuePerHand()
     local out = { mainHand = nil, offHand = nil }
     if not GetWeaponEnchantInfo then return out end
@@ -1339,7 +1372,21 @@ function ShammyTime.GetWeaponImbuePerHand()
         if not hasEnchant or not expMs or expMs <= 0 or not enchantId then return nil end
         local spellId = WEAPON_IMBUE_ENCHANT_TO_SPELL[enchantId]
         local name = (spellId and GetSpellInfo and GetSpellInfo(spellId)) or "Weapon Imbue"
-        local icon = WEAPON_IMBUE_ENCHANT_ICONS[enchantId] or WEAPON_IMBUE_ICON_ID
+        -- Icon priority: GetSpellTexture (always correct from game DB) > hardcoded table > aura scan > generic
+        local icon = (spellId and GetSpellTexture and GetSpellTexture(spellId))
+                  or WEAPON_IMBUE_ENCHANT_ICONS[enchantId]
+        if not icon then
+            -- Unknown enchant ID: scan player auras for a matching imbue buff
+            local auras = ScanWeaponImbueAuras()
+            if auras and #auras > 0 then
+                -- Use the first matching aura icon; also grab spellId/name if we didn't have one
+                local a = auras[1]
+                icon = a.icon
+                if not spellId then spellId = a.spellId end
+                if name == "Weapon Imbue" then name = a.name or name end
+            end
+        end
+        icon = icon or WEAPON_IMBUE_ICON_ID
         local remainingSec = (type(expMs) == "number" and expMs / 1000) or 0
         local expirationTime = GetTime() + remainingSec
         return { icon = icon, expirationTime = expirationTime, name = name, spellId = spellId }

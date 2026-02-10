@@ -112,9 +112,26 @@ local function CreateFocusFrame()
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         local db = GetDB()
-        db.point, _, db.relativePoint, db.x, db.y = self:GetPoint(1)
-        local relTo = select(2, self:GetPoint(1))
+        local point, relTo, relativePoint, x, y = self:GetPoint(1)
+        db.point = point
+        db.relativePoint = relativePoint
+        db.x = x
+        db.y = y
         db.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+        -- Keep modules.shamanisticFocus.pos in sync so ApplyAllConfigs
+        -- doesn't overwrite focusFrame with stale default values on reload.
+        local profile = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
+        if profile and profile.modules and profile.modules.shamanisticFocus then
+            local pos = profile.modules.shamanisticFocus.pos
+            if not pos then
+                pos = {}
+                profile.modules.shamanisticFocus.pos = pos
+            end
+            pos.point = point
+            pos.relPoint = relativePoint
+            pos.x = x
+            pos.y = y
+        end
     end)
 
     -- Shadow behind icon: same file as totems (wf_center_shadow.tga), custom size/offset/tint for this frame

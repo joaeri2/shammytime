@@ -447,16 +447,24 @@ function ShammyTime:ApplyAllConfigs()
                 if sz then p.fontImbueTimer = sz end
             end
         end
-        -- Sync shamanistic focus position from module pos to flat focusFrame (used by ShammyTime_ShamanisticFocus.lua)
+        -- Sync shamanistic focus: focusFrame is authoritative for position (drag
+        -- saves there), modules.pos is kept in sync for the options panel.
+        -- Previous code synced modules.pos → focusFrame, which overwrote the
+        -- user's saved position with AceDB defaults when modules.pos was never
+        -- explicitly written (only drag writes to focusFrame). Fix: sync the
+        -- other direction (focusFrame → modules.pos) for position, and keep
+        -- modules → focusFrame for scale (set by the options panel slider).
         if p.modules.shamanisticFocus then
             p.focusFrame = p.focusFrame or {}
+            p.modules.shamanisticFocus.pos = p.modules.shamanisticFocus.pos or {}
             local pos = p.modules.shamanisticFocus.pos
-            if pos then
-                p.focusFrame.x = (pos.x ~= nil) and pos.x or p.focusFrame.x
-                p.focusFrame.y = (pos.y ~= nil) and pos.y or p.focusFrame.y
-                p.focusFrame.point = pos.point or p.focusFrame.point
-                p.focusFrame.relativePoint = pos.relPoint or p.focusFrame.relativePoint
-            end
+            local ff = p.focusFrame
+            -- Position: focusFrame → modules.pos
+            if ff.x ~= nil then pos.x = ff.x end
+            if ff.y ~= nil then pos.y = ff.y end
+            if ff.point then pos.point = ff.point end
+            if ff.relativePoint then pos.relPoint = ff.relativePoint end
+            -- Scale: modules → focusFrame (options panel writes here)
             p.focusFrame.scale = p.modules.shamanisticFocus.scale or p.focusFrame.scale
         end
     end

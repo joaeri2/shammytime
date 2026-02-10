@@ -1,53 +1,69 @@
-cat > ~/clean_shammytime_zip.sh <<'BASH'
 #!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+# package_curseforge.sh — Create a clean CurseForge-ready zip
+# Run from anywhere:  bash Helpers/curseforge_zip_cleaner.sh
+# ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
-IN_ZIP="${1:-$HOME/Desktop/ShammyTime.zip}"
-OUT_ZIP="${2:-$HOME/Desktop/ShammyTime-clean.zip}"
+# ── Resolve addon root (one level up from Helpers/) ──
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ADDON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ADDON_NAME="$(basename "$ADDON_DIR")"
 
-if [[ ! -f "$IN_ZIP" ]]; then
-  echo "❌ Input zip not found: $IN_ZIP"
-  exit 1
-fi
+# ── Output location ──
+OUT_ZIP="${1:-$HOME/Desktop/${ADDON_NAME}.zip}"
 
-TMP_DIR="$(mktemp -d)"
-cleanup() { rm -rf "$TMP_DIR"; }
-trap cleanup EXIT
+echo "📦 Packaging: $ADDON_NAME"
+echo "   Source:    $ADDON_DIR"
+echo "   Output:    $OUT_ZIP"
+echo ""
 
-echo "📦 Unzipping: $IN_ZIP"
-unzip -q "$IN_ZIP" -d "$TMP_DIR"
+# Prevent macOS from embedding resource forks in the zip
+export COPYFILE_DISABLE=1
 
-# Remove macOS junk + git stuff
-echo "🧹 Removing macOS junk + git folders/files..."
-find "$TMP_DIR" -name ".DS_Store" -type f -delete 2>/dev/null || true
-find "$TMP_DIR" -name "__MACOSX" -type d -prune -exec rm -rf {} + 2>/dev/null || true
-find "$TMP_DIR" -name "._*" -type f -delete 2>/dev/null || true
-
-# Remove git metadata and common repo-only files
-find "$TMP_DIR" -name ".git" -type d -prune -exec rm -rf {} + 2>/dev/null || true
-find "$TMP_DIR" -name ".github" -type d -prune -exec rm -rf {} + 2>/dev/null || true
-find "$TMP_DIR" -name ".gitignore" -type f -delete 2>/dev/null || true
-find "$TMP_DIR" -name ".gitattributes" -type f -delete 2>/dev/null || true
-find "$TMP_DIR" -name ".gitmodules" -type f -delete 2>/dev/null || true
-
-# Figure out whether the zip contains a single top-level folder (common for addons)
-shopt -s nullglob dotglob
-ITEMS=("$TMP_DIR"/*)
-
-echo "🗜️ Repacking to: $OUT_ZIP"
+# Remove old zip if it exists
 rm -f "$OUT_ZIP"
 
-if [[ ${#ITEMS[@]} -eq 1 && -d "${ITEMS[0]}" ]]; then
-  # Keep the parent folder (so zip contains ShammyTime/...)
-  (cd "$TMP_DIR" && ditto -c -k --sequesterRsrc --keepParent "${ITEMS[0]##*/}" "$OUT_ZIP")
+# ── Create the zip ──
+# We cd to the parent of the addon folder so the zip contains
+# a top-level ShammyTime/ directory (required by WoW addons).
+cd "$ADDON_DIR/.."
+
+/usr/bin/zip -rX "$OUT_ZIP" "$ADDON_NAME" \
+  -x "${ADDON_NAME}/.git/*" \
+  -x "${ADDON_NAME}/.git*" \
+  -x "${ADDON_NAME}/.gitignore" \
+  -x "${ADDON_NAME}/.gitattributes" \
+  -x "${ADDON_NAME}/.gitmodules" \
+  -x "${ADDON_NAME}/.github/*" \
+  -x "${ADDON_NAME}/Helpers/*" \
+  -x "${ADDON_NAME}/Screenshots/*" \
+  -x "${ADDON_NAME}/README.md" \
+  -x "${ADDON_NAME}/.cursor/*" \
+  -x "*/.DS_Store" \
+  -x "*__MACOSX*" \
+  -x "*/._*" \
+  -x "._*" \
+  -x "*.swp" \
+  -x "*.swo" \
+  -x "*~"
+
+echo ""
+echo "✅ Done! Created: $OUT_ZIP"
+
+# ── Verify: list contents and check for junk ──
+echo ""
+echo "📋 Zip contents:"
+unzip -l "$OUT_ZIP" | awk 'NR>3 && /\// {print $NF}'
+echo ""
+
+# Final sanity check
+if unzip -l "$OUT_ZIP" | grep -qE "__MACOSX|\._|\.git|\.DS_Store|/Helpers/|/Screenshots/"; then
+  echo "⚠️  Warning: unwanted files may still be present — check the listing above."
 else
-  # Zip everything at top level
-  (cd "$TMP_DIR" && ditto -c -k --sequesterRsrc . "$OUT_ZIP")
+  echo "✅ Clean — no macOS junk, git files, or dev-only folders found."
 fi
 
-echo "✅ Done."
-echo "➡️ Output: $OUT_ZIP"
-BASH
-
-chmod +x ~/clean_shammytime_zip.sh
-~/clean_shammytime_zip.sh
+# Show zip size
+ZIP_SIZE=$(du -h "$OUT_ZIP" | cut -f1)
+echo "📏 Zip size: $ZIP_SIZE"

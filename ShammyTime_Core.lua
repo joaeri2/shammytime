@@ -284,7 +284,11 @@ function ShammyTime:EvaluateFade(moduleName, context)
             -- Only fade when an imbue IS active but has plenty of time left.
             -- When no imbue is registered at all, keep the bar visible so the
             -- player notices they need to apply one.
-            if context.imbueActive and not context.imbueShortTime then
+            -- When dual-wielding and one weapon is missing an imbue, never fade
+            -- so the player is reminded to apply the missing imbue.
+            if context.imbueMissingDW then
+                shouldFade = false  -- override: always visible when a weapon is unimbued
+            elseif context.imbueActive and not context.imbueShortTime then
                 shouldFade = true
             end
         elseif moduleName == "windfuryBubbles" and not context.wfProcced and not context.procAnimPlaying then

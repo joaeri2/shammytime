@@ -37,43 +37,99 @@ local WATER_SHIELD_SPELL_IDS = { 24398, 33736 }
 local WATER_SHIELD_ICON = "Interface\\Icons\\Ability_Shaman_WaterShield"
 local WATER_SHIELD_ICON_ID = 132315  -- FileDataID for clients where SetTexture(path) doesn't display
 
--- Weapon imbue buff spell IDs (Flametongue, Frostbrand, Rockbiter, Windfury Weapon – all ranks)
-local WEAPON_IMBUE_SPELL_IDS = {
-    [8024]=true, [8027]=true, [8030]=true, [16339]=true, [16341]=true, [16342]=true, [25489]=true,  -- Flametongue
-    [8033]=true, [8034]=true, [8037]=true, [10458]=true, [16352]=true, [16353]=true, [25500]=true, [25501]=true,  -- Frostbrand
-    [8017]=true, [8018]=true, [8019]=true, [10399]=true, [16314]=true, [16315]=true, [16316]=true, [25479]=true,  -- Rockbiter
-    [8232]=true, [8235]=true, [10486]=true, [16362]=true, [25505]=true,  -- Windfury Weapon
-}
-local WEAPON_IMBUE_ICON = "Interface\\Icons\\Spell_Fire_FlameTongue"
--- Numeric FileDataID for clients where SetTexture(path) doesn't display (e.g. TBC Anniversary); LibWeaponEnchantInfo uses 136040.
+-- Generic fallback icon for weapon imbues (Flametongue icon FileDataID = 136040).
 local WEAPON_IMBUE_ICON_ID = 136040
--- Icon when no weapon imbue is active (empty slot); Frostbrand icon = 135847 (Spell_Frost_FrostBrand).
-local WEAPON_IMBUE_EMPTY_ICON_ID = 135847
 -- Shamanistic Focus proc: "Focused" buff (spell 43339) from melee crit; next Shock costs 60% less, 15 sec (TBC).
 local FOCUSED_BUFF_SPELL_ID = 43339
 local FOCUSED_ICON = "Interface\\Icons\\Spell_Arcane_FocusedPower"
--- GetWeaponEnchantInfo returns mainHandEnchantID (4th) and offHandEnchantID (8th). Map enchant ID -> spellId (for name/GetSpellTexture) and icon FileDataID (fallback).
--- Sources: various clients; add more IDs from /st debug if your imbue isn't recognized.
-local WEAPON_IMBUE_ENCHANT_TO_SPELL = {
-    -- Flametongue (various ranks/sources)
-    [3]=25489, [4]=25489, [5]=25489, [124]=8024, [285]=8027, [523]=16339, [543]=8030, [1683]=16342, [2634]=25489,
-    -- Frostbrand
-    [2]=25501, [12]=25501,
-    -- Rockbiter (3031=TBC Anniversary; 503=Rockbiter 4, 683=Rockbiter 6; 1,6,29 from other clients). Spell 25479 = Rockbiter Weapon TBC.
-    [1]=25479, [6]=25479, [29]=25479, [503]=25479, [683]=25479, [3031]=25479,
-    -- Windfury Weapon (283=Windfury Rank 1 TBC Anniversary; 3787=Windfury 8; 563,564,1783 from totem/lib)
-    [15]=25505, [16]=25505, [17]=25505, [283]=25505, [563]=25505, [564]=25505, [1783]=25505, [3787]=25505,
-}
 -- Windfury Attack: spell ID for the actual proc damage in combat log (TBC: 25584).
 local WINDFURY_ATTACK_SPELL_ID = 25584
 
--- Enchant ID -> icon FileDataID. Rockbiter=136086 (Spell_Nature_RockBiter), Windfury=136114 (Spell_Nature_LightningShield/Windfury).
-local WEAPON_IMBUE_ENCHANT_ICONS = {
-    [3]=136040, [4]=136040, [5]=136040, [124]=136040, [285]=136040, [523]=136040, [543]=136040, [1683]=136040, [2634]=136040,
-    [2]=135847, [12]=135847,
-    [1]=136086, [6]=136086, [29]=136086, [503]=136086, [683]=136086, [3031]=136086,
-    [15]=136114, [16]=136114, [17]=136114, [283]=136114, [563]=136114, [564]=136114, [1783]=136114, [3787]=136114,
+-- ═══ Dynamic imbue detection (no hardcoded spell IDs or enchant IDs) ═══
+-- We detect imbues by string-matching known imbue keywords in weapon tooltips
+-- and the player's spellbook. This works across all client versions and ranks.
+local IMBUE_KEYWORDS = { "flametongue", "frostbrand", "rockbiter", "windfury" }
+
+-- Fallback icons per keyword (used only if spellbook scan hasn't run yet or finds nothing).
+local IMBUE_KEYWORD_FALLBACK_ICONS = {
+    flametongue = 136040,  -- Spell_Fire_FlameTongue
+    frostbrand  = 135847,  -- Spell_Frost_FrostBrand
+    rockbiter   = 136086,  -- Spell_Nature_RockBiter
+    windfury    = 136114,  -- Spell_Nature_Cyclone / Windfury
 }
+
+-- Dynamically populated from spellbook: keyword -> { name, icon, spellId }
+local imbueSpellCache = {}
+
+-- Scan the player's spellbook for known imbue spells. Called on login and SPELLS_CHANGED.
+-- Populates imbueSpellCache so we get correct icons/names without hardcoded spell IDs.
+-- Uses GetSpellBookItemName (Classic TBC API) to iterate, GetSpellTexture for icons.
+local function ScanSpellbookForImbues()
+    imbueSpellCache = {}
+    if not GetSpellBookItemName then return end
+    local i = 1
+    while true do
+        local spellName, spellSubName = GetSpellBookItemName(i, BOOKTYPE_SPELL)
+        if not spellName then break end
+        local lower = spellName:lower()
+        for _, keyword in ipairs(IMBUE_KEYWORDS) do
+            -- Match "Flametongue Weapon", "Windfury Weapon", etc. but not "Windfury Totem"
+            if lower:find(keyword) and (lower:find("weapon") or not lower:find("totem")) then
+                -- Get icon from spellbook slot (reliable on Classic TBC)
+                local spellIcon = GetSpellTexture and GetSpellTexture(i, BOOKTYPE_SPELL)
+                -- Keep overwriting: spellbook is ordered by rank, so last = highest rank
+                imbueSpellCache[keyword] = {
+                    name = spellName,
+                    icon = spellIcon,
+                }
+            end
+        end
+        i = i + 1
+    end
+end
+
+-- Hidden tooltip for scanning weapon enchant text (never shown to the player).
+local imbueTooltip = CreateFrame("GameTooltip", "ShammyTimeImbueTooltip", nil, "GameTooltipTemplate")
+imbueTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+
+-- Cache: inventorySlot -> { keyword, tooltipLine, enchantId, time }
+local tooltipCache = {}
+local TOOLTIP_CACHE_TTL = 2  -- seconds before re-scanning tooltip
+
+-- Scan a weapon tooltip to identify which imbue (if any) is applied.
+-- inventorySlot: 16 = main hand, 17 = off hand.
+-- Returns: keyword (e.g. "windfury"), display line (e.g. "Windfury Weapon (60 min)"); or nil, nil.
+local function GetImbueFromTooltip(inventorySlot, enchantId)
+    local now = GetTime()
+    local cached = tooltipCache[inventorySlot]
+    if cached and cached.enchantId == enchantId and (now - cached.time) < TOOLTIP_CACHE_TTL then
+        return cached.keyword, cached.tooltipLine
+    end
+
+    imbueTooltip:ClearLines()
+    imbueTooltip:SetInventoryItem("player", inventorySlot)
+    local keyword, tooltipLine
+    for i = 1, imbueTooltip:NumLines() do
+        local textObj = _G["ShammyTimeImbueTooltipTextLeft" .. i]
+        if textObj then
+            local line = textObj:GetText()
+            if line then
+                local lower = line:lower()
+                for _, kw in ipairs(IMBUE_KEYWORDS) do
+                    if lower:find(kw) then
+                        keyword = kw
+                        tooltipLine = line
+                        break
+                    end
+                end
+                if keyword then break end
+            end
+        end
+    end
+
+    tooltipCache[inventorySlot] = { keyword = keyword, tooltipLine = tooltipLine, enchantId = enchantId, time = now }
+    return keyword, tooltipLine
+end
 
 -- Totems that do NOT put a buff on the player (no way to detect range via buffs). Never show buff-based out-of-range for these.
 -- Stoneclaw: buff 8072 only appears when the totem absorbs damage, not when in range, so we use position-only.
@@ -1311,34 +1367,37 @@ end
 ShammyTime.GetElementalShieldAura = GetElementalShieldAura
 
 -- Get weapon imbue from GetWeaponEnchantInfo (primary on Classic/TBC – direct API for temp weapon enchants).
--- Returns: icon, expirationTime, name, spellId. Uses enchant ID (4th/8th return) to pick correct icon/name per imbue.
+-- Returns: icon, expirationTime, name, spellId. Uses tooltip scanning to identify which imbue is applied.
 local function GetWeaponImbueFromEnchantInfo()
     if not GetWeaponEnchantInfo then return nil end
-    -- Returns: hasMH, expMH, chargesMH, enchantIdMH, hasOH, expOH, chargesOH, enchantIdOH (exp in ms on some clients)
     local hasMH, expMH, _, enchantIdMH, hasOH, expOH, _, enchantIdOH = GetWeaponEnchantInfo()
     local hasEnchant = (hasMH and expMH and expMH > 0) or (hasOH and expOH and expOH > 0)
     if not hasEnchant then return nil end
-    local enchantId = (hasMH and expMH and expMH > 0) and enchantIdMH or enchantIdOH
-    local spellId = (enchantId and WEAPON_IMBUE_ENCHANT_TO_SPELL[enchantId]) or nil
-    local name = (spellId and GetSpellInfo and GetSpellInfo(spellId)) or "Weapon Imbue"
-    local icon = (enchantId and WEAPON_IMBUE_ENCHANT_ICONS[enchantId]) or WEAPON_IMBUE_ICON_ID
-    -- Expiration: API returns time remaining in milliseconds (wowwiki: thousandths of seconds).
-    local remaining = (hasMH and expMH and expMH > 0) and expMH or expOH
+    -- Pick whichever hand has the imbue (prefer MH)
+    local isMH = (hasMH and expMH and expMH > 0)
+    local enchantId = isMH and enchantIdMH or enchantIdOH
+    local invSlot = isMH and 16 or 17  -- INVSLOT_MAINHAND=16, INVSLOT_OFFHAND=17
+    local remaining = isMH and expMH or expOH
+
+    -- Identify imbue via tooltip string matching
+    local keyword, tooltipLine = GetImbueFromTooltip(invSlot, enchantId)
+    local cached = keyword and imbueSpellCache[keyword]
+
+    local icon = (cached and cached.icon) or (keyword and IMBUE_KEYWORD_FALLBACK_ICONS[keyword]) or WEAPON_IMBUE_ICON_ID
+    local name = (cached and cached.name) or tooltipLine or "Weapon Imbue"
+
     local remainingSec = (type(remaining) == "number" and remaining / 1000) or 0
     local expirationTime = GetTime() + remainingSec
-    return icon, expirationTime, name, spellId
+    return icon, expirationTime, name, nil
 end
 
--- Returns main hand and off hand weapon imbue data for the imbue bar (left = MH, right = OH).
--- Returns: { mainHand = { icon, expirationTime, name, spellId } or nil, offHand = { ... } or nil }
--- Scan player auras for weapon imbue buffs. Returns a table of { icon, name, spellId }
--- entries keyed by lowercase imbue name prefix (e.g. "frostbrand", "windfury").
--- Used as a fallback when the enchant ID isn't in our hardcoded tables.
+-- Scan player auras for weapon imbue buffs (string matching by imbue keyword).
+-- Returns a list of { icon, name, spellId, keyword } entries.
+-- Used as a tertiary fallback when tooltip scanning is unavailable.
 local cachedImbueAuras = nil
 local cachedImbueAurasTime = 0
 local function ScanWeaponImbueAuras()
     local now = GetTime()
-    -- Cache for 0.5s to avoid scanning 40 auras every frame
     if cachedImbueAuras and (now - cachedImbueAurasTime) < 0.5 then return cachedImbueAuras end
     local result = {}
     for i = 1, 40 do
@@ -1348,14 +1407,11 @@ local function ScanWeaponImbueAuras()
         local is10 = (type(v4) == "string")
         local auraIcon = is10 and v2 or v3
         local auraSpellId = is10 and v10 or v11
-        -- Check by spell ID first (most reliable)
-        if auraSpellId and WEAPON_IMBUE_SPELL_IDS[auraSpellId] then
-            result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId }
-        else
-            -- Fallback: match by name
-            local lower = auraName and auraName:lower() or ""
-            if lower:find("flametongue") or lower:find("frostbrand") or lower:find("rockbiter") or lower:find("windfury") then
-                result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId }
+        local lower = auraName and auraName:lower() or ""
+        for _, keyword in ipairs(IMBUE_KEYWORDS) do
+            if lower:find(keyword) then
+                result[#result + 1] = { icon = auraIcon, name = auraName, spellId = auraSpellId, keyword = keyword }
+                break
             end
         end
     end
@@ -1364,35 +1420,50 @@ local function ScanWeaponImbueAuras()
     return result
 end
 
+-- Returns main hand and off hand weapon imbue data for the imbue bar (left = MH, right = OH).
+-- Returns: { mainHand = { icon, expirationTime, name, spellId } or nil, offHand = { ... } or nil }
+-- Detection flow: GetWeaponEnchantInfo (presence + timer) → tooltip scan (identify which imbue) → spellbook cache (icon/name).
 function ShammyTime.GetWeaponImbuePerHand()
     local out = { mainHand = nil, offHand = nil }
     if not GetWeaponEnchantInfo then return out end
     local hasMH, expMH, _, enchantIdMH, hasOH, expOH, _, enchantIdOH = GetWeaponEnchantInfo()
-    local function makeSlot(hasEnchant, expMs, enchantId)
-        if not hasEnchant or not expMs or expMs <= 0 or not enchantId then return nil end
-        local spellId = WEAPON_IMBUE_ENCHANT_TO_SPELL[enchantId]
-        local name = (spellId and GetSpellInfo and GetSpellInfo(spellId)) or "Weapon Imbue"
-        -- Icon priority: GetSpellTexture (always correct from game DB) > hardcoded table > aura scan > generic
-        local icon = (spellId and GetSpellTexture and GetSpellTexture(spellId))
-                  or WEAPON_IMBUE_ENCHANT_ICONS[enchantId]
+
+    local function makeSlot(hasEnchant, expMs, enchantId, inventorySlot)
+        if not hasEnchant or not expMs or expMs <= 0 then return nil end
+
+        -- 1) Identify which imbue via tooltip string matching (most reliable, no hardcoded IDs)
+        local keyword, tooltipLine = GetImbueFromTooltip(inventorySlot, enchantId)
+
+        -- 2) Look up icon/name from spellbook cache (dynamically populated)
+        local cached = keyword and imbueSpellCache[keyword]
+        local icon = cached and cached.icon
+        local name = cached and cached.name
+
+        -- 3) Fallback: use keyword-based static icon if spellbook didn't have it
+        if not icon and keyword then
+            icon = IMBUE_KEYWORD_FALLBACK_ICONS[keyword]
+            name = name or tooltipLine
+        end
+
+        -- 4) Last resort: scan auras for any weapon imbue buff
         if not icon then
-            -- Unknown enchant ID: scan player auras for a matching imbue buff
             local auras = ScanWeaponImbueAuras()
             if auras and #auras > 0 then
-                -- Use the first matching aura icon; also grab spellId/name if we didn't have one
                 local a = auras[1]
                 icon = a.icon
-                if not spellId then spellId = a.spellId end
-                if name == "Weapon Imbue" then name = a.name or name end
+                name = name or a.name
             end
         end
+
         icon = icon or WEAPON_IMBUE_ICON_ID
+        name = name or "Weapon Imbue"
         local remainingSec = (type(expMs) == "number" and expMs / 1000) or 0
         local expirationTime = GetTime() + remainingSec
-        return { icon = icon, expirationTime = expirationTime, name = name, spellId = spellId }
+        return { icon = icon, expirationTime = expirationTime, name = name, spellId = nil }
     end
-    out.mainHand = makeSlot(hasMH, expMH, enchantIdMH)
-    out.offHand = makeSlot(hasOH, expOH, enchantIdOH)
+
+    out.mainHand = makeSlot(hasMH, expMH, enchantIdMH, 16)  -- INVSLOT_MAINHAND
+    out.offHand  = makeSlot(hasOH, expOH, enchantIdOH, 17)   -- INVSLOT_OFFHAND
     return out
 end
 
@@ -1403,26 +1474,28 @@ function ShammyTime.HasAnyWeaponImbue()
 end
 
 -- Returns first weapon imbue on player: icon, expirationTime, name, spellId; or nil if none.
--- Uses UnitAura first (for name/icon/spellId), then GetWeaponEnchantInfo so imbue always shows on TBC Anniversary.
--- Per https://warcraft.wiki.gg/wiki/API_UnitAura: 10 returns = name,icon,count,dispelType,duration,expirationTime,source,...,spellId(10th).
+-- Uses UnitAura name matching first, then GetWeaponEnchantInfo + tooltip scan so imbue always shows on TBC Anniversary.
 local function GetWeaponImbueAura()
+    -- 1) Try UnitAura: scan for any buff whose name matches a known imbue keyword
     for i = 1, 40 do
         local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
         if not v1 then break end
-        local name = v1
+        local auraName = v1
         local is10 = (type(v4) == "string")
         local icon = is10 and v2 or v3
         local expTime = is10 and v6 or v7
         local spellId = is10 and v10 or v11
-        if spellId and WEAPON_IMBUE_SPELL_IDS[spellId] then
-            return icon, expTime, name, spellId
-        end
-        local lowerName = name and name:lower() or ""
-        if lowerName:find("flametongue") or lowerName:find("frostbrand") or lowerName:find("rockbiter") or lowerName:find("windfury") then
-            return icon, expTime, name, spellId
+        local lower = auraName and auraName:lower() or ""
+        for _, keyword in ipairs(IMBUE_KEYWORDS) do
+            if lower:find(keyword) then
+                -- Use spellbook icon if available (more reliable than aura icon on some clients)
+                local cached = imbueSpellCache[keyword]
+                if cached and cached.icon then icon = cached.icon end
+                return icon, expTime, auraName, spellId
+            end
         end
     end
-    -- UnitAura can miss imbue on some clients (e.g. TBC Anniversary); use GetWeaponEnchantInfo (see LibWeaponEnchantInfo).
+    -- 2) UnitAura can miss imbue on some clients (e.g. TBC Anniversary); fall back to GetWeaponEnchantInfo + tooltip.
     return GetWeaponImbueFromEnchantInfo()
 end
 
@@ -1683,9 +1756,11 @@ else
     eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 end
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         RestoreWindfuryDB()
+        ScanSpellbookForImbues()  -- populate imbue icon/name cache from spellbook
         UpdateAllSlots()
         -- Show Windfury radial (center ring + satellites) if enabled; always visible unless disabled
         ShowWindfuryRadial()
@@ -1696,6 +1771,8 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
             ApplyLockStateToAllFrames()
         end)
         print(C.green .. "ShammyTime loaded." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for information or " .. C.gold .. "/st options" .. C.r .. C.gray .. " to enter the options panel." .. C.r)
+    elseif event == "SPELLS_CHANGED" then
+        ScanSpellbookForImbues()  -- re-scan when spells change (talent respec, level up)
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
     elseif event == "UNIT_AURA" then
@@ -1706,6 +1783,8 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     elseif event == "UNIT_INVENTORY_CHANGED" and arg1 == "player" then
         -- Weapon imbue apply/remove fires UNIT_INVENTORY_CHANGED (not always UNIT_AURA)
         -- so re-evaluate fade state to reflect the new imbue status.
+        -- Invalidate tooltip cache so the next update re-scans the weapon tooltip.
+        tooltipCache = {}
         UpdateAllElementsFadeState()
     elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
         OnCombatLogWindfury(...)
@@ -1728,7 +1807,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     end
 end)
 
--- Debug: dump UnitAura return order and weapon imbue detection (run with /st debug).
+-- Debug: dump weapon imbue detection (run with /st debug).
 local function DebugWeaponImbue()
     print("=== ShammyTime weapon imbue debug ===")
     -- 1) GetWeaponEnchantInfo (primary on Classic/TBC); 4th/8th = mainHandEnchantID, offHandEnchantID
@@ -1737,15 +1816,55 @@ local function DebugWeaponImbue()
         print(("GetWeaponEnchantInfo: hasMH=%s expMH=%s enchantIdMH=%s hasOH=%s expOH=%s enchantIdOH=%s"):format(
             tostring(hasMH), tostring(expMH), tostring(enchantIdMH), tostring(hasOH), tostring(expOH), tostring(enchantIdOH)))
     end
-    -- 2) What GetWeaponImbueAura returns (UnitAura + GetWeaponEnchantInfo fallback)
+    -- 2) Spellbook imbue cache (dynamically scanned)
+    print("Spellbook imbue cache:")
+    for _, keyword in ipairs(IMBUE_KEYWORDS) do
+        local c = imbueSpellCache[keyword]
+        if c then
+            print(("  %s: name=%q icon=%s"):format(keyword, tostring(c.name), tostring(c.icon)))
+        else
+            print(("  %s: (not found in spellbook)"):format(keyword))
+        end
+    end
+    -- 3) Tooltip scan for each weapon slot
+    if GetWeaponEnchantInfo then
+        local hasMH, expMH, _, enchantIdMH, hasOH, expOH, _, enchantIdOH = GetWeaponEnchantInfo()
+        if hasMH and expMH and expMH > 0 then
+            local kw, line = GetImbueFromTooltip(16, enchantIdMH)
+            print(("Tooltip MH (slot 16): keyword=%s line=%q"):format(tostring(kw), tostring(line)))
+        else
+            print("Tooltip MH (slot 16): no enchant active")
+        end
+        if hasOH and expOH and expOH > 0 then
+            local kw, line = GetImbueFromTooltip(17, enchantIdOH)
+            print(("Tooltip OH (slot 17): keyword=%s line=%q"):format(tostring(kw), tostring(line)))
+        else
+            print("Tooltip OH (slot 17): no enchant active")
+        end
+    end
+    -- 4) GetWeaponImbuePerHand (final combined result)
+    local perHand = ShammyTime.GetWeaponImbuePerHand()
+    if perHand.mainHand then
+        print(("GetWeaponImbuePerHand MH: name=%q icon=%s exp=%s"):format(
+            tostring(perHand.mainHand.name), tostring(perHand.mainHand.icon), tostring(perHand.mainHand.expirationTime)))
+    else
+        print("GetWeaponImbuePerHand MH: nil")
+    end
+    if perHand.offHand then
+        print(("GetWeaponImbuePerHand OH: name=%q icon=%s exp=%s"):format(
+            tostring(perHand.offHand.name), tostring(perHand.offHand.icon), tostring(perHand.offHand.expirationTime)))
+    else
+        print("GetWeaponImbuePerHand OH: nil")
+    end
+    -- 5) GetWeaponImbueAura (legacy single-imbue path)
     local icon, expTime, name, spellId = GetWeaponImbueAura()
     if name then
-        print(("GetWeaponImbueAura: name=%q icon=%s (type=%s) expTime=%s (type=%s) spellId=%s"):format(
-            tostring(name), tostring(icon), type(icon), tostring(expTime), type(expTime), tostring(spellId)))
+        print(("GetWeaponImbueAura: name=%q icon=%s (type=%s) expTime=%s spellId=%s"):format(
+            tostring(name), tostring(icon), type(icon), tostring(expTime), tostring(spellId)))
     else
         print("GetWeaponImbueAura: returned nil (no imbue found)")
     end
-    -- 3) First 8 buffs: raw UnitAura returns (positions 1-11) so we see API order
+    -- 6) First 8 buffs: raw UnitAura returns (positions 1-11) so we see API order
     print("First 8 HELPFUL auras (raw positions 1-11 from UnitAura):")
     for i = 1, 8 do
         local v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11 = UnitAura("player", i, "HELPFUL")
@@ -1756,9 +1875,12 @@ local function DebugWeaponImbue()
         local is10 = (type(v4) == "string")
         print(("  [%d] name=%q | v2=%s v3=%s v4=%s (type=%s) v5=%s v6=%s v7=%s | v10=%s v11=%s | is10=%s"):format(
             i, tostring(v1), tostring(v2), tostring(v3), tostring(v4), type(v4), tostring(v5), tostring(v6), tostring(v7), tostring(v10), tostring(v11), tostring(is10)))
-        -- If this looks like a weapon imbue by name, say so
-        if v1 and (tostring(v1):find("Flametongue") or tostring(v1):find("Frostbrand") or tostring(v1):find("Rockbiter") or tostring(v1):find("Windfury")) then
-            print(("       ^^^ weapon imbue by name; spellId would be v10=%s or v11=%s"):format(tostring(v10), tostring(v11)))
+        local lower = tostring(v1):lower()
+        for _, keyword in ipairs(IMBUE_KEYWORDS) do
+            if lower:find(keyword) then
+                print(("       ^^^ weapon imbue (%s); spellId would be v10=%s or v11=%s"):format(keyword, tostring(v10), tostring(v11)))
+                break
+            end
         end
     end
     print("=== end debug ===")

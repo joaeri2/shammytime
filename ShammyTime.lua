@@ -944,6 +944,36 @@ local function AnyImbueRemainingUnder(thresholdSec)
     return false
 end
 
+-- True if the player is dual-wielding and at least one weapon slot is missing an imbue.
+-- When this is true the imbue bar should stay visible as a reminder to apply the missing imbue.
+local function IsDualWieldMissingImbue()
+    -- OffHandHasWeapon: check if slot 17 (INVSLOT_OFFHAND) has an item equipped
+    local ohLink = GetInventoryItemLink and GetInventoryItemLink("player", 17)
+    if not ohLink then return false end  -- not dual-wielding (no off-hand weapon or shield)
+    -- Player has something in off-hand; check if it's actually a weapon (not a shield/held-in-off-hand)
+    -- On Classic TBC, GetInventoryItemID + GetItemInfo can be slow; simplest reliable check:
+    -- if GetWeaponEnchantInfo reports an off-hand enchant slot exists, it's a weapon.
+    -- But we can also just check: does one hand have an imbue and the other doesn't?
+    local hands = ShammyTime.GetWeaponImbuePerHand and ShammyTime.GetWeaponImbuePerHand()
+    if not hands then return false end
+    local now = GetTime()
+    local hasMH = hands.mainHand and hands.mainHand.expirationTime and (hands.mainHand.expirationTime - now) > 0
+    local hasOH = hands.offHand and hands.offHand.expirationTime and (hands.offHand.expirationTime - now) > 0
+    -- Missing imbue = one hand has it and the other doesn't, OR neither has it (both missing while dual-wielding)
+    if hasMH and hasOH then return false end  -- both imbued, nothing missing
+    -- At least one is missing; check that the off-hand is actually a weapon (not a shield).
+    -- Shields/held items can't receive imbues, so missing an imbue on a shield is expected.
+    local ohId = GetInventoryItemID and GetInventoryItemID("player", 17)
+    if ohId then
+        local _, _, _, _, _, _, itemSubType, _, itemEquipLoc = GetItemInfo(ohId)
+        -- Shields and held-in-off-hand items can't receive imbues
+        if itemEquipLoc == "INVTYPE_SHIELD" or itemEquipLoc == "INVTYPE_HOLDABLE" then
+            return false
+        end
+    end
+    return true  -- dual-wielding weapons with at least one imbue missing
+end
+
 -- Fade state: apply "fade out of combat", "fade when not procced", and "fade when no totems" to all elements. Uses slow fade animations when wfFadeOutOfCombat is on.
 -- When profile.modules[moduleName].fade.enabled is set, uses ShammyTime:EvaluateFade(moduleName, context) for per-module conditions.
 function UpdateAllElementsFadeState()
@@ -1000,6 +1030,7 @@ function UpdateAllElementsFadeState()
     local hasFocusBuff = ShammyTime.HasFocusedBuff and ShammyTime.HasFocusedBuff()
     local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
     local imbueShortTime = AnyImbueRemainingUnder(db.wfImbueFadeThresholdSec or 120)
+    local imbueMissingDW = IsDualWieldMissingImbue()  -- dual-wielding with at least one weapon unimbued
     local hasShield = (ShammyTime.GetElementalShieldAura and ShammyTime.GetElementalShieldAura()) and true or false
     local anyTotemOutOfRange = false
     if ShammyTime.GetTotemSlotData then
@@ -1017,6 +1048,7 @@ function UpdateAllElementsFadeState()
         focusActive = hasFocusBuff,
         imbueActive = imbueProcced,
         imbueShortTime = imbueShortTime,
+        imbueMissingDW = imbueMissingDW,
         wfProcced = wfProcced,
         procAnimPlaying = procAnimPlaying,
         outOfRange = anyTotemOutOfRange,
@@ -1228,6 +1260,13 @@ function UpdateAllElementsFadeState()
 
             -- Hold override: keep bar at full alpha during the hold period after imbue application
             if imbueFadeHoldUntil and GetTime() < imbueFadeHoldUntil and imbueFaded then
+                imbueFaded = false
+                imbueAlpha = 1
+            end
+
+            -- Dual-wield override: keep bar visible when one weapon is missing an imbue
+            -- so the player is reminded to apply the missing imbue.
+            if imbueMissingDW and imbueFaded then
                 imbueFaded = false
                 imbueAlpha = 1
             end

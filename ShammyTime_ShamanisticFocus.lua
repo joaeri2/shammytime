@@ -33,6 +33,7 @@ local focusTestFadeOutTimer = nil
 local focusTestActive = false
 local focusOverlayFadingOff = false  -- true while overlay is fading on->off; prevents interruption
 local focusOverlayFadingOn = false   -- true while overlay is fading off->on; prevents restart
+local shockCDPollTicker = nil  -- polls for shock CD expiry when Focused buff is up but shocks on CD
 
 local DEFAULTS = {
     point = "CENTER",
@@ -82,6 +83,47 @@ local function HasFocusedBuff()
         if type(name) == "string" and name:find("Focus", 1, true) then return true end
     end
     return false
+end
+
+-- Shock spells (all share a 6-second cooldown in TBC). We only need to find one the player knows.
+local SHOCK_SPELLS = { "Earth Shock", "Flame Shock", "Frost Shock" }
+local GCD_THRESHOLD = 1.5  -- durations <= 1.5s are just the GCD, not a real shock cooldown
+
+-- Returns true when shock spells are off cooldown (ready to cast), ignoring the GCD.
+local function AreShocksReady()
+    for _, spellName in ipairs(SHOCK_SPELLS) do
+        local start, duration, enabled = GetSpellCooldown(spellName)
+        if start then
+            -- Found a shock spell the player knows
+            if duration and duration > GCD_THRESHOLD then
+                return false  -- on real cooldown (not just GCD)
+            end
+            return true  -- off cooldown (or only GCD remaining)
+        end
+    end
+    -- No shock spell found in spellbook — assume ready
+    return true
+end
+
+-- Forward-declare UpdateFocus so the poll timer can call it (defined later).
+local UpdateFocus
+
+-- SPELL_UPDATE_COOLDOWN doesn't reliably fire when cooldowns naturally expire in Classic WoW.
+-- When the Focused buff is active but shocks are on CD, we poll every 0.1s until the CD expires
+-- so the lamp lights up the moment shocks become usable again.
+local function StopShockCDPoll()
+    if shockCDPollTicker then
+        shockCDPollTicker:Cancel()
+        shockCDPollTicker = nil
+    end
+end
+local function StartShockCDPoll()
+    if shockCDPollTicker then return end  -- already polling
+    shockCDPollTicker = C_Timer.NewTicker(0.1, function()
+        if not focusTestActive then
+            UpdateFocus()
+        end
+    end)
 end
 
 local function CreateFocusFrame()
@@ -256,9 +298,9 @@ local function CreateFocusFrame()
     return f
 end
 
--- Simple light logic: ON when buff is on, OFF when buff is off, with smooth animations.
+-- Simple light logic: ON when buff is on AND shocks off CD, OFF otherwise, with smooth animations.
 -- hasBuffOverride: hint from main addon, but we always verify with HasFocusedBuff() for ground truth.
-local function UpdateFocus(hasBuffOverride)
+UpdateFocus = function(hasBuffOverride)
     local f = CreateFocusFrame()
     
     -- Always check the REAL buff state - this is ground truth
@@ -268,6 +310,17 @@ local function UpdateFocus(hasBuffOverride)
     -- (fade-off means we saw the buff end via UNIT_AURA, so we have fresher info than the override)
     if hasBuffOverride == true and not buffIsOn and not focusOverlayFadingOff then
         buffIsOn = true
+    end
+    
+    -- Even with the Focused buff active, only glow when shocks are off cooldown.
+    -- This makes the lamp signal "you can use your cheap shock RIGHT NOW."
+    if buffIsOn and not AreShocksReady() then
+        buffIsOn = false
+        -- Buff is up but shocks on CD — poll until CD expires so the lamp re-lights.
+        StartShockCDPoll()
+    else
+        -- Either buff is off or shocks are ready; no need to poll.
+        StopShockCDPoll()
     end
     
     local currentAlpha = f.focusOn:GetAlpha() or 0
@@ -395,6 +448,7 @@ function ShammyTime.StopShamanisticFocusTest()
     -- Clean up any in-progress fade state from test
     focusOverlayFadingOff = false
     focusOverlayFadingOn = false
+    StopShockCDPoll()
     if focusFrame then
         focusFrame.stopAlphaTicker()
         focusFrame.stopPulseTicker()
@@ -433,6 +487,7 @@ local playerGUID  -- cached on ADDON_LOADED; UnitGUID("player") is not available
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 if eventFrame.RegisterUnitEvent then
     eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 else
@@ -449,6 +504,11 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     if event == "UNIT_AURA" then
         if arg1 ~= "player" then return end
+        if not focusTestActive then UpdateFocus() end
+        return
+    end
+    if event == "SPELL_UPDATE_COOLDOWN" then
+        -- Re-evaluate lamp: shock cooldown may have just expired while Focused buff is still up
         if not focusTestActive then UpdateFocus() end
         return
     end
@@ -481,6 +541,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
 end)
 
 ShammyTime.HasFocusedBuff = HasFocusedBuff
+ShammyTime.AreShocksReady = AreShocksReady
 ShammyTime.GetShamanisticFocusFrame = function() return focusFrame end
 -- Called from main addon after setting focus frame alpha. Pass hasBuff when main addon already computed it so "on" art shows even if UNIT_AURA order lags.
 ShammyTime.UpdateShamanisticFocusVisual = UpdateFocus

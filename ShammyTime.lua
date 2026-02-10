@@ -161,6 +161,30 @@ local TOTEM_POSITION_RANGE = {
     ["Windfury Totem"] = 20,
 }
 
+-- Subset of TOTEM_POSITION_RANGE: totems that affect friendly targets. Totemic Mastery talent
+-- increases their radius to 30 yards. Enemy-affecting totems (Searing, Magma, etc.) are excluded.
+local FRIENDLY_POSITION_TOTEMS = {
+    ["Windfury Totem"] = true,
+    ["Tremor Totem"] = true,
+    ["Poison Cleansing Totem"] = true,
+    ["Disease Cleansing Totem"] = true,
+}
+
+-- Totemic Mastery talent detection (Restoration tab, requires 10 points).
+-- When learned, friendly totem radius is increased to 30 yards.
+local hasTotemicMastery = false
+
+local function RefreshTotemicMastery()
+    hasTotemicMastery = false
+    for i = 1, GetNumTalents(3) do  -- tab 3 = Restoration
+        local name, _, _, _, rank = GetTalentInfo(3, i)
+        if name == "Totemic Mastery" then
+            hasTotemicMastery = (rank and rank > 0)
+            return
+        end
+    end
+end
+
 -- Totem name (from GetTotemInfo) → buff spell ID on player. When totem is down but player
 -- doesn't have this buff, we're out of range. Match by exact name or by prefix (e.g. "Mana Spring Totem" matches "Mana Spring Totem II").
 -- Only include totems that put a *persistent* aura on the player (not procs like Windfury).
@@ -211,14 +235,26 @@ local function IsTotemWithNoRangeBuff(totemName)
 end
 
 -- Max range in yards for position-based totems (no player buff). Match by exact name or prefix. Returns number or nil.
+-- Applies Totemic Mastery bonus (30 yards) to friendly totems when the talent is learned.
 local function GetTotemPositionRange(totemName)
     if not totemName or totemName == "" then return nil end
     local range = TOTEM_POSITION_RANGE[totemName]
-    if range then return range end
-    for key, yards in pairs(TOTEM_POSITION_RANGE) do
-        if totemName:find(key, 1, true) == 1 then return yards end
+    local key = totemName
+    if not range then
+        for k, yards in pairs(TOTEM_POSITION_RANGE) do
+            if totemName:find(k, 1, true) == 1 then
+                range = yards
+                key = k
+                break
+            end
+        end
     end
-    return nil
+    if not range then return nil end
+    -- Totemic Mastery: friendly totems get 30-yard range
+    if hasTotemicMastery and FRIENDLY_POSITION_TOTEMS[key] then
+        return math.max(range, 30)
+    end
+    return range
 end
 
 -- Distance in yards between two positions. WoW UnitPosition returns posY, posX, posZ (coords in yards).
@@ -1800,6 +1836,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         RestoreWindfuryDB()
         ScanSpellbookForImbues()  -- populate imbue icon/name cache from spellbook
+        RefreshTotemicMastery()   -- cache Totemic Mastery talent state for friendly totem range
         UpdateAllSlots()
         -- Show Windfury radial (center ring + satellites) if enabled; always visible unless disabled
         ShowWindfuryRadial()
@@ -1812,6 +1849,7 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1, ...)
         print(C.green .. "ShammyTime loaded." .. C.r .. C.gray .. " Type " .. C.gold .. "/st" .. C.r .. C.gray .. " for information or " .. C.gold .. "/st options" .. C.r .. C.gray .. " to enter the options panel." .. C.r)
     elseif event == "SPELLS_CHANGED" then
         ScanSpellbookForImbues()  -- re-scan when spells change (talent respec, level up)
+        RefreshTotemicMastery()   -- re-check Totemic Mastery on respec / level up
     elseif event == "PLAYER_TOTEM_UPDATE" then
         UpdateAllSlots()
     elseif event == "UNIT_AURA" then

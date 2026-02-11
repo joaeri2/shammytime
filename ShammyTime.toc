@@ -28,3 +28,4 @@ ShammyTime_Windfury.lua
 ShammyTime_ShamanisticFocus.lua
 ShammyTime_WFImpact.lua
 ShammyTime_POC_CombatCapture.lua
+ShammyTime_PressureOverlay.lua

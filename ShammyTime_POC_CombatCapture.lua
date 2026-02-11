@@ -37,6 +37,7 @@ local PS = {
     pressureRatio = 0,   -- normalized pressure (steady-state ~1.0)
     displayGain = 1.20,  -- display multiplier for readability (tunable)
     burstDamping = 1.20, -- denominator blend; higher = fewer one-hit spikes
+    denominatorFloor = 200, -- minimum denominator; prevents idle-to-first-hit ratio spikes
     displayTau = 0.30,   -- EMA tau for decay / general smoothing
     displayTauRise = 0.12, -- faster rise for snappy burst feedback
     pressureDisplaySmoothed = 0,
@@ -88,6 +89,10 @@ local PS = {
     -- Tier thresholds (single hits stay T0; sustained pressure earns T1+)
     tierThresholds = { 1.15, 1.55, 1.90, 2.50, 3.20 },
 }
+
+-- Expose pressure state for other modules (e.g. overlay visuals)
+ShammyTime_PressureState = PS
+
 local TIER_COLORS = {
     { 0.5, 0.5, 0.5 },   -- T0: grey (idle)
     { 0.2, 0.8, 0.2 },   -- T1: green
@@ -473,6 +478,7 @@ local function OnPressureTick(_, dt)
     local scale = s.tauFast / s.tauSlow
     local steadyDen = s.slowCharge * scale
     local dampedDen = (steadyDen + (s.fastCharge * s.burstDamping)) / (1 + s.burstDamping)
+    dampedDen = math_max(dampedDen, s.denominatorFloor)
     s.pressureRatio = s.fastCharge / math_max(dampedDen, s.epsilon)
 
     local now = GetTime()

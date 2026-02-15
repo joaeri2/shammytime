@@ -59,9 +59,9 @@ M.TEX = {
     GLOW       = M.MEDIA .. "glow_soft.tga",
     RING_RUNES = M.MEDIA .. "ring_runes.tga",
     ASSET_TEST = M.MEDIA .. "wf_asset_test.tga",
-    -- Shamanistic Focus proc indicator (light on / light off)
-    FOCUS_ON  = M.MEDIA .. "shamanistic_focus_on.tga",
-    FOCUS_OFF = M.MEDIA .. "shamanistic_focus_off.tga",
+    -- Shamanistic Focus proc indicator (light on / light off, 512×512)
+    FOCUS_ON  = M.MEDIA .. "v2_shamanistic_focus_on_256x256.tga",
+    FOCUS_OFF = M.MEDIA .. "v2_shamanistic_focus_off_256x256.tga",
     -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha)
     -- Note: assets are 256×213; code crops to a square (1:1) when rendering.
     LIGHTNING_SHIELD_OFF = M.MEDIA .. "lightning_shield_off_256_213.tga",

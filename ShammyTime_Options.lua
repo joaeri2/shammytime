@@ -1352,6 +1352,22 @@ function ShammyTime:SetupOptions()
                             end,
                         },
                     }, true),  -- noFade: fade settings don't apply to the damage feed
+                    windfuryIcd = CreateModuleOptions("windfuryIcd", "Windfury ICD", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Windfury has a 3-second internal cooldown after each proc. This indicator lamp shows whether Windfury can proc (bright) or is on cooldown (dark, with a countdown). Works with both the personal Windfury Weapon imbue and the Windfury Totem buff.\n\nThe indicator automatically hides when you have no Windfury on any weapon and no Windfury Totem is active.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                    }),
                 },
             },
             -----------------------------------------------------------------

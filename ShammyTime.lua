@@ -818,6 +818,10 @@ local function ApplyElementMouseState()
         local shieldFrame = ShammyTime.EnsureShieldFrame()
         if shieldFrame then shieldFrame:EnableMouse(visible(shieldFrame) and useMouse or false) end
     end
+    if ShammyTime.GetWindfuryICDFrame then
+        local icdFrame = ShammyTime.GetWindfuryICDFrame()
+        if icdFrame then icdFrame:EnableMouse(visible(icdFrame) and useMouse or false) end
+    end
     if ShammyTime.SetSatellitesEnableMouse then
         ShammyTime.SetSatellitesEnableMouse(visible(center) and useMouse or false)
     end
@@ -863,6 +867,22 @@ local function ApplyElementVisibility()
         local shieldFrame = ShammyTime.EnsureShieldFrame()
         if shieldFrame then
             if enabled("wfShieldEnabled") then shieldFrame:Show() else shieldFrame:Hide() end
+        end
+    end
+    -- Windfury ICD indicator
+    if ShammyTime.EnsureWindfuryICDFrame then
+        local icdFrame = ShammyTime.EnsureWindfuryICDFrame()
+        if icdFrame then
+            if enabled("wfIcdEnabled") then
+                -- Only show when windfury is available (imbue or totem)
+                if ShammyTime.HasWindfuryAvailable and ShammyTime.HasWindfuryAvailable() then
+                    icdFrame:Show()
+                else
+                    icdFrame:Hide()
+                end
+            else
+                icdFrame:Hide()
+            end
         end
     end
     ApplyElementMouseState()
@@ -1034,6 +1054,10 @@ function UpdateAllElementsFadeState()
             local shield = ShammyTime.EnsureShieldFrame()
             if shield then shield:Show(); shield:SetAlpha(1) end
         end
+        if ShammyTime.GetWindfuryICDFrame then
+            local icdFrame = ShammyTime.GetWindfuryICDFrame()
+            if icdFrame then icdFrame:Show(); icdFrame:SetAlpha(1) end
+        end
         ApplyElementMouseState()
         return
     end
@@ -1081,6 +1105,7 @@ function UpdateAllElementsFadeState()
             if data and data.rangeState == "out" then anyTotemOutOfRange = true; break end
         end
     end
+    local hasWindfury = ShammyTime.HasWindfuryAvailable and ShammyTime.HasWindfuryAvailable() or false
     local fadeContext = {
         inCombat = inCombat,
         hasTarget = hasTarget,
@@ -1096,6 +1121,7 @@ function UpdateAllElementsFadeState()
         outOfRange = anyTotemOutOfRange,
         hasShield = hasShield,
         shieldCharges = shieldCharges,
+        hasWindfury = hasWindfury,
     }
 
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
@@ -1338,6 +1364,29 @@ function UpdateAllElementsFadeState()
                 end
             else
                 SetOrAnimateFade(shieldFrame, effAlphaShield, false, false)
+            end
+        end
+    end
+    -- Windfury ICD indicator: auto-hide when no WF available; per-module fade when enabled
+    if ShammyTime.GetWindfuryICDFrame and db.wfIcdEnabled then
+        local icdFrame = ShammyTime.GetWindfuryICDFrame()
+        if icdFrame then
+            if not hasWindfury then
+                icdFrame:Hide()
+            else
+                icdFrame:Show()
+                local effAlphaIcd = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("windfuryIcd")) or 1
+                local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryIcd
+                if mod and ShammyTime.EvaluateFade then
+                    if mod.fade and mod.fade.enabled then
+                        local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("windfuryIcd", fadeContext)
+                        SetOrAnimateFade(icdFrame, effAlphaIcd * (shouldFade and targetAlpha or 1), useSlowMod, shouldFade)
+                    else
+                        SetOrAnimateFade(icdFrame, effAlphaIcd, false, false)
+                    end
+                else
+                    SetOrAnimateFade(icdFrame, effAlphaIcd, false, false)
+                end
             end
         end
     end
@@ -2270,6 +2319,18 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         end
     elseif cmd == "debug" then
         DebugWeaponImbue()
+    -- ICD debug: /st icd [debug|status]
+    elseif cmd == "icd" then
+        local sub = arg:lower():gsub("^%s+", ""):gsub("%s+$", "")
+        if sub == "debug" then
+            if ShammyTime.ToggleICDDebug then ShammyTime.ToggleICDDebug() end
+        elseif sub == "status" then
+            if ShammyTime.PrintICDStatus then ShammyTime.PrintICDStatus() end
+        else
+            print(C.gray .. "ShammyTime ICD commands:" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st icd debug" .. C.r .. C.gray .. "  — Toggle verbose combat log debug output" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st icd status" .. C.r .. C.gray .. " — Print current ICD state (frame, imbues, totems)" .. C.r)
+        end
     -- Show/hide elements: /st show [circle|totem|focus|imbue] [on|off]
     elseif cmd == "show" then
         local sub, subarg = arg:match("^(%S+)%s*(.*)$")
@@ -2297,13 +2358,18 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if on then db.wfShieldEnabled = true; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Lightning/Water Shield indicator shown." .. C.r)
             elseif off then db.wfShieldEnabled = false; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Lightning/Water Shield indicator hidden." .. C.r)
             else print(C.gray .. "ShammyTime: Shield " .. (db.wfShieldEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st show shield on|off" .. C.r) end
+        elseif sub == "icd" then
+            if on then db.wfIcdEnabled = true; UpdateAllElementsFadeState(); ApplyElementVisibility(); print(C.green .. "ShammyTime: Windfury ICD indicator shown." .. C.r)
+            elseif off then db.wfIcdEnabled = false; UpdateAllElementsFadeState(); ApplyElementVisibility(); print(C.green .. "ShammyTime: Windfury ICD indicator hidden." .. C.r)
+            else print(C.gray .. "ShammyTime: ICD " .. (db.wfIcdEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st show icd on|off" .. C.r) end
         elseif sub == "" or sub == "list" then
             local c = db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local t = db.wfTotemBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local f = db.wfFocusEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local i = db.wfImbueBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local sh = db.wfShieldEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
-            print(C.gray .. "ShammyTime: Show — circle " .. c .. C.gray .. ", totem " .. t .. C.gray .. ", focus " .. f .. C.gray .. ", imbue " .. i .. C.gray .. ", shield " .. sh .. C.gray .. ". " .. C.gold .. "/st show <element> on|off" .. C.r)
+            local icd = db.wfIcdEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
+            print(C.gray .. "ShammyTime: Show — circle " .. c .. C.gray .. ", totem " .. t .. C.gray .. ", focus " .. f .. C.gray .. ", imbue " .. i .. C.gray .. ", shield " .. sh .. C.gray .. ", icd " .. icd .. C.gray .. ". " .. C.gold .. "/st show <element> on|off" .. C.r)
             PrintShowHelp()
         else
             print(C.red .. "ShammyTime: Unknown element " .. (C.gold .. "'" .. sub .. "'" .. C.r) .. C.red .. ". Use circle, totem, focus, imbue, shield. " .. C.gold .. "/st show" .. C.r .. C.red .. " for list." .. C.r)

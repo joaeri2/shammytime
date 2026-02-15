@@ -67,6 +67,9 @@ M.TEX = {
     -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha), 256×256
     LIGHTNING_SHIELD_OFF = M.MEDIA .. "v2_lightning_shield_off_256x256.tga",
     LIGHTNING_SHIELD_ON  = M.MEDIA .. "v2_lightning_shield_on_256x256.tga",
+    -- Windfury ICD indicator (on = WF ready, off = ICD active / WF on cooldown), 256×256
+    WF_ICD_ON  = M.MEDIA .. "v2_windfury_icd_on_256x256.tga",
+    WF_ICD_OFF = M.MEDIA .. "v2_windfury_icd_off_256x256.tga",
 }
 
 -- Optional font (use GameFontNormal etc. if not set)

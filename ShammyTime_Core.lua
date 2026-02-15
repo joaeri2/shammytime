@@ -53,6 +53,7 @@ local DEFAULTS = {
             totemBar = moduleDefaults(true, 1.2, 1.0),
             weaponImbueBar = moduleDefaults(true, 0.85, 1.0),
             wfImpact = moduleDefaults(true, 1.3, 1.0),
+            windfuryIcd = moduleDefaults(true, 0.8, 1.0),
         },
         -- Flat keys (existing code)
         point = "CENTER",
@@ -75,6 +76,7 @@ local DEFAULTS = {
         wfFocusEnabled = true,
         wfImbueBarEnabled = true,
         wfShieldEnabled = true,
+        wfIcdEnabled = true,
         shieldScale = 0.4,
         shieldCount = nil,
         shieldCountX = 1,
@@ -130,6 +132,10 @@ local DEFAULTS = {
         focusFrame = {
             point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
             x = -381.49990844727, y = 0.51829099655151, scale = 1.3, locked = false,
+        },
+        windfuryIcdFrame = {
+            point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
+            x = 0, y = -250, scale = 0.8, locked = false,
         },
     },
 }
@@ -296,6 +302,8 @@ function ShammyTime:EvaluateFade(moduleName, context)
             shouldFade = true
         elseif moduleName == "shieldIndicator" and not context.hasShield then
             shouldFade = true
+        elseif moduleName == "windfuryIcd" and not context.hasWindfury then
+            shouldFade = true
         end
     end
     if cond.hideWhenActive then
@@ -336,6 +344,9 @@ function ShammyTime:SyncFlatToModules(opts)
     end
     if p.modules.shieldIndicator then
         p.modules.shieldIndicator.enabled = (p.wfShieldEnabled ~= false)
+    end
+    if p.modules.windfuryIcd then
+        p.modules.windfuryIcd.enabled = (p.wfIcdEnabled ~= false)
     end
 
     -- Scale: flat → modules
@@ -404,6 +415,12 @@ function ShammyTime:SyncFlatToModules(opts)
             p.modules.shieldIndicator.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
             p.modules.shieldIndicator.fade.enabled = p.wfFadeOutOfCombat or p.modules.shieldIndicator.fade.enabled or false
         end
+        if p.modules.windfuryIcd then
+            p.modules.windfuryIcd.fade = p.modules.windfuryIcd.fade or {}
+            p.modules.windfuryIcd.fade.conditions = p.modules.windfuryIcd.fade.conditions or {}
+            p.modules.windfuryIcd.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.windfuryIcd.fade.enabled = p.wfFadeOutOfCombat or p.modules.windfuryIcd.fade.enabled or false
+        end
     end
 end
 
@@ -418,6 +435,7 @@ function ShammyTime:ApplyAllConfigs()
     if p.wfImbueBarEnabled == nil then p.wfImbueBarEnabled = true end
     if p.wfShieldEnabled == nil then p.wfShieldEnabled = true end
     if p.wfImpactEnabled == nil then p.wfImpactEnabled = true end
+    if p.wfIcdEnabled == nil then p.wfIcdEnabled = true end
     if p.fontShieldCount == nil then p.fontShieldCount = p.fontImbueTimer or 86 end
     -- Sync flat keys from modules so existing code sees them
     if p.modules then
@@ -427,6 +445,7 @@ function ShammyTime:ApplyAllConfigs()
         if p.modules.weaponImbueBar then p.wfImbueBarEnabled = (p.modules.weaponImbueBar.enabled ~= false) end
         if p.modules.shieldIndicator then p.wfShieldEnabled = (p.modules.shieldIndicator.enabled ~= false) end
         if p.modules.wfImpact then p.wfImpactEnabled = (p.modules.wfImpact.enabled ~= false) end
+        if p.modules.windfuryIcd then p.wfIcdEnabled = (p.modules.windfuryIcd.enabled ~= false) end
         if p.modules.windfuryBubbles then p.wfRadialScale = p.modules.windfuryBubbles.scale or p.wfRadialScale end
         if p.modules.totemBar then p.wfTotemBarScale = p.modules.totemBar.scale or p.wfTotemBarScale end
         if p.modules.shieldIndicator then p.shieldScale = p.modules.shieldIndicator.scale or p.shieldScale end
@@ -484,6 +503,7 @@ function ShammyTime:ApplyAllConfigs()
     if ShammyTime.EnsureImbueBarFrame then ShammyTime.EnsureImbueBarFrame() end
     if ShammyTime.EnsureShieldFrame then ShammyTime.EnsureShieldFrame() end
     if ShammyTime.GetShamanisticFocusFrame then ShammyTime.GetShamanisticFocusFrame() end
+    if ShammyTime.EnsureWindfuryICDFrame then ShammyTime.EnsureWindfuryICDFrame() end
 
     -- Call each module's ApplyConfig() so scale/alpha/position from profile.modules are applied (spec)
     if self.Modules then
@@ -501,6 +521,7 @@ function ShammyTime:ApplyAllConfigs()
         _G.ShammyTimeImbueBarFrame,
         _G.ShammyTimeShieldFrame,
         ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame() or nil,
+        ShammyTime.GetWindfuryICDFrame and ShammyTime.GetWindfuryICDFrame() or nil,
     }
     for _, frame in ipairs(framesToClearCache) do
         if frame then frame._stFadeTarget = nil end
@@ -528,7 +549,7 @@ end
 function ShammyTime:ApplyPresetAlwaysVisible()
     local p = self.db and self.db.profile
     if not p or not p.modules then return end
-    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator" }
+    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd" }
     for _, name in ipairs(moduleNames) do
         local m = p.modules[name]
         if m then
@@ -631,6 +652,18 @@ function ShammyTime:ApplyPresetSmartFade()
         wf.fade.conditions.fadeInOnTarget = false
     end
 
+    -- Windfury ICD: fade when out of combat
+    local icd = p.modules.windfuryIcd
+    if icd then
+        icd.fade = icd.fade or {}
+        icd.fade.enabled = true
+        icd.fade.inactiveAlpha = 0
+        icd.fade.conditions = icd.fade.conditions or {}
+        icd.fade.conditions.outOfCombat = true
+        icd.fade.conditions.noTarget = false
+        icd.fade.conditions.inactiveBuff = false
+    end
+
     -- Sync legacy flat keys
     p.wfFadeOutOfCombat = false
     p.wfFadeWhenNotProcced = true
@@ -682,6 +715,7 @@ local MODULE_RESET_FLAT_KEYS = {
     shieldIndicator = {
         "fontShieldCount",
     },
+    windfuryIcd = {},
 }
 
 --- Reset a single module to defaults
@@ -726,7 +760,7 @@ function ShammyTime:PlayDemo()
     local addon = self  -- Capture for closures
     addon.demoActive = true
     if addon.UpdateAllElementsFadeState then addon:UpdateAllElementsFadeState() end
-    local order = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator" }
+    local order = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd" }
     for i, name in ipairs(order) do
         C_Timer.After((i - 1) * 2, function()
             if not addon.demoActive then return end

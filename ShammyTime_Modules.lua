@@ -281,7 +281,7 @@ function weaponImbueBar:ApplyConfig()
     if st and st.ApplyImbueBarPosition then
         st.ApplyImbueBarPosition()
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.4
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.85
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)

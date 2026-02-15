@@ -255,7 +255,7 @@ local function BuildFullExportLines(useColorCodes)
     line("")
     sec("Totem bar")
     line("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
-    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 12))
+    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 10))
     line("")
     sec("Shamanistic Focus (position and scale)")
     if p.focusFrame then
@@ -269,12 +269,12 @@ local function BuildFullExportLines(useColorCodes)
     end
     line("")
     sec("Imbue bar (scale, layout, offsets, font)")
-    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.35))
+    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.85))
     line("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
     line("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
     line("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
     line("imbueBarIconSize = " .. tostring(p.imbueBarIconSize or "nil"))
-    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 28))
+    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 16))
     line("")
     sec("Shield indicator")
     line("shieldScale = " .. tostring(p.shieldScale or 0.4))
@@ -1014,19 +1014,65 @@ function ShammyTime:SetupOptions()
                         },
                         textHeader = {
                             type = "header",
-                            name = "Text Sizes",
+                            name = "Text",
                             order = 4.1,
                         },
                         fontTotemTimer = {
                             type = "range",
-                            name = "Timer Font",
+                            name = "Text Size",
                             min = 4, max = 20, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontTotemTimer", 12) end,
+                            get = function() return getFlatDB("fontTotemTimer", 10) end,
                             set = function(_, v)
                                 setFlatDB("fontTotemTimer", v)
                                 local st = _G.ShammyTime
                                 if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
+                            end,
+                        },
+                        totemModTextX = {
+                            type = "range",
+                            name = "Text X",
+                            desc = "Horizontal offset for totem timer text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.3,
+                            get = function()
+                                local p = getDB()
+                                if p and p.totemLayout and p.totemLayout.timerOffsetX ~= nil then
+                                    return p.totemLayout.timerOffsetX
+                                end
+                                return 0
+                            end,
+                            set = function(_, v)
+                                local p = getDB()
+                                if p then
+                                    p.totemLayout = p.totemLayout or {}
+                                    p.totemLayout.timerOffsetX = v
+                                end
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                            end,
+                        },
+                        totemModTextY = {
+                            type = "range",
+                            name = "Text Y",
+                            desc = "Vertical offset for totem timer text (negative = down).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.4,
+                            get = function()
+                                local p = getDB()
+                                if p and p.totemLayout and p.totemLayout.timerOffsetY ~= nil then
+                                    return p.totemLayout.timerOffsetY
+                                end
+                                return -2
+                            end,
+                            set = function(_, v)
+                                local p = getDB()
+                                if p then
+                                    p.totemLayout = p.totemLayout or {}
+                                    p.totemLayout.timerOffsetY = v
+                                end
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
                             end,
                         },
                         noTotemsFadeDelay = {
@@ -1072,19 +1118,45 @@ function ShammyTime:SetupOptions()
                         },
                         textHeader = {
                             type = "header",
-                            name = "Text Sizes",
+                            name = "Text",
                             order = 4.1,
                         },
                         fontImbueTimer = {
                             type = "range",
-                            name = "Timer Font",
+                            name = "Text Size",
                             min = 6, max = 64, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontImbueTimer", 28) end,
+                            get = function() return getFlatDB("fontImbueTimer", 16) end,
                             set = function(_, v)
                                 setFlatDB("fontImbueTimer", v)
                                 local st = _G.ShammyTime
                                 if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                            end,
+                        },
+                        imbueModTextX = {
+                            type = "range",
+                            name = "Text X",
+                            desc = "Horizontal offset for imbue timer text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("imbueTextX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("imbueTextX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                            end,
+                        },
+                        imbueModTextY = {
+                            type = "range",
+                            name = "Text Y",
+                            desc = "Vertical offset for imbue timer text (negative = down).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.4,
+                            get = function() return getFlatDB("imbueTextY", -20) end,
+                            set = function(_, v)
+                                setFlatDB("imbueTextY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                             end,
                         },
                         imbueFadeThreshold = {
@@ -1535,28 +1607,110 @@ function ShammyTime:SetupOptions()
                         name = "Other",
                         order = 60,
                     },
+                    totemTextHeader = {
+                        type = "header",
+                        name = "Totem Bar Text",
+                        order = 60.5,
+                    },
                     fontTotemTimer = {
                         type = "range",
-                        name = "Totem Timer Font",
+                        name = "Totem Text Size",
                         min = 4, max = 20, step = 1,
                         order = 61,
-                        get = function() return getFlatDB("fontTotemTimer", 12) end,
+                        get = function() return getFlatDB("fontTotemTimer", 10) end,
                         set = function(_, v)
                             setFlatDB("fontTotemTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
                         end,
                     },
+                    totemTextX = {
+                        type = "range",
+                        name = "Totem Text X",
+                        desc = "Horizontal offset for totem timer text (positive = right).",
+                        min = -100, max = 100, step = 1,
+                        order = 61.1,
+                        get = function()
+                            local p = getDB()
+                            if p and p.totemLayout and p.totemLayout.timerOffsetX ~= nil then
+                                return p.totemLayout.timerOffsetX
+                            end
+                            return 0
+                        end,
+                        set = function(_, v)
+                            local p = getDB()
+                            if p then
+                                p.totemLayout = p.totemLayout or {}
+                                p.totemLayout.timerOffsetX = v
+                            end
+                            local st = _G.ShammyTime
+                            if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                        end,
+                    },
+                    totemTextY = {
+                        type = "range",
+                        name = "Totem Text Y",
+                        desc = "Vertical offset for totem timer text (negative = down).",
+                        min = -100, max = 100, step = 1,
+                        order = 61.2,
+                        get = function()
+                            local p = getDB()
+                            if p and p.totemLayout and p.totemLayout.timerOffsetY ~= nil then
+                                return p.totemLayout.timerOffsetY
+                            end
+                            return -33
+                        end,
+                        set = function(_, v)
+                            local p = getDB()
+                            if p then
+                                p.totemLayout = p.totemLayout or {}
+                                p.totemLayout.timerOffsetY = v
+                            end
+                            local st = _G.ShammyTime
+                            if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                        end,
+                    },
+                    imbueTextHeader = {
+                        type = "header",
+                        name = "Imbue Bar Text",
+                        order = 61.9,
+                    },
                     fontImbueTimer = {
                         type = "range",
-                        name = "Imbue Timer Font",
+                        name = "Imbue Text Size",
                         min = 6, max = 64, step = 1,
                         order = 62,
-                        get = function() return getFlatDB("fontImbueTimer", 28) end,
+                        get = function() return getFlatDB("fontImbueTimer", 16) end,
                         set = function(_, v)
                             setFlatDB("fontImbueTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                        end,
+                    },
+                    imbueTextX = {
+                        type = "range",
+                        name = "Imbue Text X",
+                        desc = "Horizontal offset for imbue timer text (positive = right).",
+                        min = -100, max = 100, step = 1,
+                        order = 62.1,
+                        get = function() return getFlatDB("imbueTextX", 0) end,
+                        set = function(_, v)
+                            setFlatDB("imbueTextX", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                        end,
+                    },
+                    imbueTextY = {
+                        type = "range",
+                        name = "Imbue Text Y",
+                        desc = "Vertical offset for imbue timer text (negative = down).",
+                        min = -100, max = 100, step = 1,
+                        order = 62.2,
+                        get = function() return getFlatDB("imbueTextY", -20) end,
+                        set = function(_, v)
+                            setFlatDB("imbueTextY", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                         end,
                     },
                     shieldTextHeader = {

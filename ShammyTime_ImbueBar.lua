@@ -1,6 +1,6 @@
 -- ShammyTime_ImbueBar.lua
--- Movable weapon imbue bar (512×261 nohalo): left = main hand, right = off hand.
--- Same look as Windfury totem bar: icon, shadow under icon, timer below. No range checks.
+-- Movable weapon imbue bar (512×512, layered back/front): left = main hand, right = off hand.
+-- Draw order: layer 1 = back, 2 = imbue icons, 3 = front texture, 4 = timer text.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
 local addonName = ...
@@ -18,30 +18,26 @@ local function GetDB()
     return {}
 end
 
--- Layout: BAR_W/BAR_H match imbue_bar_512_261_nohalo.tga (512×261)
-local BAR_W, BAR_H = 512, 261
-local DEFAULT_IMBUE_BAR_SCALE = 0.35
+-- Layout: 512×512 art, cropped vertically (same approach as totem bar)
+local BAR_W = 286
+local CROP_TOP = 0.15      -- skip top 30% of texture (empty)
+local CROP_BOTTOM = 0.85   -- skip bottom 30% of texture (empty)
+local BAR_H = math.floor(BAR_W * (CROP_BOTTOM - CROP_TOP) + 0.5)
+local DEFAULT_IMBUE_BAR_SCALE = 0.85
 
--- ═══ EDIT THESE TO MOVE AND RESIZE THE IMBUE ICONS (left=MH, right=OH) ═══
--- Change numbers, save file, then /reload in game. No in-game commands needed.
-local SLOT_MARGIN   = 78   -- pixels from bar left to first icon (bigger = both icons shift right)
-local SLOT_GAP      = 80    -- pixels between main-hand and off-hand icon
-local SLOT_OFFSET_Y = -117  -- vertical position: more negative = icons lower on the bar (e.g. -100 to -160)
-local ICON_SIZE     = 80    -- icon size in pixels (e.g. 28–56). Larger = bigger icons.
+-- ═══ IMBUE ICON LAYOUT (adjust live with /st imbue) ═══
+local ICONS_X = 0           -- horizontal offset for both icons (positive = right)
+local ICONS_Y = 0           -- vertical offset from center (negative = down)
+local ICONS_SPREAD = 1.45    -- spread multiplier (1.0 = default; <1 = tighter; >1 = wider)
+local ICON_SIZE = 57         -- icon width & height in pixels
+local TIMER_OFFSET_X = 0    -- timer text horizontal offset from icon center (positive = right)
+local TIMER_OFFSET_Y = -20  -- timer text offset below icon center (negative = down)
 -- ═══════════════════════════════════════════════════════════════════════
-
-local SLOT_H = 32
-local ICON_OFFSET_TOP = -3
-local TIMER_OFFSET_BOTTOM = -50
-local TIMER_FONT_SIZE = 29
--- Shadow behind icon (same style as totem bar: wf_center_shadow.tga, drop below icon)
-local ICON_SHADOW_OFFSET_X = 2
-local ICON_SHADOW_OFFSET_Y = 15
-local ICON_SHADOW_TINT = { 0, 0, 0, 0.85 }
+local TIMER_FONT_SIZE = 16
+local BASE_GAP = 60         -- default pixel gap between icon centers at spread 1.0
 local ICON_ALPHA_ACTIVE = 0.9
 local ICON_ALPHA_EMPTY = 0
 local TIMER_COLOR = { 0.88, 0.86, 0.82 }
-local SLOT_FRAME_ALPHA = 0.94
 local EMPTY_ICON = 135847  -- Frostbrand-style empty slot
 
 -- Elemental shield (Lightning Shield / Water Shield): off texture base, on texture fades in with alpha when active; orb count 1–3.
@@ -59,6 +55,16 @@ local SHIELD_COUNT_COLOR = { 0.95, 0.9, 0.7 }  -- light gold for count
 local function GetImbueFontSize(db)
     db = db or (GetDB and GetDB() or {})
     return (db.fontImbueTimer and db.fontImbueTimer >= 6 and db.fontImbueTimer <= 64) and db.fontImbueTimer or TIMER_FONT_SIZE
+end
+
+local function GetImbueTextOffsetX(db)
+    db = db or (GetDB and GetDB() or {})
+    return (db.imbueTextX and type(db.imbueTextX) == "number") and db.imbueTextX or TIMER_OFFSET_X
+end
+
+local function GetImbueTextOffsetY(db)
+    db = db or (GetDB and GetDB() or {})
+    return (db.imbueTextY and type(db.imbueTextY) == "number") and db.imbueTextY or TIMER_OFFSET_Y
 end
 
 local function GetShieldCountFontSize(db)
@@ -81,8 +87,10 @@ local noImbueSince = nil          -- when we first had no imbues; nil when we ha
 local hadImbueLastCheck = false   -- true if previous tick had imbue (so removal = stay still)
 local imbuePulseCooldown = false  -- true after we pulsed for 15 sec; reset when they get an imbue
 
-local function GetLayout()
-    return SLOT_MARGIN, SLOT_GAP, SLOT_OFFSET_Y, ICON_SIZE
+-- Compute icon X position (i = 1 for MH, 2 for OH), centered in bar
+local function SlotX(i)
+    local offset = (i - 1.5) * BASE_GAP * ICONS_SPREAD
+    return BAR_W / 2 + ICONS_X + offset
 end
 
 -- Default position for imbue bar (when no saved position exists)
@@ -177,15 +185,14 @@ local function SetSlotTexture(icon, iconData)
     end
 end
 
-local function RenderImbueSlot(slotFrame, data)
-    if not slotFrame then return end
-    local icon = slotFrame.icon
-    local timerText = slotFrame.timerText
-    local iconShadow = slotFrame.iconShadow
-    local isOffHand = (slotFrame.slotIndex == 2)
+local function RenderImbueSlot(slotData, data)
+    if not slotData then return end
+    local iconFrame = slotData.iconFrame
+    local textFrame = slotData.textFrame
+    local icon = iconFrame and iconFrame.icon
+    local timerText = textFrame and textFrame.timerText
 
     if data and data.expirationTime and (data.expirationTime - GetTime()) > 0 then
-        if iconShadow then iconShadow:Show() end
         local tex = (data.spellId and GetSpellTexture and GetSpellTexture(data.spellId)) or data.icon
         SetSlotTexture(icon, tex or EMPTY_ICON)
         icon:SetVertexColor(1, 1, 1)
@@ -200,7 +207,6 @@ local function RenderImbueSlot(slotFrame, data)
         end
     else
         -- Empty slot: clear texture and alpha so no stale icon blinks during bar fade-in
-        if iconShadow then iconShadow:Hide() end
         icon:SetTexture(nil)
         icon:SetAlpha(0)
         icon:Hide()
@@ -384,61 +390,81 @@ local function CreateImbueBarFrame()
     end)
 
     local M = ShammyTime_Media
-    local barTex = (M and M.TEX and M.TEX.IMBUE_BAR) or "Interface\\Tooltips\\UI-Tooltip-Background"
+    local centerY = BAR_H / 2 + ICONS_Y
+    local baseLevel = content:GetFrameLevel() + 1
+
+    -- Layer 1: back texture
     f.bg = content:CreateTexture(nil, "BACKGROUND")
     f.bg:SetAllPoints(content)
-    f.bg:SetTexture(barTex)
+    if M and M.TEX and M.TEX.IMBUE_BAR_BACK then
+        f.bg:SetTexture(M.TEX.IMBUE_BAR_BACK)
+    end
+    f.bg:SetTexCoord(0, 1, CROP_TOP, CROP_BOTTOM)
     f.bg:SetAlpha(1)
+    f.cropTop = CROP_TOP
+    f.cropBottom = CROP_BOTTOM
 
-    local baseLevel = content:GetFrameLevel() + 2
-    local margin, gap, offsetY, iconSize = GetLayout()
-    local slotW = math.floor((BAR_W - 2 * margin - gap) / 2 + 0.5)
+    -- Layer 2: icon layer (2 icon frames, no text)
+    local iconLayer = CreateFrame("Frame", "ShammyTimeImbueBarIconLayer", content)
+    iconLayer:SetAllPoints(content)
+    iconLayer:SetFrameLevel(baseLevel)
+    iconLayer:EnableMouse(false)
 
     for i = 1, 2 do
-        local sf = CreateFrame("Frame", ("ShammyTimeImbueBarSlot%d"):format(i), content)
-        sf.slotIndex = i
-        sf:SetSize(slotW, SLOT_H)
-        sf:SetFrameLevel(baseLevel)
-        if i == 1 then
-            sf:SetPoint("LEFT", content, "LEFT", margin, 0)
-        else
-            sf:SetPoint("LEFT", slots[1], "RIGHT", gap, 0)
-        end
-        sf:SetPoint("TOP", content, "TOP", 0, offsetY)
-        sf:SetAlpha(SLOT_FRAME_ALPHA)
-        sf:EnableMouse(false)
+        local cx = SlotX(i)
+        local iconFrame = CreateFrame("Frame", ("ShammyTimeImbueBarSlot%dIcon"):format(i), iconLayer)
+        iconFrame:SetFrameLevel(baseLevel)  -- keep below front
+        iconFrame:SetSize(ICON_SIZE, ICON_SIZE)
+        iconFrame:SetPoint("CENTER", iconLayer, "BOTTOMLEFT", cx, centerY)
+        iconFrame:EnableMouse(false)
 
-        -- Shadow behind icon (same texture as totem bar; size scales with icon so it stays visible)
-        local shadowSize = iconSize + 28   -- e.g. 44px icon -> 72px shadow
-        local iconShadow = sf:CreateTexture(nil, "ARTWORK")
-        iconShadow:SetDrawLayer("ARTWORK", -1)
-        iconShadow:SetSize(shadowSize, shadowSize)
-        iconShadow:SetPoint("TOP", ICON_SHADOW_OFFSET_X, ICON_OFFSET_TOP + ICON_SHADOW_OFFSET_Y)
-        if M and M.TEX and M.TEX.CENTER_SHADOW then
-            iconShadow:SetTexture(M.TEX.CENTER_SHADOW)
-            iconShadow:SetTexCoord(0, 1, 0, 1)
-            iconShadow:SetVertexColor(ICON_SHADOW_TINT[1], ICON_SHADOW_TINT[2], ICON_SHADOW_TINT[3], ICON_SHADOW_TINT[4])
-        else
-            iconShadow:SetColorTexture(0.1, 0.08, 0.06, 0.7)
-        end
-        sf.iconShadow = iconShadow
-
-        local icon = sf:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(iconSize, iconSize)
-        icon:SetPoint("TOP", 0, ICON_OFFSET_TOP)
+        local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(ICON_SIZE, ICON_SIZE)
+        icon:SetPoint("CENTER")
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        sf.icon = icon
+        iconFrame.icon = icon
 
-        local fontSz = GetImbueFontSize()
-        local timerText = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        timerText:SetPoint("BOTTOM", 0, TIMER_OFFSET_BOTTOM)
+        slots[i] = { iconFrame = iconFrame }
+    end
+
+    -- Layer 3: front texture (draws on top of icons, below text)
+    local frontFrame = CreateFrame("Frame", "ShammyTimeImbueBarFrontLayer", content)
+    frontFrame:SetAllPoints(content)
+    frontFrame:SetFrameLevel(baseLevel + 1)
+    frontFrame:EnableMouse(false)
+    if M and M.TEX and M.TEX.IMBUE_BAR_FRONT then
+        local frontTex = frontFrame:CreateTexture(nil, "ARTWORK")
+        frontTex:SetTexture(M.TEX.IMBUE_BAR_FRONT)
+        frontTex:SetAllPoints(frontFrame)
+        frontTex:SetTexCoord(0, 1, CROP_TOP, CROP_BOTTOM)
+        frontTex:SetAlpha(1)
+    end
+
+    -- Layer 4: text layer (timer text per slot, on top of everything)
+    local textLayer = CreateFrame("Frame", "ShammyTimeImbueBarTextLayer", content)
+    textLayer:SetAllPoints(content)
+    textLayer:SetFrameLevel(baseLevel + 2)
+    textLayer:EnableMouse(false)
+
+    local fontSz = GetImbueFontSize()
+    local textOX = GetImbueTextOffsetX()
+    local textOY = GetImbueTextOffsetY()
+    for i = 1, 2 do
+        local cx = SlotX(i)
+        local textFrame = CreateFrame("Frame", ("ShammyTimeImbueBarSlot%dText"):format(i), textLayer)
+        textFrame:SetSize(ICON_SIZE + 30, 30)
+        textFrame:SetPoint("CENTER", textLayer, "BOTTOMLEFT", cx + textOX, centerY + textOY)
+        textFrame:EnableMouse(false)
+
+        local timerText = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        timerText:SetPoint("CENTER")
         timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
         timerText:SetTextColor(TIMER_COLOR[1], TIMER_COLOR[2], TIMER_COLOR[3])
         timerText:SetShadowColor(0, 0, 0, 1)
         timerText:SetShadowOffset(1, -1)
-        sf.timerText = timerText
+        textFrame.timerText = timerText
 
-        slots[i] = sf
+        slots[i].textFrame = textFrame
     end
 
     imbueBarFrame = f
@@ -478,7 +504,7 @@ local function CreateShieldFrame()
 
     local shieldOff = f:CreateTexture(nil, "ARTWORK")
     shieldOff:SetSize(SHIELD_ICON_SIZE, SHIELD_ICON_SIZE)
-    shieldOff:SetPoint("TOP", 0, ICON_OFFSET_TOP)
+    shieldOff:SetPoint("TOP", 0, -3)
     -- Crop horizontally so the displayed shape is square (1:1)
     shieldOff:SetTexCoord(SHIELD_TEX_CROP_LEFT, SHIELD_TEX_CROP_RIGHT, 0, 1)
     shieldOff:SetTexture(shieldTexOff)
@@ -489,7 +515,7 @@ local function CreateShieldFrame()
 
     local shieldOn = f:CreateTexture(nil, "OVERLAY")
     shieldOn:SetSize(SHIELD_ICON_SIZE, SHIELD_ICON_SIZE)
-    shieldOn:SetPoint("TOP", 0, ICON_OFFSET_TOP)
+    shieldOn:SetPoint("TOP", 0, -3)
     -- Same crop as the base layer so the overlay aligns perfectly.
     shieldOn:SetTexCoord(SHIELD_TEX_CROP_LEFT, SHIELD_TEX_CROP_RIGHT, 0, 1)
     shieldOn:SetTexture(shieldTexOn)
@@ -598,22 +624,29 @@ function ShammyTime.ApplyImbueBarScale()
     if ShammyTime.ApplyImbueBarPosition then ShammyTime.ApplyImbueBarPosition() end
 end
 
--- Reapply layout (margin, gap, offsetY, iconSize) so you can move/resize icons without /reload
+-- Reposition imbue icon and text frames live (called from /st imbue commands or options panel).
 function ShammyTime.ApplyImbueBarLayout()
-    if not imbueBarFrame or not imbueBarFrame.content or not slots[1] or not slots[2] then return end
-    local margin, gap, offsetY, iconSize = GetLayout()
-    local slotW = math.floor((BAR_W - 2 * margin - gap) / 2 + 0.5)
-    local content = imbueBarFrame.content
-    slots[1]:ClearAllPoints()
-    slots[1]:SetPoint("LEFT", content, "LEFT", margin, 0)
-    slots[1]:SetPoint("TOP", content, "TOP", 0, offsetY)
-    slots[1]:SetSize(slotW, SLOT_H)
-    slots[1].icon:SetSize(iconSize, iconSize)
-    slots[2]:ClearAllPoints()
-    slots[2]:SetPoint("LEFT", slots[1], "RIGHT", gap, 0)
-    slots[2]:SetPoint("TOP", content, "TOP", 0, offsetY)
-    slots[2]:SetSize(slotW, SLOT_H)
-    slots[2].icon:SetSize(iconSize, iconSize)
+    if not imbueBarFrame or not slots[1] then return end
+    local centerY = BAR_H / 2 + ICONS_Y
+    local textOX = GetImbueTextOffsetX()
+    local textOY = GetImbueTextOffsetY()
+    for i = 1, 2 do
+        local slot = slots[i]
+        local cx = SlotX(i)
+        local iconFrame = slot.iconFrame
+        if iconFrame then
+            iconFrame:ClearAllPoints()
+            iconFrame:SetSize(ICON_SIZE, ICON_SIZE)
+            iconFrame:SetPoint("CENTER", iconFrame:GetParent(), "BOTTOMLEFT", cx, centerY)
+            if iconFrame.icon then iconFrame.icon:SetSize(ICON_SIZE, ICON_SIZE) end
+        end
+        local textFrame = slot.textFrame
+        if textFrame then
+            textFrame:ClearAllPoints()
+            textFrame:SetSize(ICON_SIZE + 30, 30)
+            textFrame:SetPoint("CENTER", textFrame:GetParent(), "BOTTOMLEFT", cx + textOX, centerY + textOY)
+        end
+    end
     UpdateImbueBar()
 end
 
@@ -622,9 +655,11 @@ function ShammyTime.ApplyImbueBarFontSize()
     local db = GetDB and GetDB() or {}
     local fontSz = GetImbueFontSize(db)
     if imbueBarFrame and slots[1] then
-        for i = 1, #slots do
-            if slots[i] and slots[i].timerText then
-                slots[i].timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
+        for i = 1, 2 do
+            local slot = slots[i]
+            local tf = slot and slot.textFrame
+            if tf and tf.timerText then
+                tf.timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
             end
         end
         imbueBarFrame.lastImbueFontSize = fontSz

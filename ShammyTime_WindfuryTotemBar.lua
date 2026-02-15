@@ -17,15 +17,16 @@ local timerTicker
 
 -- ═══ LAYOUT DEFAULTS (overridden by DB values; adjust live with /st totem) ═══
 local DEFAULTS = {
-    iconsX      = -1,      -- horizontal offset for all 4 icons (positive = right)
-    iconsY      = 2,       -- vertical offset from center (negative = down)
-    iconsSpread = 0.95,    -- spread multiplier (1.0 = default; <1 = tighter; >1 = wider)
-    iconSize    = 40,      -- icon width & height in pixels
-    timerOffsetY = -33,    -- timer text offset below icon center (negative = down)
+    iconsX       = -1,      -- horizontal offset for all 4 icons (positive = right)
+    iconsY       = 2,       -- vertical offset from center (negative = down)
+    iconsSpread  = 0.95,    -- spread multiplier (1.0 = default; <1 = tighter; >1 = wider)
+    iconSize     = 40,      -- icon width & height in pixels
+    timerOffsetX = 0,       -- timer text horizontal offset from icon center (positive = right)
+    timerOffsetY = -2,      -- timer text offset below icon center (negative = down)
 }
 -- ═══════════════════════════════════════════════════════════════════════════════
 local BAR_W = 286          -- frame size (matches CenterRing)
-local TIMER_FONT_SIZE = 12 -- timer text size (also adjustable via /st font totem)
+local TIMER_FONT_SIZE = 10 -- timer text size (also adjustable via /st font totem)
 
 -- Read a layout value from saved DB, falling back to DEFAULTS.
 local function L(key)
@@ -217,11 +218,12 @@ local function CreateWindfuryTotemSlots()
 
     local dbFont = ShammyTime.GetDB and ShammyTime.GetDB() or {}
     local fontSz = (dbFont.fontTotemTimer and dbFont.fontTotemTimer >= 6 and dbFont.fontTotemTimer <= 28) and dbFont.fontTotemTimer or TIMER_FONT_SIZE
+    local timerOX = L("timerOffsetX")
     for i = 1, 4 do
         local cx = SlotX(i)
         local textFrame = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%dText"):format(i), textLayer)
         textFrame:SetSize(iconSize + 20, 20)
-        textFrame:SetPoint("CENTER", textLayer, "BOTTOMLEFT", cx, centerY + timerOY)
+        textFrame:SetPoint("CENTER", textLayer, "BOTTOMLEFT", cx + timerOX, centerY + timerOY)
         textFrame:EnableMouse(false)
 
         local timerText = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -245,6 +247,7 @@ function ShammyTime.ApplyTotemBarLayout()
     local barH = barFrame and barFrame:GetHeight() or BAR_W
     local iconSize = L("iconSize")
     local centerY = barH / 2 + L("iconsY")
+    local timerOX = L("timerOffsetX")
     local timerOY = L("timerOffsetY")
     for i = 1, 4 do
         local slot = windfurySlots[i]
@@ -260,7 +263,7 @@ function ShammyTime.ApplyTotemBarLayout()
         if textFrame then
             textFrame:ClearAllPoints()
             textFrame:SetSize(iconSize + 20, 20)
-            textFrame:SetPoint("CENTER", textFrame:GetParent(), "BOTTOMLEFT", cx, centerY + timerOY)
+            textFrame:SetPoint("CENTER", textFrame:GetParent(), "BOTTOMLEFT", cx + timerOX, centerY + timerOY)
         end
     end
 end
@@ -317,7 +320,7 @@ function ShammyTime.PrintTotemBarPos()
         return
     end
     print("|cff00ff00ShammyTime totem bar layout|r")
-    print(string.format("  Constants (edit in ShammyTime_WindfuryTotemBar.lua): ICONS_X=%d, ICONS_Y=%d, ICONS_SPREAD=%.2f, ICON_SIZE=%d", ICONS_X, ICONS_Y, ICONS_SPREAD, ICON_SIZE))
+    print(string.format("  Layout: iconsX=%d, iconsY=%d, spread=%.2f, iconSize=%d, textX=%d, textY=%d", L("iconsX"), L("iconsY"), L("iconsSpread"), L("iconSize"), L("timerOffsetX"), L("timerOffsetY")))
     if barFrame.GetCenter and barFrame:GetCenter() then
         local bx, by = barFrame:GetCenter()
         print(string.format("  Totem bar frame (screen): x=%.1f  y=%.1f", bx, by))

@@ -18,8 +18,9 @@ M.TEX = {
     -- Totem bar (layered: back, icons, front, text) 512×512
     TOTEM_BAR_BACK  = M.MEDIA .. "v2_totem_bar_back_512x512.tga",
     TOTEM_BAR_FRONT = M.MEDIA .. "v2_totem_bar_front_512x512.tga",
-    -- Weapon imbue bar (512×261; left = main hand, right = off hand)
-    IMBUE_BAR = M.MEDIA .. "imbue_bar_512_261_nohalo.tga",
+    -- Weapon imbue bar (layered: back, icons, front, text) 512×512
+    IMBUE_BAR_BACK  = M.MEDIA .. "v2_imbue_bar_back_512x512.tga",
+    IMBUE_BAR_FRONT = M.MEDIA .. "v2_imbue_bar_front_512x512.tga",
     -- Crit satellite ring (layered, aligned)
     CRIT_BG     = M.MEDIA .. "wf_crit_bg_aligned.tga",
     CRIT_BORDER = M.MEDIA .. "wf_crit_border_aligned.tga",

@@ -59,6 +59,21 @@ Shield charges (and time left where applicable).
 
 ---
 
+### Stagger Bar (Sync & Stagger)
+
+Dual-wield swing timers (MH/OH bars) with **Gold** (good stagger), **Yellow** (drifting), and **Red** (reversed). Shows the time gap between swings and a **Resync Action Cue**: “CLICK NOW!” when the main-hand bar reaches 50% (safest moment to press your resync macro). Logic follows the [Enhance Shaman Guide: Sync and Stagger](https://www.enhanceshaman.com/pages/guide/sync_stagger). **Resync macro** (bind to a key)—use this so the game and the OH bar stay in sync:
+
+```
+/cleartarget
+/targetlasttarget
+/startattack
+/st resync
+```
+
+For full reference (sync window, when to tap, how the addon maps to the guide), see **[docs/SyncStagger.md](docs/SyncStagger.md)**.
+
+---
+
 ### Presets
 
 Quickly set the fade behaviour for every module at once. **Always Visible** keeps everything on screen, while **Smart Fade** hides elements when they're not needed (out of combat, no target, etc.). Only fade settings are changed — scale, position, and other options stay the same.
@@ -86,6 +101,7 @@ Quickly set the fade behaviour for every module at once. **Always Visible** keep
 | **/st reset** | Reset all settings to defaults. |
 | **/st print** | Export current settings to chat. |
 | **/st dev on\|off** | Show or hide the Developer tab in options. |
+| **/st resync** | Tell stagger bar you pressed the resync macro (add to macro so OH bar resets to 50%). |
 
 You can use **/shammytime** instead of **/st**.
 

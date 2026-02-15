@@ -694,7 +694,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             metricsDesc = {
                                 type = "description",
-                                name = "|cffccccccMIN|r — Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r — Highest total damage from one proc.\n|cffccccccAVG|r — Total Windfury damage ÷ number of procs.\n|cffccccccPROCS|r — How many Windfury procs so far this session.\n|cffccccccPROC%|r — Procs ÷ white swings (how often Windfury procced).\n|cffccccccCRIT%|r — Windfury hits that were crits ÷ all Windfury hits.\n",
+                                name = "|cffccccccMIN|r - Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r - Highest total damage from one proc.\n|cffccccccAVG|r - Total Windfury damage / number of procs.\n|cffccccccPROCS|r - How many Windfury procs so far this session.\n|cffccccccPROC%|r - Procs / white swings (how often Windfury procced).\n|cffccccccCRIT%|r - Windfury hits that were crits / all Windfury hits.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -722,7 +722,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             fadeDesc = {
                                 type = "description",
-                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n• |cffccccccOut of Combat|r — fade when you're not in combat.\n• |cffccccccNo Target|r — fade when you have no target.\n• |cffccccccNo Active Buff/Proc|r — e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n• |cffccccccNo Totems Placed|r — totem bar fades when you have no totems down.\n• |cffccccccFade In When Targeting Enemy|r — (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
+                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n- |cffccccccOut of Combat|r - fade when you're not in combat.\n- |cffccccccNo Target|r - fade when you have no target.\n- |cffccccccNo Active Buff/Proc|r - e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n- |cffccccccNo Totems Placed|r - totem bar fades when you have no totems down.\n- |cffccccccFade In When Targeting Enemy|r - (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -798,7 +798,7 @@ function ShammyTime:SetupOptions()
                     },
                     presetsDesc = {
                         type = "description",
-                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings — scale, position, and other options stay the same.\n",
+                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings - scale, position, and other options stay the same.\n",
                         order = 4.1,
                     },
                     presetAlwaysVisible = {
@@ -1226,7 +1226,7 @@ function ShammyTime:SetupOptions()
                                     type = "description",
                                     name = "Ever wondered how much your Windfury Totem actually contributes to your party's damage? " ..
                                            "This shows a live scrolling damage feed whenever you or your party members land bonus hits from " ..
-                                           "your totem — right above it, so you can feel the impact in real time.\n\n" ..
+                                           "your totem - right above it, so you can feel the impact in real time.\n\n" ..
                                            "When combat ends, a total is shown so you can see how much extra damage your totem brought to the fight.\n\n" ..
                                            "|cffaaaaaa" .. "Damage values are estimated based on combat log events." .. "|r\n",
                                     order = 1,
@@ -1361,22 +1361,37 @@ function ShammyTime:SetupOptions()
                             args = {
                                 desc = {
                                     type = "description",
-                                    name = "|cffffd700Mastering stagger will increase your damage.|r There are great videos online that explain this concept visually — search for \"WoW shaman stagger dual wield\". However, here is a quick explanation:\n\n" ..
-                                           "When you dual wield, your character swings two weapons automatically — one in each hand. Your |cffffffffmain hand (MH)|r and |cffffffffoff hand (OH)|r each have their own swing timer, and they tick independently.\n\n" ..
-                                           "|cffffd700Why stagger?|r Two big reasons:\n\n" ..
-                                           "|cffffffff1. Windfury priority.|r Windfury can only proc from your |cffffffffmain-hand|r swings, and your main hand does more damage than your off-hand — so you always want MH to get Windfury procs, not the OH. When it procs, it resets your MH swing timer — your next MH swing comes immediately. If your OH happens to swing at the same time as that reset, the two swings overlap and you waste potential Windfury procs. By keeping MH slightly ahead of OH, you give Windfury room to reset your MH without colliding with the OH.\n\n" ..
-                                           "|cffffffff2. Flurry efficiency.|r Flurry has a ~0.5 second internal window. " ..
-                                           "When both your MH and OH land within that window, they |cffffffffshare a single Flurry charge|r instead of each one eating its own. " ..
-                                           "This effectively |cffffd700doubles your Flurry uptime|r — you get the haste bonus on twice as many swings for the same number of charges. " ..
-                                           "The 0.45 s threshold on this bar is based on that window.\n\n" ..
-                                           "|cffffd700Staggering|r means keeping your MH and OH swings close together but slightly offset — MH hits first, OH follows within about 0.45 seconds. " ..
-                                           "Both weapons should have the |cffffffffsame attack speed|r to keep them in sync without constant adjustment.\n\n" ..
-                                           "This bar shows you how well staggered your swings are in real time:\n\n" ..
-                                           "|cffffd700Gold|r — Perfect. MH hit first, OH followed within 0.45 s.\n" ..
-                                           "|cffffff00Yellow|r — Drifting. MH hit first, but the gap is too large (> 0.45 s). Flurry charges are being wasted.\n" ..
-                                           "|cffff4c4cRed|r — Bad. OH hit before MH — Windfury priority is reversed.\n\n" ..
-                                           "The number (e.g. |cffffd7000.30s|r) shows the exact gap between your last MH and OH swings. " ..
-                                           "Aim to keep it |cffffd700gold|r as much as possible.\n",
+                                    name = "|cffffd700Sync vs Stagger|r\n\n" ..
+                                           "|cffffffffSync|r = how close your MH and OH swings land. In TBC they are synced when both land within |cffffffff0.5 seconds|r. Flurry has a 0.5s window: two swings that land close together can share one charge instead of burning two.\n\n" ..
+                                           "|cffffffffStagger|r = which hand hits first. You want |cffffffffmain hand first|r, off hand shortly after (still within 0.5s). Windfury has a 3s shared ICD; the first swing to land after it ends has the best chance to proc, so you want that swing to be MH.\n\n" ..
+                                           "Goal: |cffffd700synced|r (within 0.5s) and |cffffd700staggered|r (MH lead). See the guide and the Enhance Shaman Suite WeakAura (wago.io) for a visual swing timer.\n\n" ..
+                                           "|cffffd700Why stagger? (Flurry, explained properly)|r\n\n" ..
+                                           "Flurry is not a timer. It's |cffffffffcharges|r.\n" ..
+                                           "When you crit, Flurry activates and gives you 3 charges (3 faster swings). A \"charge\" is spent when a weapon swing happens.\n\n" ..
+                                           "So during Flurry:\n" ..
+                                           "  - Every MH hit spends 1 charge\n" ..
+                                           "  - Every OH hit spends 1 charge\n" ..
+                                           "  - If they hit at the same time, they can spend 2 charges instantly\n\n" ..
+                                           "That's the problem.\n\n" ..
+                                           "|cffffffffIf your swings line up (no stagger):|r\n" ..
+                                           "You often get moments like this:\n" ..
+                                           "  - Flurry procs -> you have 3 charges\n" ..
+                                           "  - MH and OH swing at the same time -> 2 charges gone immediately\n" ..
+                                           "  - Next swing happens -> last charge is spent\n" ..
+                                           "Result: Flurry feels like it \"disappears\" fast, and you get less time benefiting from the haste.\n\n" ..
+                                           "|cffffffffIf your swings are slightly offset (staggered):|r\n" ..
+                                           "Instead of spending charges in a burst, you spend them like:\n" ..
+                                           "  - MH swing (1 charge)\n" ..
+                                           "  - ~0.2-0.4s later OH swing (1 charge)\n" ..
+                                           "  - Next MH swing (1 charge)\n" ..
+                                           "Now you get more real seconds of Flurry haste before it runs out, because you didn't dump multiple charges in one instant.\n\n" ..
+                                           "|cffffd700The key idea:|r Stagger doesn't give you more than 3 charges - it makes those 3 charges last longer in real time, which usually means more of your swings happen while you're hasted.\n\n" ..
+                                           "|cffffd700--- How to read this bar ---|r\n\n" ..
+                                           "|cffffd700Gold|r - Good stagger. MH hit first, and OH followed within 0.5s (sync window).\n" ..
+                                           "|cffffff00Yellow|r - Too far apart. You're drifting out of sync (> 0.5s).\n" ..
+                                           "|cffff4c4cRed|r - Wrong order. OH hit before MH (reverse stagger).\n\n" ..
+                                           "When both swings land at the same time (0.00s), the bar is not gold; tap once at MH 50% to create a small MH lead (per guide).\n\n" ..
+                                           "The number (e.g. |cffffd7000.30s|r) is the exact time gap between your last MH and OH hits. Try to keep it |cffffd700Gold|r as much as possible, especially during Flurry.\n",
                                     order = 1,
                                     width = "full",
                                 },
@@ -1426,6 +1441,17 @@ function ShammyTime:SetupOptions()
                                 if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
                             end,
                         },
+                        staggerSwingBarAlpha = {
+                            type = "range",
+                            name = "Bar Alpha",
+                            desc = "Transparency of the MH/OH swing bars. Lower values let the background texture show through.",
+                            min = 0, max = 1, step = 0.05,
+                            order = 4.4,
+                            get = function() return getFlatDB("staggerSwingBarAlpha", 1) end,
+                            set = function(_, v)
+                                setFlatDB("staggerSwingBarAlpha", v)
+                            end,
+                        },
                         deltaHeader = {
                             type = "header",
                             name = "Delta Text",
@@ -1469,6 +1495,123 @@ function ShammyTime:SetupOptions()
                                 local st = _G.ShammyTime
                                 if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
                             end,
+                        },
+                        helperHeader = {
+                            type = "header",
+                            name = "Helper Text",
+                            order = 5.5,
+                        },
+                        helperDesc = {
+                            type = "description",
+                            name = "A short advice message that appears based on your stagger state:\n" ..
+                                   "  |cffff4c4c\"Resync swings!\"|r - OH hit before MH. Use a resync macro to reset your swing timers.\n" ..
+                                   "  |cffffff00\"Drifting - resync soon\"|r - MH is first but the gap is too wide. Swings are losing sync.\n" ..
+                                   "  When stagger is |cffffd700gold|r (good), no message is shown.\n",
+                            order = 5.55,
+                            width = "full",
+                        },
+                        staggerHelperFontSize = {
+                            type = "range",
+                            name = "Font Size",
+                            desc = "Size of the helper advice text.",
+                            min = 6, max = 24, step = 1,
+                            order = 5.6,
+                            get = function() return getFlatDB("staggerHelperFontSize", 11) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperFontSize", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerHelperX = {
+                            type = "range",
+                            name = "Helper X Offset",
+                            desc = "Horizontal offset for the helper text (positive = right).",
+                            min = -200, max = 200, step = 1,
+                            order = 5.7,
+                            get = function() return getFlatDB("staggerHelperX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerHelperY = {
+                            type = "range",
+                            name = "Helper Y Offset",
+                            desc = "Vertical offset for the helper text (positive = up).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.8,
+                            get = function() return getFlatDB("staggerHelperY", -20) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        actionCueHeader = {
+                            type = "header",
+                            name = "Resync Action Cue",
+                            order = 5.82,
+                        },
+                        actionCueDesc = {
+                            type = "description",
+                            name = "When |cffff4c4cRed|r (OH first): when the MH bar is in 60%–85%, |cff33ff33Click once!|r. " ..
+                                   "When |cffffff00Yellow|r (drifting): when the OH bar is in 60%–85%, |cff33ff33Spam to align!|r. " ..
+                                   "Only these prompts are shown; no wait or observe text.\n",
+                            order = 5.83,
+                            width = "full",
+                        },
+                        staggerResyncMacroDesc = {
+                            type = "description",
+                            name = "Resync macro (bind to a key):\n" ..
+                                   "|cffffcc00/cleartarget|r\n" ..
+                                   "|cffffcc00/targetlasttarget|r\n" ..
+                                   "|cffffcc00/startattack|r\n" ..
+                                   "|cff33ff33/st resync|r\n\n" ..
+                                   "The first three lines reset your swing timers in-game. |cff33ff33/st resync|r updates the OH bar to 50%% so the display matches.",
+                            order = 5.835,
+                            width = "full",
+                        },
+                        staggerActionCueEnabled = {
+                            type = "toggle",
+                            name = "Enable Action Cue",
+                            desc = "Show timing-aware resync prompts instead of the basic helper text.",
+                            width = "full",
+                            order = 5.84,
+                            get = function() return getFlatDB("staggerActionCueEnabled", true) end,
+                            set = function(_, v) setFlatDB("staggerActionCueEnabled", v) end,
+                        },
+                        staggerActionCueYellow = {
+                            type = "toggle",
+                            name = "Also Show for Yellow (Drifting)",
+                            desc = "Show the resync action cue when stagger is Yellow (drifting), not just Red (reversed). A delta over 0.5s means Flurry charges are being wasted.",
+                            width = "full",
+                            order = 5.85,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerActionCueYellow", true) end,
+                            set = function(_, v) setFlatDB("staggerActionCueYellow", v) end,
+                        },
+                        staggerClickZoneWidth = {
+                            type = "range",
+                            name = "Click Zone Width",
+                            desc = "Width of the safe window past 60% (zone starts at 60% to avoid tapping too early). " ..
+                                   "0.25 = zone 60%–85%. Wider = longer window to tap.",
+                            min = 0.05, max = 0.35, step = 0.05,
+                            order = 5.86,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerClickZoneWidth", 0.25) end,
+                            set = function(_, v) setFlatDB("staggerClickZoneWidth", v) end,
+                        },
+                        staggerCooldownDuration = {
+                            type = "range",
+                            name = "Observe Duration (seconds)",
+                            desc = "After the safe window, how long to show \"Wait...\" before the next resync prompt. Also ends early after 2 swing events.",
+                            min = 0.5, max = 5.0, step = 0.5,
+                            order = 5.87,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerCooldownDuration", 2.0) end,
+                            set = function(_, v) setFlatDB("staggerCooldownDuration", v) end,
                         },
                         hideHeader = {
                             type = "header",

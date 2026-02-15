@@ -898,7 +898,9 @@ local function ApplyElementVisibility()
                 staggerBar:SetAlpha(0)
             elseif db.staggerBarAlwaysShow then
                 staggerBar:Show()
-                staggerBar:SetAlpha(1)
+                local effAlpha = (ShammyTime.GetModuleEffectiveAlpha
+                                  and ShammyTime.GetModuleEffectiveAlpha("staggerBar")) or 1
+                staggerBar:SetAlpha(effAlpha)
             end
         end
     end
@@ -2056,6 +2058,8 @@ local function PrintMainHelp()
     print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings to defaults" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — Export settings to chat" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st dev on|off" .. C.r .. C.gray .. "  — Toggle Developer tab in options" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st resync" .. C.r .. C.gray .. "  — Tell stagger bar you pressed the resync macro (add to macro so OH bar resets to 50%)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st staggerdebug [on|off]" .. C.r .. C.gray .. "  — Toggle stagger swing log (Left/Right hits and misses to chat; default off)" .. C.r)
     print("")
     print(C.gray .. "  For all settings, use " .. C.gold .. "/st options" .. C.r .. C.gray .. " to open the settings panel." .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
@@ -2307,6 +2311,23 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             InterfaceOptionsFrame_OpenToCategory("ShammyTime")  -- call twice for Blizzard bug
         end
         print(C.green .. "ShammyTime: Options panel opened." .. C.r)
+    -- Stagger bar: user pressed resync macro — OH bar resets to 50% (add /st resync to your macro)
+    elseif cmd == "resync" then
+        if ShammyTime.SimulateResyncMacro then ShammyTime.SimulateResyncMacro() end
+    -- Stagger bar: swing debug log (MH/OH hits and misses to chat)
+    elseif cmd == "staggerdebug" then
+        local sub = arg:lower()
+        if sub == "on" or sub == "enable" or sub == "1" then
+            db.staggerSwingDebugLog = true
+            print(C.green .. "ShammyTime: Stagger swing debug ON — Left/Right hits and misses will print to chat." .. C.r)
+        elseif sub == "off" or sub == "disable" or sub == "0" then
+            db.staggerSwingDebugLog = false
+            print(C.green .. "ShammyTime: Stagger swing debug OFF." .. C.r)
+        else
+            db.staggerSwingDebugLog = not db.staggerSwingDebugLog
+            local s = db.staggerSwingDebugLog and (C.gold .. "ON" .. C.r) or (C.gray .. "OFF" .. C.r)
+            print(C.gray .. "ShammyTime: Stagger swing debug " .. s .. C.gray .. ". Use " .. C.gold .. "/st staggerdebug on" .. C.r .. C.gray .. " or " .. C.gold .. "/st staggerdebug off" .. C.r .. C.gray .. "." .. C.r)
+        end
     -- Developer mode toggle
     elseif cmd == "dev" or cmd == "developer" then
         local sub = arg:lower()

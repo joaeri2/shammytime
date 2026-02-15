@@ -1067,7 +1067,13 @@ function UpdateAllElementsFadeState()
     local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
     local imbueShortTime = AnyImbueRemainingUnder(db.wfImbueFadeThresholdSec or 120)
     local imbueMissingDW = IsDualWieldMissingImbue()  -- dual-wielding with at least one weapon unimbued
-    local hasShield = (ShammyTime.GetElementalShieldAura and ShammyTime.GetElementalShieldAura()) and true or false
+    local hasShield = false
+    local shieldCharges = 0
+    if ShammyTime.GetElementalShieldAura then
+        local icon, count = ShammyTime.GetElementalShieldAura()
+        hasShield = icon and true or false
+        shieldCharges = hasShield and (type(count) == "number" and count or 0) or 0
+    end
     local anyTotemOutOfRange = false
     if ShammyTime.GetTotemSlotData then
         for slot = 1, 4 do
@@ -1089,6 +1095,7 @@ function UpdateAllElementsFadeState()
         procAnimPlaying = procAnimPlaying,
         outOfRange = anyTotemOutOfRange,
         hasShield = hasShield,
+        shieldCharges = shieldCharges,
     }
 
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
@@ -1320,8 +1327,10 @@ function UpdateAllElementsFadeState()
             shieldFrame:Show()
             local effAlphaShield = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("shieldIndicator")) or 1
             local mod = useModuleFade and ShammyTime.db.profile.modules.shieldIndicator
+            -- When "Hide When Active" is on, apply fade even if "Enable Fade" wasn't checked (so one checkbox is enough)
+            local shieldFadeActive = mod and mod.fade and (mod.fade.enabled or (mod.fade.conditions and mod.fade.conditions.hideWhenActive))
             if mod and ShammyTime.EvaluateFade then
-                if mod.fade and mod.fade.enabled then
+                if shieldFadeActive then
                     local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("shieldIndicator", fadeContext)
                     SetOrAnimateFade(shieldFrame, effAlphaShield * (shouldFade and targetAlpha or 1), useSlowMod, shouldFade)
                 else

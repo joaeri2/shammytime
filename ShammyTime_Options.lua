@@ -67,6 +67,7 @@ local function getModuleOption(info, key)
     if key == "noTotemsPlaced" then return m.fade and m.fade.conditions and m.fade.conditions.noTotemsPlaced or false end
     if key == "outOfRange" then return m.fade and m.fade.conditions and m.fade.conditions.outOfRange or false end
     if key == "fadeInOnTarget" then return m.fade and m.fade.conditions and m.fade.conditions.fadeInOnTarget or false end
+    if key == "hideWhenActive" then return m.fade and m.fade.conditions and m.fade.conditions.hideWhenActive or false end
     return nil
 end
 
@@ -85,11 +86,12 @@ local function setModuleOption(info, val, key)
     if key == "noTotemsPlaced" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.noTotemsPlaced = val end
     if key == "outOfRange" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.outOfRange = val end
     if key == "fadeInOnTarget" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.fadeInOnTarget = val end
+    if key == "hideWhenActive" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.hideWhenActive = val end
     -- When any condition is enabled, turn on fade so the condition takes effect without requiring "Enable Fade" separately.
     -- When all conditions are off, turn off fade so the "Enable Fade" checkbox stays in sync.
-    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" then
+    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" or key == "hideWhenActive" then
         local c = m.fade and m.fade.conditions
-        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget) then
+        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget or c.hideWhenActive) then
             m.fade.enabled = true
         else
             if m.fade then m.fade.enabled = false end
@@ -307,6 +309,7 @@ local function BuildFullExportLines(useColorCodes)
                         line("modules." .. modName .. ".fade.conditions.noTotemsPlaced = " .. tostring(c.noTotemsPlaced or false))
                         line("modules." .. modName .. ".fade.conditions.outOfRange = " .. tostring(c.outOfRange or false))
                         line("modules." .. modName .. ".fade.conditions.fadeInOnTarget = " .. tostring(c.fadeInOnTarget or false))
+                        line("modules." .. modName .. ".fade.conditions.hideWhenActive = " .. tostring(c.hideWhenActive or false))
                     end
                 end
             end
@@ -1183,6 +1186,15 @@ function ShammyTime:SetupOptions()
                                     width = "full",
                                 },
                             },
+                        },
+                        hideWhenActive = {
+                            type = "toggle",
+                            name = "Hide When Active",
+                            desc = "Hide the shield indicator when Lightning Shield or Water Shield is active with at least 1 charge. The indicator will appear when the shield drops or expires, serving as a reminder to recast.",
+                            order = 16,
+                            arg = { module = "shieldIndicator" },
+                            get = function(info) return getModuleOption(info, "hideWhenActive") end,
+                            set = function(info, v) setModuleOption(info, v, "hideWhenActive") end,
                         },
                         textHeader = {
                             type = "header",

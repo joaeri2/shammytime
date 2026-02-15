@@ -28,6 +28,7 @@ local function moduleDefaults(enabled, scale, alpha)
                 noTotemsPlaced = false,
                 outOfRange = false,
                 fadeInOnTarget = false,  -- when true: slow fade-in when selecting an enemy target (windfury/focus only)
+                hideWhenActive = false,  -- when true: hide element when its buff/shield is active (shield indicator only)
             },
         },
     }
@@ -249,7 +250,7 @@ end
 
 --- Centralized fade evaluation: given module name and game context, returns whether to fade, target alpha, and use slow animation.
 --- @param moduleName string One of: windfuryBubbles, totemBar, shamanisticFocus, weaponImbueBar, shieldIndicator
---- @param context table { inCombat, hasTarget, hasEnemyTarget, hasTotems, noTotemsFaded, focusActive, imbueActive, imbueShortTime, wfProcced, procAnimPlaying, hasShield, outOfRange }
+--- @param context table { inCombat, hasTarget, hasEnemyTarget, hasTotems, noTotemsFaded, focusActive, imbueActive, imbueShortTime, wfProcced, procAnimPlaying, hasShield, shieldCharges, outOfRange }
 --- @return boolean shouldFade, number targetAlpha, boolean useSlowFade
 function ShammyTime:EvaluateFade(moduleName, context)
     local p = self.db and self.db.profile
@@ -294,6 +295,11 @@ function ShammyTime:EvaluateFade(moduleName, context)
         elseif moduleName == "windfuryBubbles" and not context.wfProcced and not context.procAnimPlaying then
             shouldFade = true
         elseif moduleName == "shieldIndicator" and not context.hasShield then
+            shouldFade = true
+        end
+    end
+    if cond.hideWhenActive then
+        if moduleName == "shieldIndicator" and context.hasShield and (context.shieldCharges or 0) >= 1 then
             shouldFade = true
         end
     end

@@ -62,10 +62,9 @@ M.TEX = {
     -- Shamanistic Focus proc indicator (light on / light off, 512×512)
     FOCUS_ON  = M.MEDIA .. "v2_shamanistic_focus_on_256x256.tga",
     FOCUS_OFF = M.MEDIA .. "v2_shamanistic_focus_off_256x256.tga",
-    -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha)
-    -- Note: assets are 256×213; code crops to a square (1:1) when rendering.
-    LIGHTNING_SHIELD_OFF = M.MEDIA .. "lightning_shield_off_256_213.tga",
-    LIGHTNING_SHIELD_ON  = M.MEDIA .. "lightning_shield_on_256_213.tga",
+    -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha), 256×256
+    LIGHTNING_SHIELD_OFF = M.MEDIA .. "v2_lightning_shield_off_256x256.tga",
+    LIGHTNING_SHIELD_ON  = M.MEDIA .. "v2_lightning_shield_on_256x256.tga",
 }
 
 -- Optional font (use GameFontNormal etc. if not set)

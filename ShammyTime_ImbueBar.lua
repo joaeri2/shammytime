@@ -45,14 +45,13 @@ local SLOT_FRAME_ALPHA = 0.94
 local EMPTY_ICON = 135847  -- Frostbrand-style empty slot
 
 -- Elemental shield (Lightning Shield / Water Shield): off texture base, on texture fades in with alpha when active; orb count 1–3.
--- Assets are 256×213; render as a square (1:1) by center-cropping the extra width.
+-- Assets are 256×256 (square); no crop needed.
 local SHIELD_GAP = 16
 local SHIELD_TEX_W = 256
-local SHIELD_TEX_H = 213
+local SHIELD_TEX_H = 256
 local SHIELD_ICON_SIZE = SHIELD_TEX_H -- square output size
-local SHIELD_TEX_SQUARE_RATIO = SHIELD_TEX_H / SHIELD_TEX_W
-local SHIELD_TEX_CROP_LEFT = (1 - SHIELD_TEX_SQUARE_RATIO) / 2
-local SHIELD_TEX_CROP_RIGHT = 1 - SHIELD_TEX_CROP_LEFT
+local SHIELD_TEX_CROP_LEFT = 0
+local SHIELD_TEX_CROP_RIGHT = 1
 local SHIELD_FADE_DURATION = 0.25  -- seconds for "on" overlay to fade in/out (light turning on/off)
 local SHIELD_COUNT_FONT_SIZE = 86  -- orb count (1–3) text default
 local SHIELD_COUNT_COLOR = { 0.95, 0.9, 0.7 }  -- light gold for count
@@ -501,9 +500,9 @@ local function CreateShieldFrame()
 
     local countFontSz = GetShieldCountFontSize(db)
     local countText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    -- Use position from DB (shieldCountX, shieldCountY) with defaults (0, 101)
+    -- Use position from DB (shieldCountX, shieldCountY) with defaults (0, 127)
     local countX = (db.shieldCountX and type(db.shieldCountX) == "number") and db.shieldCountX or 0
-    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or 101
+    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or 127
     countText:SetPoint("BOTTOM", countX, countY)
     countText:SetFont("Fonts\\FRIZQT__.TTF", countFontSz, "OUTLINE")
     countText:SetTextColor(SHIELD_COUNT_COLOR[1], SHIELD_COUNT_COLOR[2], SHIELD_COUNT_COLOR[3])
@@ -547,7 +546,7 @@ function ShammyTime.ApplyShieldCountSettings()
     local db = GetDB and GetDB() or {}
     -- Update count text position from DB
     local countX = (db.shieldCountX and type(db.shieldCountX) == "number") and db.shieldCountX or 0
-    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or 101
+    local countY = (db.shieldCountY and type(db.shieldCountY) == "number") and db.shieldCountY or 127
     shieldFrame.countText:ClearAllPoints()
     shieldFrame.countText:SetPoint("BOTTOM", countX, countY)
     local fontSz = GetShieldCountFontSize(db)

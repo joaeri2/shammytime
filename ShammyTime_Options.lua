@@ -280,7 +280,7 @@ local function BuildFullExportLines(useColorCodes)
     line("shieldScale = " .. tostring(p.shieldScale or 0.2))
     line("fontShieldCount = " .. tostring(p.fontShieldCount or 86))
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
-    line("shieldCountY = " .. tostring(p.shieldCountY or 101))
+    line("shieldCountY = " .. tostring(p.shieldCountY or 127))
     line("")
     sec("Modules (per-element: enabled, scale, alpha, fade)")
     if p.modules then
@@ -1583,7 +1583,7 @@ function ShammyTime:SetupOptions()
                         desc = "Vertical offset for the shield count text (positive = up).",
                         min = -200, max = 300, step = 1,
                         order = 62.7,
-                        get = function() return getFlatDB("shieldCountY", 101) end,
+                        get = function() return getFlatDB("shieldCountY", 127) end,
                         set = function(_, v)
                             setFlatDB("shieldCountY", v)
                             local st = _G.ShammyTime

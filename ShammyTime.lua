@@ -2735,7 +2735,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local s = db.shieldScale or 0.2
             local cnt = db.shieldCount
             local nx = db.shieldCountX or 0
-            local ny = db.shieldCountY or 101
+            local ny = db.shieldCountY or 127
             print(C.gray .. "ShammyTime: Lightning/Water Shield (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  size " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.05–2). Drag to move when unlocked." .. C.r)
             print(C.gray .. "  count " .. C.gold .. (cnt and tostring(cnt) or "auto") .. C.r .. C.gray .. " (1–9 = fixed, auto = from buff)" .. C.r)

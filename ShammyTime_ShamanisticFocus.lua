@@ -41,7 +41,7 @@ local DEFAULTS = {
     relativePoint = "CENTER",
     x = 0,
     y = -150,
-    scale = 0.8,
+    scale = 1.3,
     locked = false,
 }
 

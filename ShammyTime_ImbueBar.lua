@@ -128,7 +128,7 @@ function ShammyTime.ApplyImbueBarPosition()
     if f then ApplyImbueBarPosition(f) end
 end
 
-local DEFAULT_SHIELD_SCALE = 0.2
+local DEFAULT_SHIELD_SCALE = 0.4
 
 -- Default position for shield (when no saved position exists)
 local SHIELD_DEFAULT_X, SHIELD_DEFAULT_Y = 250, -180

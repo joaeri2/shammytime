@@ -681,8 +681,12 @@ end
 -- Creates the Windfury totem bar frame once (the bar that shows WF totem art). Separate from the center ring; has its own position and scale (/st totem scale).
 local function CreateWindfuryTotemBarFrame()
     if totemBarFrame then return totemBarFrame end
+    -- Totem bar art is 512×512 but only the middle band has art.
+    -- Crop top/bottom via SetTexCoord; frame height = barW * visible fraction.
     local barW = 286
-    local barH = math.floor(barW * 277 / 996 + 0.5)
+    local CROP_TOP = 0.35     -- skip top 30% of texture (empty)
+    local CROP_BOTTOM = 0.65  -- skip bottom 30% of texture (empty)
+    local barH = math.floor(barW * (CROP_BOTTOM - CROP_TOP) + 0.5)
     local f = CreateFrame("Frame", "ShammyTimeWindfuryTotemBarFrame", UIParent)
     f:SetFrameStrata("MEDIUM")
     f:SetSize(barW, barH)
@@ -796,10 +800,14 @@ local function CreateWindfuryTotemBarFrame()
             end
         end
     end)
-    f.totemBar = f:CreateTexture(nil, "OVERLAY")
-    f.totemBar:SetTexture(TEX.TOTEM_BAR)
-    f.totemBar:SetAllPoints(f)
-    f.totemBar:SetAlpha(1)
+    -- Layer 1: back (icons, front, text are added by ShammyTime_WindfuryTotemBar in draw order)
+    f.totemBarBack = f:CreateTexture(nil, "BACKGROUND")
+    f.totemBarBack:SetTexture(TEX.TOTEM_BAR_BACK)
+    f.totemBarBack:SetAllPoints(f)
+    f.totemBarBack:SetTexCoord(0, 1, CROP_TOP, CROP_BOTTOM)
+    f.totemBarBack:SetAlpha(1)
+    f.cropTop = CROP_TOP
+    f.cropBottom = CROP_BOTTOM
     f:SetScale(GetTotemBarScale())
     f:Hide()
     -- Restore visibility after reload if radial was shown

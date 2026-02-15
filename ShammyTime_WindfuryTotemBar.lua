@@ -1,7 +1,7 @@
 -- ShammyTime_WindfuryTotemBar.lua
 -- Totem functionality on the Windfury radial's totem bar (center ring). Uses the same logic as the main
 -- totem bar (GetTotemInfo, timers, range) via ShammyTime.GetTotemSlotData; only the visuals live here.
--- Layers per slot: background art (existing texture), icon, state overlays, timer text.
+-- Draw order: layer 1 = back (CenterRing), 2 = icon layer, 3 = front texture, 4 = text layer.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
 local addonName = ...
@@ -15,49 +15,39 @@ local windfurySlots = {}
 local updateFrame
 local timerTicker
 
--- ═══ LAYOUT: edit these to position the totem slots (reload UI after changes) ═══
--- Horizontal spacing:
-local SLOT_MARGIN = 29   -- pixels from bar left edge to first slot (increase = row more centered/narrower)
-local SLOT_GAP = 40       -- horizontal gap between slots (increase = more space between icons)
-local BAR_W = 286
-local SLOT_W = math.floor((BAR_W - 2 * SLOT_MARGIN - 3 * SLOT_GAP) / 4 + 0.5)
-local SLOT_H = 32
--- Vertical (Y-axis): move the slot row up/down within the bar texture
-local SLOT_OFFSET_Y = -24  -- 0 = slots at bar TOP; negative = push slots down; positive = push slots up
-local ICON_SIZE = 22
-local ICON_OFFSET_TOP = -3   -- icon position from slot TOP (negative = down)
-local TIMER_OFFSET_BOTTOM = -3  -- timer from slot BOTTOM
-local TIMER_FONT_SIZE = 13    -- timer text size default
--- Per-slot fine-tuning (x = horizontal, y = vertical in pixels; positive x = right, positive y = up):
-local SLOT_OFFSETS = {
-    { x = 0, y = 0 },  -- slot 1 (Earth, leftmost)
-    { x = -2, y = 0 },  -- slot 2 (Fire)
-    { x = 4, y = 0 },  -- slot 3 (Water)
-    { x = 0, y = 0 },  -- slot 4 (Air, rightmost)
+-- ═══ LAYOUT DEFAULTS (overridden by DB values; adjust live with /st totem) ═══
+local DEFAULTS = {
+    iconsX      = -1,      -- horizontal offset for all 4 icons (positive = right)
+    iconsY      = 2,       -- vertical offset from center (negative = down)
+    iconsSpread = 0.95,    -- spread multiplier (1.0 = default; <1 = tighter; >1 = wider)
+    iconSize    = 40,      -- icon width & height in pixels
+    timerOffsetY = -33,    -- timer text offset below icon center (negative = down)
 }
--- Bar position: ShammyTimeWindfuryTotemBarFrame is separate from center; drag to move, position saved per character.
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Shadow behind icon: wf_center_shadow.tga (circular, fades at edges)
-local ICON_SHADOW_SIZE = 50   -- total size (icon is ~22; larger = more soft edge visible)
-local ICON_SHADOW_OFFSET_X = 2   -- drop shadow offset right
-local ICON_SHADOW_OFFSET_Y = 15  -- drop shadow offset down
-local ICON_SHADOW_TINT = { 0, 0, 0, 0.85 }  -- r, g, b, a (darken the texture)
+local BAR_W = 286          -- frame size (matches CenterRing)
+local TIMER_FONT_SIZE = 12 -- timer text size (also adjustable via /st font totem)
+
+-- Read a layout value from saved DB, falling back to DEFAULTS.
+local function L(key)
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
+    if db and db.totemLayout and db.totemLayout[key] ~= nil then return db.totemLayout[key] end
+    return DEFAULTS[key]
+end
 -- Fade into bar: slightly muted so the ornate frame shows through
 local ICON_ALPHA_ACTIVE = 0.9
 local ICON_ALPHA_EMPTY = 0
 local TIMER_COLOR = { 0.88, 0.86, 0.82 }
 local SLOT_FRAME_ALPHA = 0.94
 
-local function RenderSlot(slotFrame, data)
-    if not slotFrame or not data then return end
-    local icon = slotFrame.icon
-    local timerText = slotFrame.timerText
-    local stateOverlay = slotFrame.stateOverlay
-    local alertGlow = slotFrame.alertGlow
-
-    local iconShadow = slotFrame.iconShadow
+local function RenderSlot(slotData, data)
+    if not slotData or not data then return end
+    local iconFrame = slotData.iconFrame
+    local textFrame = slotData.textFrame
+    local icon = iconFrame and iconFrame.icon
+    local timerText = textFrame and textFrame.timerText
+    local stateOverlay = iconFrame and iconFrame.stateOverlay
+    local alertGlow = iconFrame and iconFrame.alertGlow
     if data.active then
-        if iconShadow then iconShadow:Show() end
         if icon then
             icon:SetTexture(data.icon)
             icon:SetVertexColor(1, 1, 1)
@@ -92,12 +82,11 @@ local function RenderSlot(slotFrame, data)
                 alertGlow:Hide()
             end
         end
-        if data.justPlaced and slotFrame.PlayPlacePop then
-            slotFrame:PlayPlacePop()
+        if data.justPlaced and iconFrame and iconFrame.PlayPlacePop then
+            iconFrame:PlayPlacePop()
         end
     else
-        -- Empty/expired: no overlay (no faint square), no shadow; just dimmed empty icon
-        if iconShadow then iconShadow:Hide() end
+        -- Empty/expired: no overlay, just dimmed empty icon
         if stateOverlay then stateOverlay:Hide() end
         if icon then
             icon:SetTexture(data.emptyIcon or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -127,79 +116,61 @@ local function UpdateWindfuryTotemBar()
     end
 end
 
+-- Compute slot positions from simplified layout. 4 icons centered on (iconsX, iconsY) with iconsSpread.
+local BASE_GAP = 48  -- default pixel gap between icon centers at spread 1.0
+local function SlotX(i)
+    -- i = 1..4 → offsets: -1.5, -0.5, +0.5, +1.5 (centered around 0)
+    local offset = (i - 2.5) * BASE_GAP * L("iconsSpread")
+    return BAR_W / 2 + L("iconsX") + offset
+end
+
 local function CreateWindfuryTotemSlots()
     if windfurySlots[1] then return end
     local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
     if not barFrame then return end
 
     windfurySlots.parent = barFrame
-    local baseLevel = barFrame:GetFrameLevel() + 2
+    local baseLevel = barFrame:GetFrameLevel() + 1
+    local M = ShammyTime_Media
+    local iconSize = L("iconSize")
+    local barH = barFrame:GetHeight()
+    local centerY = barH / 2 + L("iconsY")
+    local timerOY = L("timerOffsetY")
+
+    -- Layer 2: icon layer (4 icon frames, no text)
+    local iconLayer = CreateFrame("Frame", "ShammyTimeTotemBarIconLayer", barFrame)
+    iconLayer:SetAllPoints(barFrame)
+    iconLayer:SetFrameLevel(baseLevel)
+    iconLayer:EnableMouse(false)
 
     for i = 1, 4 do
-        local slot = DISPLAY_ORDER[i]
-        local off = SLOT_OFFSETS[i] or { x = 0, y = 0 }
-        local sf = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%d"):format(i), barFrame)
-        sf:SetSize(SLOT_W, SLOT_H)
-        sf:SetFrameLevel(baseLevel)
-        if i == 1 then
-            sf:SetPoint("LEFT", barFrame, "LEFT", SLOT_MARGIN + off.x, off.y)
-        else
-            sf:SetPoint("LEFT", windfurySlots[i - 1], "RIGHT", SLOT_GAP + off.x, off.y)
-        end
-        sf:SetPoint("TOP", barFrame, "TOP", off.x, SLOT_OFFSET_Y + off.y)
-        sf:SetAlpha(SLOT_FRAME_ALPHA)
-        sf:EnableMouse(false)
+        local cx = SlotX(i)
+        local iconFrame = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%dIcon"):format(i), iconLayer)
+        iconFrame:SetFrameLevel(baseLevel)  -- keep icons below front frame
+        iconFrame:SetSize(iconSize, iconSize)
+        iconFrame:SetPoint("CENTER", iconLayer, "BOTTOMLEFT", cx, centerY)
+        iconFrame:EnableMouse(false)
 
-        -- Shadow behind icon: wf_center_shadow.tga (circular, fades at edges)
-        local iconShadow = sf:CreateTexture(nil, "ARTWORK")
-        iconShadow:SetDrawLayer("ARTWORK", -1)
-        iconShadow:SetSize(ICON_SHADOW_SIZE, ICON_SHADOW_SIZE)
-        iconShadow:SetPoint("TOP", ICON_SHADOW_OFFSET_X, ICON_OFFSET_TOP + ICON_SHADOW_OFFSET_Y)
-        local M = ShammyTime_Media
-        if M and M.TEX and M.TEX.CENTER_SHADOW then
-            iconShadow:SetTexture(M.TEX.CENTER_SHADOW)
-            iconShadow:SetTexCoord(0, 1, 0, 1)
-            iconShadow:SetVertexColor(ICON_SHADOW_TINT[1], ICON_SHADOW_TINT[2], ICON_SHADOW_TINT[3], ICON_SHADOW_TINT[4])
-        else
-            iconShadow:SetColorTexture(0.1, 0.08, 0.06, 0.7)
-        end
-        sf.iconShadow = iconShadow
-
-        -- Icon (drawn on top of shadow)
-        local icon = sf:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(ICON_SIZE, ICON_SIZE)
-        icon:SetPoint("TOP", 0, ICON_OFFSET_TOP)
+        local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+        icon:SetSize(iconSize, iconSize)
+        icon:SetPoint("CENTER")
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        sf.icon = icon
+        iconFrame.icon = icon
 
-        -- Timer text at bottom of slot (no cooldown spiral) (muted so it sits in the bar)
-        local dbFont = ShammyTime.GetDB and ShammyTime.GetDB() or {}
-        local fontSz = (dbFont.fontTotemTimer and dbFont.fontTotemTimer >= 6 and dbFont.fontTotemTimer <= 28) and dbFont.fontTotemTimer or TIMER_FONT_SIZE
-        local timerText = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        timerText:SetPoint("BOTTOM", 0, TIMER_OFFSET_BOTTOM)
-        timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
-        timerText:SetTextColor(TIMER_COLOR[1], TIMER_COLOR[2], TIMER_COLOR[3])
-        timerText:SetShadowColor(0, 0, 0, 1)
-        timerText:SetShadowOffset(1, -1)
-        sf.timerText = timerText
-
-        -- State overlay (expired = dark; out of range = red tint over icon area)
-        local stateOverlay = sf:CreateTexture(nil, "OVERLAY")
-        stateOverlay:SetAllPoints(sf)
+        local stateOverlay = iconFrame:CreateTexture(nil, "OVERLAY")
+        stateOverlay:SetAllPoints(iconFrame)
         stateOverlay:SetColorTexture(0, 0, 0, 0)
         stateOverlay:Hide()
-        sf.stateOverlay = stateOverlay
+        iconFrame.stateOverlay = stateOverlay
 
-        -- Alert glow when remaining <= 5 sec (subtle pulse)
-        local alertGlow = sf:CreateTexture(nil, "OVERLAY")
-        alertGlow:SetAllPoints(sf)
+        local alertGlow = iconFrame:CreateTexture(nil, "OVERLAY")
+        alertGlow:SetAllPoints(iconFrame)
         alertGlow:SetColorTexture(1, 0.85, 0.3, 0.2)
         alertGlow:SetBlendMode("ADD")
         alertGlow:Hide()
-        sf.alertGlow = alertGlow
+        iconFrame.alertGlow = alertGlow
 
-        -- Just-placed pop: 150ms scale 1.0 -> 1.08 -> 1.0
-        function sf:PlayPlacePop()
+        function iconFrame:PlayPlacePop()
             if self.popAnim then
                 self.popAnim:Stop()
                 self.popAnim:Play()
@@ -219,10 +190,79 @@ local function CreateWindfuryTotemSlots()
             ag:Play()
         end
 
-        windfurySlots[i] = sf
+        windfurySlots[i] = { iconFrame = iconFrame }
+    end
+
+    -- Layer 3: front texture (draws on top of icons, below text)
+    local frontFrame = CreateFrame("Frame", "ShammyTimeTotemBarFrontLayer", barFrame)
+    frontFrame:SetAllPoints(barFrame)
+    frontFrame:SetFrameLevel(baseLevel + 1)
+    frontFrame:EnableMouse(false)
+    if M and M.TEX and M.TEX.TOTEM_BAR_FRONT then
+        local frontTex = frontFrame:CreateTexture(nil, "ARTWORK")
+        frontTex:SetTexture(M.TEX.TOTEM_BAR_FRONT)
+        frontTex:SetAllPoints(frontFrame)
+        -- Match the same vertical crop as the back texture
+        local ct = barFrame.cropTop or 0
+        local cb = barFrame.cropBottom or 1
+        frontTex:SetTexCoord(0, 1, ct, cb)
+        frontTex:SetAlpha(1)
+    end
+
+    -- Layer 4: text layer (timer text per slot, on top of everything)
+    local textLayer = CreateFrame("Frame", "ShammyTimeTotemBarTextLayer", barFrame)
+    textLayer:SetAllPoints(barFrame)
+    textLayer:SetFrameLevel(baseLevel + 2)
+    textLayer:EnableMouse(false)
+
+    local dbFont = ShammyTime.GetDB and ShammyTime.GetDB() or {}
+    local fontSz = (dbFont.fontTotemTimer and dbFont.fontTotemTimer >= 6 and dbFont.fontTotemTimer <= 28) and dbFont.fontTotemTimer or TIMER_FONT_SIZE
+    for i = 1, 4 do
+        local cx = SlotX(i)
+        local textFrame = CreateFrame("Frame", ("ShammyTimeWindfuryTotemSlot%dText"):format(i), textLayer)
+        textFrame:SetSize(iconSize + 20, 20)
+        textFrame:SetPoint("CENTER", textLayer, "BOTTOMLEFT", cx, centerY + timerOY)
+        textFrame:EnableMouse(false)
+
+        local timerText = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        timerText:SetPoint("CENTER")
+        timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
+        timerText:SetTextColor(TIMER_COLOR[1], TIMER_COLOR[2], TIMER_COLOR[3])
+        timerText:SetShadowColor(0, 0, 0, 1)
+        timerText:SetShadowOffset(1, -1)
+        textFrame.timerText = timerText
+
+        windfurySlots[i].textFrame = textFrame
     end
 
     UpdateWindfuryTotemBar()
+end
+
+-- Reposition all slots and text live (called from /st totem commands).
+function ShammyTime.ApplyTotemBarLayout()
+    if not windfurySlots[1] then return end
+    local barFrame = windfurySlots.parent
+    local barH = barFrame and barFrame:GetHeight() or BAR_W
+    local iconSize = L("iconSize")
+    local centerY = barH / 2 + L("iconsY")
+    local timerOY = L("timerOffsetY")
+    for i = 1, 4 do
+        local slot = windfurySlots[i]
+        local cx = SlotX(i)
+        local iconFrame = slot.iconFrame
+        if iconFrame then
+            iconFrame:ClearAllPoints()
+            iconFrame:SetSize(iconSize, iconSize)
+            iconFrame:SetPoint("CENTER", iconFrame:GetParent(), "BOTTOMLEFT", cx, centerY)
+            if iconFrame.icon then iconFrame.icon:SetSize(iconSize, iconSize) end
+        end
+        local textFrame = slot.textFrame
+        if textFrame then
+            textFrame:ClearAllPoints()
+            textFrame:SetSize(iconSize + 20, 20)
+            textFrame:SetPoint("CENTER", textFrame:GetParent(), "BOTTOMLEFT", cx, centerY + timerOY)
+        end
+    end
 end
 
 local function OnEvent(_, event)
@@ -259,11 +299,12 @@ end
 -- Apply timer font size from DB (called when user changes /st font totem N)
 function ShammyTime.ApplyTotemBarFontSize()
     for i = 1, 4 do
-        local sf = windfurySlots[i]
-        if sf and sf.timerText then
+        local slot = windfurySlots[i]
+        local tf = slot and slot.textFrame
+        if tf and tf.timerText then
             local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
             local fontSz = (db.fontTotemTimer and db.fontTotemTimer >= 6 and db.fontTotemTimer <= 28) and db.fontTotemTimer or TIMER_FONT_SIZE
-            sf.timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
+            tf.timerText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
         end
     end
 end
@@ -276,16 +317,17 @@ function ShammyTime.PrintTotemBarPos()
         return
     end
     print("|cff00ff00ShammyTime totem bar layout|r")
-    print(string.format("  Constants (edit in ShammyTime_WindfuryTotemBar.lua): SLOT_MARGIN=%d, SLOT_GAP=%d, SLOT_W=%d, SLOT_H=%d, SLOT_OFFSET_Y=%d", SLOT_MARGIN, SLOT_GAP, SLOT_W, SLOT_H, SLOT_OFFSET_Y))
+    print(string.format("  Constants (edit in ShammyTime_WindfuryTotemBar.lua): ICONS_X=%d, ICONS_Y=%d, ICONS_SPREAD=%.2f, ICON_SIZE=%d", ICONS_X, ICONS_Y, ICONS_SPREAD, ICON_SIZE))
     if barFrame.GetCenter and barFrame:GetCenter() then
         local bx, by = barFrame:GetCenter()
         print(string.format("  Totem bar frame (screen): x=%.1f  y=%.1f", bx, by))
     end
     for i = 1, 4 do
-        local sf = windfurySlots[i]
-        if sf and sf.GetLeft and sf:GetLeft() then
-            local left, bottom, w, h = sf:GetLeft(), sf:GetBottom(), sf:GetWidth(), sf:GetHeight()
-            local cx, cy = sf:GetCenter()
+        local slot = windfurySlots[i]
+        local iconFrame = slot and slot.iconFrame
+        if iconFrame and iconFrame.GetLeft and iconFrame:GetLeft() then
+            local left, bottom, w, h = iconFrame:GetLeft(), iconFrame:GetBottom(), iconFrame:GetWidth(), iconFrame:GetHeight()
+            local cx, cy = iconFrame:GetCenter()
             print(string.format("  Slot %d: left=%.1f  bottom=%.1f  width=%.0f  height=%.0f  |  center x=%.1f  y=%.1f", i, left, bottom, w, h, cx or 0, cy or 0))
         else
             print(string.format("  Slot %d: (not created yet — place a totem or reload)", i))

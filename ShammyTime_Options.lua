@@ -255,7 +255,7 @@ local function BuildFullExportLines(useColorCodes)
     line("")
     sec("Totem bar")
     line("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
-    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 13))
+    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 12))
     line("")
     sec("Shamanistic Focus (position and scale)")
     if p.focusFrame then
@@ -277,7 +277,7 @@ local function BuildFullExportLines(useColorCodes)
     line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 28))
     line("")
     sec("Shield indicator")
-    line("shieldScale = " .. tostring(p.shieldScale or 0.2))
+    line("shieldScale = " .. tostring(p.shieldScale or 0.4))
     line("fontShieldCount = " .. tostring(p.fontShieldCount or 86))
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
     line("shieldCountY = " .. tostring(p.shieldCountY or 127))
@@ -1022,7 +1022,7 @@ function ShammyTime:SetupOptions()
                             name = "Timer Font",
                             min = 4, max = 20, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontTotemTimer", 13) end,
+                            get = function() return getFlatDB("fontTotemTimer", 12) end,
                             set = function(_, v)
                                 setFlatDB("fontTotemTimer", v)
                                 local st = _G.ShammyTime
@@ -1540,7 +1540,7 @@ function ShammyTime:SetupOptions()
                         name = "Totem Timer Font",
                         min = 4, max = 20, step = 1,
                         order = 61,
-                        get = function() return getFlatDB("fontTotemTimer", 13) end,
+                        get = function() return getFlatDB("fontTotemTimer", 12) end,
                         set = function(_, v)
                             setFlatDB("fontTotemTimer", v)
                             local st = _G.ShammyTime

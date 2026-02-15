@@ -2084,8 +2084,15 @@ local function PrintAllSettings()
     print("  shieldCount = " .. tostring(db.shieldCount) .. "  -- override charge count (nil = auto; 1–9 = fixed); /st adv shield count X")
     print("  shieldCountX = " .. tostring(db.shieldCountX) .. "  -- number X offset; /st adv shield numx X")
     print("  shieldCountY = " .. tostring(db.shieldCountY) .. "  -- number Y offset; /st adv shield numy Y")
+    print(C.gray .. "Totem bar layout:" .. C.r)
+    local tl = db.totemLayout or {}
+    print("  iconsX = " .. tostring(tl.iconsX or -1) .. "  -- /st totem x N")
+    print("  iconsY = " .. tostring(tl.iconsY or 2) .. "  -- /st totem y N")
+    print("  iconsSpread = " .. tostring(tl.iconsSpread or 0.95) .. "  -- /st totem spread N")
+    print("  iconSize = " .. tostring(tl.iconSize or 40) .. "  -- /st totem iconsize N")
+    print("  timerOffsetY = " .. tostring(tl.timerOffsetY or -33) .. "  -- /st totem texty N")
     print(C.gray .. "Shamanistic Focus:" .. C.r)
-    local focusScale = (focusDb and focusDb.scale) or 0.8
+    local focusScale = (focusDb and focusDb.scale) or 1.3
     print("  scale = " .. tostring(focusScale) .. "  -- /st adv focus scale X")
     print(C.gold .. "——— Copy above to share or use as new defaults ———" .. C.r)
     print("")
@@ -2154,7 +2161,7 @@ local function PrintAdvHelp()
     print(C.green .. "ShammyTime — Advanced (" .. C.gold .. "/st adv" .. C.r .. C.green .. ")" .. C.r)
     print(C.gray .. "  Fine‑tune sizes, positions, and layout per element. Use " .. C.gold .. "/st test" .. C.r .. C.gray .. " to see effects." .. C.r)
     print("")
-    print(C.gray .. "  " .. C.gold .. "totembar" .. C.r .. C.gray .. "  — Windfury totem bar: scale, timer font." .. C.r)
+    print(C.gray .. "  " .. C.gold .. "totembar" .. C.r .. C.gray .. "  — Totem bar: scale, icon x/y/spread/size, text y." .. C.r)
     print(C.gray .. "  " .. C.gold .. "bubbles" .. C.r .. C.gray .. "   — Windfury circles: " .. C.gold .. "center" .. C.r .. C.gray .. " (size, text, font) or " .. C.gold .. "outer" .. C.r .. C.gray .. " (gap, font, position)." .. C.r)
     print(C.gray .. "  " .. C.gold .. "shield" .. C.r .. C.gray .. "    — Lightning/Water Shield: scale, count override, number X/Y position." .. C.r)
     print(C.gray .. "  " .. C.gold .. "focus" .. C.r .. C.gray .. "     — Shamanistic Focus: scale." .. C.r)
@@ -2548,10 +2555,20 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         else
             PrintCircleHelp()
         end
-    -- Totem bar: /st totem [scale X] (via /st adv totembar)
+    -- Totem bar: /st totem [scale|x|y|spread|iconsize|texty] (via /st adv totembar)
     elseif cmd == "totem" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
+        local xArg = a:match("^x%s+([%-%d%.]+)$")
+        local yArg = a:match("^y%s+([%-%d%.]+)$")
+        local spreadArg = a:match("^spread%s+([%d%.]+)$")
+        local iconsizeArg = a:match("^iconsize%s+([%d%.]+)$")
+        local textyArg = a:match("^texty%s+([%-%d%.]+)$")
+        -- Helper to ensure db.totemLayout exists
+        local function ensureLayout()
+            db.totemLayout = db.totemLayout or {}
+            return db.totemLayout
+        end
         if scaleArg then
             local num = tonumber(scaleArg)
             if num and num >= 0.5 and num <= 2 then
@@ -2563,19 +2580,69 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 end
                 print(C.green .. "ShammyTime: Totem bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st adv totembar scale 1" .. C.r)
+                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st totem scale 1" .. C.r)
+            end
+        elseif xArg then
+            local num = tonumber(xArg)
+            if num and num >= -200 and num <= 200 then
+                ensureLayout().iconsX = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem icons X = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem x -200 to 200. " .. C.gold .. "/st totem x -1" .. C.r)
+            end
+        elseif yArg then
+            local num = tonumber(yArg)
+            if num and num >= -200 and num <= 200 then
+                ensureLayout().iconsY = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem icons Y = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem y -200 to 200. " .. C.gold .. "/st totem y 2" .. C.r)
+            end
+        elseif spreadArg then
+            local num = tonumber(spreadArg)
+            if num and num >= 0.2 and num <= 3 then
+                ensureLayout().iconsSpread = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem spread = " .. ("%.2f"):format(num) .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem spread 0.2–3. " .. C.gold .. "/st totem spread 1" .. C.r)
+            end
+        elseif iconsizeArg then
+            local num = tonumber(iconsizeArg)
+            if num and num >= 8 and num <= 80 then
+                ensureLayout().iconSize = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem icon size = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem iconsize 8–80. " .. C.gold .. "/st totem iconsize 40" .. C.r)
+            end
+        elseif textyArg then
+            local num = tonumber(textyArg)
+            if num and num >= -100 and num <= 100 then
+                ensureLayout().timerOffsetY = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem text Y = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem texty -100 to 100. " .. C.gold .. "/st totem texty -33" .. C.r)
             end
         elseif a == "pos" then
             if ShammyTime.PrintTotemBarPos then ShammyTime.PrintTotemBarPos() end
         elseif a == "" then
-            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "):" .. C.r)
+            local tl = db.totemLayout or {}
+            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2)" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "/st adv totembar scale 1" .. C.r .. C.gray .. " — Change size." .. C.r)
-            print(C.gray .. "  " .. C.gold .. "/st show totem on|off" .. C.r .. C.gray .. " — Show/hide." .. C.r)
+            print(C.gray .. "  x " .. C.gold .. (tl.iconsX or -1) .. C.r .. C.gray .. "  y " .. C.gold .. (tl.iconsY or 2) .. C.r .. C.gray .. "  spread " .. C.gold .. ("%.2f"):format(tl.iconsSpread or 0.95) .. C.r)
+            print(C.gray .. "  iconsize " .. C.gold .. (tl.iconSize or 40) .. C.r .. C.gray .. "  texty " .. C.gold .. (tl.timerOffsetY or -33) .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem scale 1" .. C.r .. C.gray .. " — Frame scale." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem x -1" .. C.r .. C.gray .. " — Icons horizontal offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem y 2" .. C.r .. C.gray .. " — Icons vertical offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem spread 0.95" .. C.r .. C.gray .. " — Icons spread (0.2–3)." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem iconsize 40" .. C.r .. C.gray .. " — Icon size (8–80)." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem texty -33" .. C.r .. C.gray .. " — Timer text Y offset." .. C.r)
         else
-            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "):" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "scale 1" .. C.r .. C.gray .. " — size (0.5–2)" .. C.r)
-            print(C.gray .. "  Position frame by dragging when " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "." .. C.r)
+            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.gray .. "). Type " .. C.gold .. "/st totem" .. C.r .. C.gray .. " for all options." .. C.r)
         end
     -- Shamanistic Focus: /st focus [scale X] (via /st adv focus)
     elseif cmd == "focus" then
@@ -2696,7 +2763,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyShieldScale then ShammyTime.ApplyShieldScale() end
                 print(C.green .. "ShammyTime: Shield indicator size " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Shield size 0.05–2. " .. C.gold .. "/st shield size 0.2" .. C.r .. C.gray .. " or " .. C.gold .. "/st shield scale 0.2" .. C.r)
+                print(C.red .. "ShammyTime: Shield size 0.05–2. " .. C.gold .. "/st shield size 0.4" .. C.r .. C.gray .. " or " .. C.gold .. "/st shield scale 0.4" .. C.r)
             end
         elseif countArg then
             if countArg == "auto" or countArg == "nil" or countArg == "off" then
@@ -2732,7 +2799,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 print(C.red .. "ShammyTime: Shield numy -200 to 200. " .. C.gold .. "/st shield numy -50" .. C.r)
             end
         elseif a == "" then
-            local s = db.shieldScale or 0.2
+            local s = db.shieldScale or 0.4
             local cnt = db.shieldCount
             local nx = db.shieldCountX or 0
             local ny = db.shieldCountY or 127
@@ -2747,7 +2814,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.gray .. "  " .. C.gold .. "/st show shield on|off" .. C.r .. C.gray .. "  — Show/hide. " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — All settings." .. C.r)
         else
             print(C.gray .. "ShammyTime: Shield options (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "size 0.2" .. C.r .. C.gray .. " — scale (0.05–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "size 0.4" .. C.r .. C.gray .. " — scale (0.05–2)" .. C.r)
             print(C.gray .. "  " .. C.gold .. "count 3" .. C.r .. C.gray .. " or " .. C.gold .. "auto" .. C.r .. C.gray .. " — override charge display" .. C.r)
             print(C.gray .. "  " .. C.gold .. "numx 10" .. C.r .. C.gray .. " — number X position (-200 to 200)" .. C.r)
             print(C.gray .. "  " .. C.gold .. "numy -50" .. C.r .. C.gray .. " — number Y position (-200 to 200)" .. C.r)
@@ -2815,7 +2882,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local cc = db.fontCircleCritical or 20
             local sl = db.fontSatelliteLabel or 8
             local sv = db.fontSatelliteValue or 13
-            local tt = db.fontTotemTimer or 13
+            local tt = db.fontTotemTimer or 12
             local ib = db.fontImbueTimer or 28
             print(C.gray .. "ShammyTime: Font — circle title " .. C.gold .. ct .. C.r .. C.gray .. ", total " .. C.gold .. ctot .. C.r .. C.gray .. ", critical " .. C.gold .. cc .. C.r)
             print(C.gray .. "  satellite label " .. C.gold .. sl .. C.r .. C.gray .. ", value " .. C.gold .. sv .. C.r .. C.gray .. ", totem " .. C.gold .. tt .. C.r .. C.gray .. ", imbue " .. C.gold .. ib .. C.r .. C.gray .. ". " .. C.gold .. "/st font" .. C.r .. C.gray .. " for list." .. C.r)

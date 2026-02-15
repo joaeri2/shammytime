@@ -15,8 +15,9 @@ M.TEX = {
     CENTER_RUNES  = M.MEDIA .. "wf_center_runes.tga",
     CENTER_ENERGY = M.MEDIA .. "wf_center_energy.tga",
     CENTER_SHADOW = M.MEDIA .. "wf_center_shadow.tga",
-    -- Totem bar (bottom of center ring, 4 elemental slots)
-    TOTEM_BAR = M.MEDIA .. "totem_bar.tga",
+    -- Totem bar (layered: back, icons, front, text) 512×512
+    TOTEM_BAR_BACK  = M.MEDIA .. "v2_totem_bar_back_512x512.tga",
+    TOTEM_BAR_FRONT = M.MEDIA .. "v2_totem_bar_front_512x512.tga",
     -- Weapon imbue bar (512×261; left = main hand, right = off hand)
     IMBUE_BAR = M.MEDIA .. "imbue_bar_512_261_nohalo.tga",
     -- Crit satellite ring (layered, aligned)

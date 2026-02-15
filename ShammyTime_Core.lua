@@ -47,8 +47,8 @@ local DEFAULTS = {
         -- Per-module (spec)
         modules = {
             windfuryBubbles = moduleDefaults(true, 0.65, 1.0),
-            shieldIndicator = moduleDefaults(true, 0.3, 1.0),
-            shamanisticFocus = moduleDefaults(true, 0.9, 1.0),
+            shieldIndicator = moduleDefaults(true, 0.4, 1.0),
+            shamanisticFocus = moduleDefaults(true, 1.3, 1.0),
             totemBar = moduleDefaults(true, 1.2, 1.0),
             weaponImbueBar = moduleDefaults(true, 0.35, 1.0),
             wfImpact = moduleDefaults(true, 1.3, 1.0),
@@ -74,7 +74,7 @@ local DEFAULTS = {
         wfFocusEnabled = true,
         wfImbueBarEnabled = true,
         wfShieldEnabled = true,
-        shieldScale = 0.3,
+        shieldScale = 0.4,
         shieldCount = nil,
         shieldCountX = 1,
         shieldCountY = 127,
@@ -100,7 +100,7 @@ local DEFAULTS = {
         fontCircleCritical = 17,
         fontSatelliteLabel = 12,
         fontSatelliteValue = 17,
-        fontTotemTimer = 13,
+        fontTotemTimer = 12,
         fontImbueTimer = 28,
         fontShieldCount = 86,
         wfSatelliteLabelX = 0,
@@ -128,7 +128,7 @@ local DEFAULTS = {
         wfRadialPos = {},
         focusFrame = {
             point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
-            x = -381.49990844727, y = 0.51829099655151, scale = 0.9, locked = false,
+            x = -381.49990844727, y = 0.51829099655151, scale = 1.3, locked = false,
         },
     },
 }
@@ -236,7 +236,7 @@ function ShammyTime:MigrateOldDB()
                 p.modules.shamanisticFocus.pos = p.modules.shamanisticFocus.pos or {}
                 p.modules.shamanisticFocus.pos.x = v.x or 0
                 p.modules.shamanisticFocus.pos.y = v.y or -150
-                p.modules.shamanisticFocus.scale = v.scale or 0.8
+                p.modules.shamanisticFocus.scale = v.scale or 1.3
             end
         elseif type(v) ~= "table" or k == "wfSession" or k == "wfLastPull" or k == "wfRadialPos" then
             p[k] = v

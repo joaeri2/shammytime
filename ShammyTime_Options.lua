@@ -1352,6 +1352,154 @@ function ShammyTime:SetupOptions()
                             end,
                         },
                     }, true),  -- noFade: fade settings don't apply to the damage feed
+                    staggerBar = CreateModuleOptions("staggerBar", "Stagger Bar", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "|cffffd700Mastering stagger will increase your damage.|r There are great videos online that explain this concept visually — search for \"WoW shaman stagger dual wield\". However, here is a quick explanation:\n\n" ..
+                                           "When you dual wield, your character swings two weapons automatically — one in each hand. Your |cffffffffmain hand (MH)|r and |cffffffffoff hand (OH)|r each have their own swing timer, and they tick independently.\n\n" ..
+                                           "|cffffd700Why stagger?|r Two big reasons:\n\n" ..
+                                           "|cffffffff1. Windfury priority.|r Windfury can only proc from your |cffffffffmain-hand|r swings, and your main hand does more damage than your off-hand — so you always want MH to get Windfury procs, not the OH. When it procs, it resets your MH swing timer — your next MH swing comes immediately. If your OH happens to swing at the same time as that reset, the two swings overlap and you waste potential Windfury procs. By keeping MH slightly ahead of OH, you give Windfury room to reset your MH without colliding with the OH.\n\n" ..
+                                           "|cffffffff2. Flurry efficiency.|r Flurry has a ~0.5 second internal window. " ..
+                                           "When both your MH and OH land within that window, they |cffffffffshare a single Flurry charge|r instead of each one eating its own. " ..
+                                           "This effectively |cffffd700doubles your Flurry uptime|r — you get the haste bonus on twice as many swings for the same number of charges. " ..
+                                           "The 0.45 s threshold on this bar is based on that window.\n\n" ..
+                                           "|cffffd700Staggering|r means keeping your MH and OH swings close together but slightly offset — MH hits first, OH follows within about 0.45 seconds. " ..
+                                           "Both weapons should have the |cffffffffsame attack speed|r to keep them in sync without constant adjustment.\n\n" ..
+                                           "This bar shows you how well staggered your swings are in real time:\n\n" ..
+                                           "|cffffd700Gold|r — Perfect. MH hit first, OH followed within 0.45 s.\n" ..
+                                           "|cffffff00Yellow|r — Drifting. MH hit first, but the gap is too large (> 0.45 s). Flurry charges are being wasted.\n" ..
+                                           "|cffff4c4cRed|r — Bad. OH hit before MH — Windfury priority is reversed.\n\n" ..
+                                           "The number (e.g. |cffffd7000.30s|r) shows the exact gap between your last MH and OH swings. " ..
+                                           "Aim to keep it |cffffd700gold|r as much as possible.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                        barHeader = {
+                            type = "header",
+                            name = "Bar Dimensions",
+                            order = 4.0,
+                        },
+                        staggerBarWidth = {
+                            type = "range",
+                            name = "Bar Width",
+                            desc = "Length of each swing bar in pixels.",
+                            min = 50, max = 400, step = 5,
+                            order = 4.1,
+                            get = function() return getFlatDB("staggerBarWidth", 200) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarWidth", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerBarHeight = {
+                            type = "range",
+                            name = "Bar Height",
+                            desc = "Thickness of each swing bar in pixels.",
+                            min = 2, max = 20, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("staggerBarHeight", 6) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarHeight", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerBarGap = {
+                            type = "range",
+                            name = "Bar Gap",
+                            desc = "Vertical space between MH and OH bars.",
+                            min = 0, max = 20, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("staggerBarGap", 4) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarGap", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        deltaHeader = {
+                            type = "header",
+                            name = "Delta Text",
+                            order = 5.0,
+                        },
+                        staggerDeltaFontSize = {
+                            type = "range",
+                            name = "Font Size",
+                            desc = "Size of the stagger delta readout.",
+                            min = 6, max = 32, step = 1,
+                            order = 5.1,
+                            get = function() return getFlatDB("staggerDeltaFontSize", 14) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaFontSize", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerDeltaX = {
+                            type = "range",
+                            name = "Text X Offset",
+                            desc = "Horizontal offset for the delta text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.2,
+                            get = function() return getFlatDB("staggerDeltaX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerDeltaY = {
+                            type = "range",
+                            name = "Text Y Offset",
+                            desc = "Vertical offset for the delta text (positive = up).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.3,
+                            get = function() return getFlatDB("staggerDeltaY", 0) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        hideHeader = {
+                            type = "header",
+                            name = "Visibility",
+                            order = 6.0,
+                        },
+                        staggerBarAlwaysShow = {
+                            type = "toggle",
+                            name = "Always Show",
+                            desc = "Keep the stagger bar visible at all times (disables smart hide). When off, the bar only appears while swinging.",
+                            width = "full",
+                            order = 6.05,
+                            get = function() return getFlatDB("staggerBarAlwaysShow", false) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarAlwaysShow", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyElementVisibility then st.ApplyElementVisibility() end
+                                if st and st.UpdateAllElementsFadeState then st:UpdateAllElementsFadeState() end
+                            end,
+                        },
+                        staggerHideDelay = {
+                            type = "range",
+                            name = "Hide After (seconds)",
+                            desc = "Hide the stagger bars after this many seconds of no swings. Only used when 'Always Show' is off.",
+                            min = 3, max = 60, step = 1,
+                            order = 6.1,
+                            disabled = function() return getFlatDB("staggerBarAlwaysShow", false) end,
+                            get = function() return getFlatDB("staggerHideDelay", 15) end,
+                            set = function(_, v) setFlatDB("staggerHideDelay", v) end,
+                        },
+                    }),
                     windfuryIcd = CreateModuleOptions("windfuryIcd", "Windfury ICD", {
                         moduleDesc = {
                             type = "group",
@@ -1806,6 +1954,40 @@ function ShammyTime:SetupOptions()
                             setFlatDB("imbueBarOffsetY", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                        end,
+                    },
+                    ---------------------------------------------------------
+                    -- Stagger Bar
+                    ---------------------------------------------------------
+                    staggerHeader = {
+                        type = "header",
+                        name = "Stagger Bar Positions",
+                        order = 70,
+                    },
+                    staggerBarsX = {
+                        type = "range",
+                        name = "Bars X",
+                        desc = "Horizontal offset for the MH/OH swing bars (positive = right).",
+                        min = -250, max = 250, step = 1,
+                        order = 71,
+                        get = function() return getFlatDB("staggerBarsX", 0) end,
+                        set = function(_, v)
+                            setFlatDB("staggerBarsX", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                        end,
+                    },
+                    staggerBarsY = {
+                        type = "range",
+                        name = "Bars Y",
+                        desc = "Vertical offset for the MH/OH swing bars (positive = up).",
+                        min = -100, max = 100, step = 1,
+                        order = 72,
+                        get = function() return getFlatDB("staggerBarsY", 0) end,
+                        set = function(_, v)
+                            setFlatDB("staggerBarsY", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
                         end,
                     },
                 },

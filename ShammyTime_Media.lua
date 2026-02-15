@@ -70,6 +70,9 @@ M.TEX = {
     -- Windfury ICD indicator (on = WF ready, off = ICD active / WF on cooldown), 256×256
     WF_ICD_ON  = M.MEDIA .. "v2_windfury_icd_on_256x256.tga",
     WF_ICD_OFF = M.MEDIA .. "v2_windfury_icd_off_256x256.tga",
+    -- Stagger bar (layered: back, bars, front, delta text) 512×512
+    STAGGER_BACK  = M.MEDIA .. "v2_stagger_back_512x512.tga",
+    STAGGER_FRONT = M.MEDIA .. "v2_stagger_front_512x512.tga",
 }
 
 -- Optional font (use GameFontNormal etc. if not set)

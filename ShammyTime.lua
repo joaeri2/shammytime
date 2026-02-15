@@ -389,7 +389,7 @@ function ShammyTime.GetRadialPositionDB()
     db.wfRadialPos = db.wfRadialPos or {}
     local key = GetRadialPositionKey()
     if not db.wfRadialPos[key] then
-        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil }
+        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil, staggerBar = nil }
     end
     return db.wfRadialPos[key]
 end
@@ -822,6 +822,10 @@ local function ApplyElementMouseState()
         local icdFrame = ShammyTime.GetWindfuryICDFrame()
         if icdFrame then icdFrame:EnableMouse(visible(icdFrame) and useMouse or false) end
     end
+    if ShammyTime.GetStaggerBarFrame then
+        local staggerBar = ShammyTime.GetStaggerBarFrame()
+        if staggerBar then staggerBar:EnableMouse(visible(staggerBar) and useMouse or false) end
+    end
     if ShammyTime.SetSatellitesEnableMouse then
         ShammyTime.SetSatellitesEnableMouse(visible(center) and useMouse or false)
     end
@@ -882,6 +886,19 @@ local function ApplyElementVisibility()
                 end
             else
                 icdFrame:Hide()
+            end
+        end
+    end
+    -- Stagger bar: force-hide when disabled; force-show when always-show is on
+    if ShammyTime.EnsureStaggerBarFrame then
+        local staggerBar = ShammyTime.GetStaggerBarFrame and ShammyTime.GetStaggerBarFrame()
+        if staggerBar then
+            if not enabled("staggerBarEnabled") then
+                staggerBar:Hide()
+                staggerBar:SetAlpha(0)
+            elseif db.staggerBarAlwaysShow then
+                staggerBar:Show()
+                staggerBar:SetAlpha(1)
             end
         end
     end
@@ -1057,6 +1074,10 @@ function UpdateAllElementsFadeState()
         if ShammyTime.GetWindfuryICDFrame then
             local icdFrame = ShammyTime.GetWindfuryICDFrame()
             if icdFrame then icdFrame:Show(); icdFrame:SetAlpha(1) end
+        end
+        if ShammyTime.GetStaggerBarFrame then
+            local staggerBar = ShammyTime.GetStaggerBarFrame()
+            if staggerBar then staggerBar:Show(); staggerBar:SetAlpha(1) end
         end
         ApplyElementMouseState()
         return

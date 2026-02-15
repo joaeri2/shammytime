@@ -54,6 +54,7 @@ local DEFAULTS = {
             weaponImbueBar = moduleDefaults(true, 0.85, 1.0),
             wfImpact = moduleDefaults(true, 1.3, 1.0),
             windfuryIcd = moduleDefaults(true, 0.8, 1.0),
+            staggerBar = moduleDefaults(true, 1.0, 1.0),
         },
         -- Flat keys (existing code)
         point = "CENTER",
@@ -122,6 +123,18 @@ local DEFAULTS = {
         wfImpactFontTotal = 16,
         wfImpactScrollDuration = 2.0,
         wfImpactScrollDistance = 115,
+        -- Stagger bar
+        staggerBarEnabled = true,
+        staggerBarAlwaysShow = true,
+        staggerBarWidth = 340,
+        staggerBarHeight = 16,
+        staggerBarGap = 7,
+        staggerBarsX = 0,
+        staggerBarsY = 2,
+        staggerDeltaFontSize = 14,
+        staggerDeltaX = 0,
+        staggerDeltaY = 0,
+        staggerHideDelay = 15,
         imbueBarScale = 0.85,
         imbueBarMargin = nil,
         imbueBarGap = nil,
@@ -348,6 +361,9 @@ function ShammyTime:SyncFlatToModules(opts)
     if p.modules.windfuryIcd then
         p.modules.windfuryIcd.enabled = (p.wfIcdEnabled ~= false)
     end
+    if p.modules.staggerBar then
+        p.modules.staggerBar.enabled = (p.staggerBarEnabled ~= false)
+    end
 
     -- Scale: flat → modules
     if p.modules.windfuryBubbles and p.wfRadialScale then
@@ -421,6 +437,12 @@ function ShammyTime:SyncFlatToModules(opts)
             p.modules.windfuryIcd.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
             p.modules.windfuryIcd.fade.enabled = p.wfFadeOutOfCombat or p.modules.windfuryIcd.fade.enabled or false
         end
+        if p.modules.staggerBar then
+            p.modules.staggerBar.fade = p.modules.staggerBar.fade or {}
+            p.modules.staggerBar.fade.conditions = p.modules.staggerBar.fade.conditions or {}
+            p.modules.staggerBar.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.staggerBar.fade.enabled = p.wfFadeOutOfCombat or p.modules.staggerBar.fade.enabled or false
+        end
     end
 end
 
@@ -436,6 +458,7 @@ function ShammyTime:ApplyAllConfigs()
     if p.wfShieldEnabled == nil then p.wfShieldEnabled = true end
     if p.wfImpactEnabled == nil then p.wfImpactEnabled = true end
     if p.wfIcdEnabled == nil then p.wfIcdEnabled = true end
+    if p.staggerBarEnabled == nil then p.staggerBarEnabled = true end
     if p.fontShieldCount == nil then p.fontShieldCount = p.fontImbueTimer or 86 end
     -- Sync flat keys from modules so existing code sees them
     if p.modules then
@@ -446,6 +469,7 @@ function ShammyTime:ApplyAllConfigs()
         if p.modules.shieldIndicator then p.wfShieldEnabled = (p.modules.shieldIndicator.enabled ~= false) end
         if p.modules.wfImpact then p.wfImpactEnabled = (p.modules.wfImpact.enabled ~= false) end
         if p.modules.windfuryIcd then p.wfIcdEnabled = (p.modules.windfuryIcd.enabled ~= false) end
+        if p.modules.staggerBar then p.staggerBarEnabled = (p.modules.staggerBar.enabled ~= false) end
         if p.modules.windfuryBubbles then p.wfRadialScale = p.modules.windfuryBubbles.scale or p.wfRadialScale end
         if p.modules.totemBar then p.wfTotemBarScale = p.modules.totemBar.scale or p.wfTotemBarScale end
         if p.modules.shieldIndicator then p.shieldScale = p.modules.shieldIndicator.scale or p.shieldScale end
@@ -504,6 +528,7 @@ function ShammyTime:ApplyAllConfigs()
     if ShammyTime.EnsureShieldFrame then ShammyTime.EnsureShieldFrame() end
     if ShammyTime.GetShamanisticFocusFrame then ShammyTime.GetShamanisticFocusFrame() end
     if ShammyTime.EnsureWindfuryICDFrame then ShammyTime.EnsureWindfuryICDFrame() end
+    if ShammyTime.EnsureStaggerBarFrame then ShammyTime.EnsureStaggerBarFrame() end
 
     -- Call each module's ApplyConfig() so scale/alpha/position from profile.modules are applied (spec)
     if self.Modules then
@@ -522,6 +547,7 @@ function ShammyTime:ApplyAllConfigs()
         _G.ShammyTimeShieldFrame,
         ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame() or nil,
         ShammyTime.GetWindfuryICDFrame and ShammyTime.GetWindfuryICDFrame() or nil,
+        _G.ShammyTimeStaggerBarFrame,
     }
     for _, frame in ipairs(framesToClearCache) do
         if frame then frame._stFadeTarget = nil end
@@ -549,7 +575,7 @@ end
 function ShammyTime:ApplyPresetAlwaysVisible()
     local p = self.db and self.db.profile
     if not p or not p.modules then return end
-    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd" }
+    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd", "staggerBar" }
     for _, name in ipairs(moduleNames) do
         local m = p.modules[name]
         if m then
@@ -571,6 +597,8 @@ function ShammyTime:ApplyPresetAlwaysVisible()
     p.wfFocusFadeWhenNotProcced = false
     p.wfFadeWhenNoTotems = false
     p.wfImbueFadeWhenLongDuration = false
+    -- Stagger bar: always show (bypasses smart hide)
+    p.staggerBarAlwaysShow = true
     self:ApplyAllConfigs()
     print("|cff00ff00ShammyTime:|r Preset applied: |cffffffffAlways Visible|r – all fade disabled.")
 end
@@ -664,12 +692,26 @@ function ShammyTime:ApplyPresetSmartFade()
         icd.fade.conditions.inactiveBuff = false
     end
 
+    -- Stagger Bar: fade when out of combat
+    local sb = p.modules.staggerBar
+    if sb then
+        sb.fade = sb.fade or {}
+        sb.fade.enabled = true
+        sb.fade.inactiveAlpha = 0
+        sb.fade.conditions = sb.fade.conditions or {}
+        sb.fade.conditions.outOfCombat = true
+        sb.fade.conditions.noTarget = false
+        sb.fade.conditions.inactiveBuff = false
+    end
+
     -- Sync legacy flat keys
     p.wfFadeOutOfCombat = false
     p.wfFadeWhenNotProcced = true
     p.wfFocusFadeWhenNotProcced = true
     p.wfFadeWhenNoTotems = true
     p.wfImbueFadeWhenLongDuration = true
+    -- Stagger bar: use smart hide (not always visible)
+    p.staggerBarAlwaysShow = false
 
     self:ApplyAllConfigs()
     print("|cff00ff00ShammyTime:|r Preset applied: |cffffffffSmart Fade|r – modules fade when not needed.")
@@ -716,6 +758,18 @@ local MODULE_RESET_FLAT_KEYS = {
         "fontShieldCount",
     },
     windfuryIcd = {},
+    staggerBar = {
+        "staggerBarAlwaysShow",
+        "staggerBarWidth",
+        "staggerBarHeight",
+        "staggerBarGap",
+        "staggerBarsX",
+        "staggerBarsY",
+        "staggerDeltaFontSize",
+        "staggerDeltaX",
+        "staggerDeltaY",
+        "staggerHideDelay",
+    },
 }
 
 --- Reset a single module to defaults
@@ -760,7 +814,7 @@ function ShammyTime:PlayDemo()
     local addon = self  -- Capture for closures
     addon.demoActive = true
     if addon.UpdateAllElementsFadeState then addon:UpdateAllElementsFadeState() end
-    local order = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd" }
+    local order = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd", "staggerBar" }
     for i, name in ipairs(order) do
         C_Timer.After((i - 1) * 2, function()
             if not addon.demoActive then return end
@@ -802,6 +856,8 @@ function ShammyTime:SaveAllCurrentPositions()
     if imbueBar then saveFramePos(imbueBar, "imbueBar") end
     local shield = _G.ShammyTimeShieldFrame
     if shield then saveFramePos(shield, "shieldFrame") end
+    local staggerBar = _G.ShammyTimeStaggerBarFrame
+    if staggerBar then saveFramePos(staggerBar, "staggerBar") end
     local focusFrame = self.GetShamanisticFocusFrame and self:GetShamanisticFocusFrame()
     if focusFrame and self.db and self.db.profile then
         local p = self.db.profile

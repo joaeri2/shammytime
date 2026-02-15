@@ -27,4 +27,5 @@ ShammyTime_SatelliteRings.lua
 ShammyTime_Windfury.lua
 ShammyTime_ShamanisticFocus.lua
 ShammyTime_WindfuryICD.lua
+ShammyTime_StaggerBar.lua
 ShammyTime_WFImpact.lua

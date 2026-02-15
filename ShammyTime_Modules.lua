@@ -494,3 +494,56 @@ function windfuryIcd:DemoStop()
 end
 
 ShammyTime.Modules.windfuryIcd = windfuryIcd
+
+-- ---------------------------------------------------------------------------
+-- Stagger Bar (dual-wield swing timer visual)
+-- ---------------------------------------------------------------------------
+local staggerBar = {
+    frame = nil,
+}
+
+function staggerBar:Create()
+    if ShammyTime.EnsureStaggerBarFrame then
+        self.frame = ShammyTime.EnsureStaggerBarFrame()
+    end
+    return self.frame
+end
+
+function staggerBar:ApplyConfig()
+    local cfg = getModuleConfig("staggerBar")
+    if not cfg then return end
+    self:Create()
+    local st = _G.ShammyTime
+    local f = self.frame or (st and st.EnsureStaggerBarFrame and st.EnsureStaggerBarFrame())
+    if not f then return end
+    -- Position first, then scale, then re-apply position so the frame doesn't drift
+    if st and st.ApplyStaggerBarPosition then st.ApplyStaggerBarPosition() end
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
+    f:SetScale(effScale)
+    if st and st.ApplyStaggerBarPosition then st.ApplyStaggerBarPosition() end
+    if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+end
+
+function staggerBar:SetEnabled(enabled)
+    local p = ShammyTime.db.profile
+    if p.modules and p.modules.staggerBar then p.modules.staggerBar.enabled = enabled end
+    p.staggerBarEnabled = enabled
+    if ShammyTime.ApplyElementVisibility then ShammyTime.ApplyElementVisibility() end
+end
+
+function staggerBar:DemoStart()
+    local st = _G.ShammyTime
+    if st and st.StartStaggerBarDemo then st.StartStaggerBarDemo() end
+    self:Create()
+    if self.frame then self.frame:Show(); self.frame:SetAlpha(1) end
+end
+
+function staggerBar:DemoStop()
+    local st = _G.ShammyTime
+    if st and st.StopStaggerBarDemo then st.StopStaggerBarDemo() end
+    if st and st.UpdateAllElementsFadeState then st.UpdateAllElementsFadeState() end
+end
+
+ShammyTime.Modules.staggerBar = staggerBar

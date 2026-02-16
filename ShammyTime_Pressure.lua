@@ -200,7 +200,7 @@ debugText:SetJustifyH("LEFT")
 debugText:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", PADDING, yAfterBar)
 debugText:SetPoint("RIGHT", debugFrame, "RIGHT", -PADDING, 0)
 debugText:SetTextColor(0.6, 0.6, 0.6)
-debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 hk:0.00 ok")
+debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 ok")
 
 local yBucketStart = yAfterBar - LINE_HEIGHT - 4
 local bucketStrings = {}
@@ -268,6 +268,9 @@ local PS = {
     instantScore = 0,
     squeezeScore = 0,
     tierScore = 0,
+    tierEvalScore = 0,
+    tierEdgeResistance = 0,
+    tierEdgeSlip = 0,
     currentTier = 0,
     lastTierChangeAt = 0,
     tierCapReason = "ok",
@@ -282,12 +285,25 @@ local PS = {
     squeezeIdleDecayMult = 0.45,
     tierInstantWeight = 0.95,
     tierSqueezeWeight = 0.65,
-    tierHysteresis = 0.10,
-    tierHoldMinSec = 2.00,
+    tierHysteresis = 0.14,
+    tierHoldMinSec = 2.20,
+    tierEdgeStartFrac = 0.50,
+    tierEdgePower = 1.70,
+    tierEdgeResistMax = 0.52,
+    tierEdgeSlipStartFrac = 0.72,
+    tierEdgeSlipMax = 0.16,
+    tierMomentumBoost = 0,
+    tierMomentumOnPromote = 0.08,
+    tierMomentumMax = 0.22,
+    tierMomentumBuildTau = 0.55,
+    tierMomentumDecayTau = 3.20,
+    tierMomentumIdleDecayTau = 1.15,
+    tierMomentumIdleGrace = 0.70,
+    tierMomentumTierScalar = 0.04,
     hitImpulseTau = 1.20,
-    nearTierProgressFrac = 0.75,
-    nearTierKickMin = 0.15,
-    nearTierKickWeight = 0.70,
+    nearTierProgressFrac = 0.90,
+    nearTierKickMin = 0.24,
+    nearTierKickWeight = 0.22,
     tierMinSqueeze = { 0.00, 0.00, 0.18, 0.35, 0.70, 0.92 },
     tierMinActiveSec = { 0.0, 1.2, 2.5, 4.0, 7.0, 14.0 },
     firstPressureAt = nil,
@@ -301,7 +317,7 @@ local PS = {
     bucketStatsInterval = 0.5,
     pressureBucketAvg = { 0, 0, 0, 0, 0 },
     pressureBucketMax = { 0, 0, 0, 0, 0 },
-    tierThresholds = { 1.15, 1.55, 1.90, 2.50, 3.20 },
+    tierThresholds = { 1.50, 1.85, 2.32, 3.05, 3.90 },
 }
 
 local function ExportPressureState()
@@ -348,6 +364,72 @@ local function GetTierFillTarget(score, tier)
     local span = math_max(upper - lower, 0.001)
 
     return math_min(math_max(((score or 0) - lower) / span, 0), 1)
+end
+
+local function GetTierSegmentProgress(score)
+    local s = score or 0
+    local lower = 0
+    for i = 1, #PS.tierThresholds do
+        local upper = PS.tierThresholds[i]
+        if s < upper then
+            local span = math_max(upper - lower, 0.001)
+            local frac = math_min(math_max((s - lower) / span, 0), 1)
+            return i - 1, frac
+        end
+        lower = upper
+    end
+    return #PS.tierThresholds, 1
+end
+
+local function GetTierResistanceAndSlip(score, now)
+    local segTier, segFrac = GetTierSegmentProgress(score)
+    if segTier >= #PS.tierThresholds then
+        return 0, 0
+    end
+
+    local edgeStart = math_min(math_max(PS.tierEdgeStartFrac or 0.50, 0.0), 0.95)
+    local resistance = 0
+    if segFrac > edgeStart then
+        local q = (segFrac - edgeStart) / math_max(1 - edgeStart, 0.001)
+        local power = math_max(PS.tierEdgePower or 1.0, 1.0)
+        resistance = (q ^ power) * math_max(PS.tierEdgeResistMax or 0, 0)
+    end
+
+    local slip = 0
+    local idleGrace = math_max(PS.tierMomentumIdleGrace or 0.70, 0)
+    if (now - (PS.lastDamageTime or 0)) > idleGrace then
+        local slipStart = math_min(math_max(PS.tierEdgeSlipStartFrac or 0.72, 0.0), 0.98)
+        if segFrac > slipStart then
+            local q = (segFrac - slipStart) / math_max(1 - slipStart, 0.001)
+            slip = (q ^ 1.25) * math_max(PS.tierEdgeSlipMax or 0, 0)
+        end
+    end
+
+    return resistance, slip
+end
+
+local function UpdateTierMomentumBonus(elapsed, now)
+    local target = 0
+    if (PS.currentTier or 0) >= 1 then
+        target = math_min(
+            math_max(PS.tierMomentumTierScalar or 0, 0) * PS.currentTier,
+            math_max(PS.tierMomentumMax or 0, 0)
+        )
+    end
+
+    local idleGrace = math_max(PS.tierMomentumIdleGrace or 0.70, 0)
+    local decayTau = (PS.tierMomentumDecayTau or 3.20)
+    if (now - (PS.lastDamageTime or 0)) > idleGrace then
+        decayTau = PS.tierMomentumIdleDecayTau or decayTau
+    end
+
+    PS.tierMomentumBoost = SmoothAlpha(
+        PS.tierMomentumBoost or 0,
+        target,
+        elapsed,
+        PS.tierMomentumBuildTau or 0.55,
+        decayTau
+    )
 end
 
 local function GetGateCappedTier(candidateTier, squeeze, activeSec)
@@ -488,7 +570,7 @@ local function ClearPressureDebugFrame()
     debugBarText:SetText("0.00x")
     debugBarTierText:SetText("T0")
     debugBarTierText:SetTextColor(0.6, 0.6, 0.6)
-    debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 hk:0.00 ok")
+    debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 ok")
     for i = 1, NUM_WINDOWS do
         bucketStrings[i]:SetText("")
     end
@@ -509,11 +591,13 @@ local function UpdatePressureDebugFrame(hitKick)
     debugBarTierText:SetTextColor(col[1], col[2], col[3])
 
     debugText:SetText(string.format(
-        "n:%.2f i:%.2f q:%.2f ts:%.2f hk:%.2f %s",
+        "n:%.2f i:%.2f q:%.2f ts:%.2f te:%.2f m:%.2f hk:%.2f %s",
         PS.pressureRatio or 0,
         PS.instantScore or 0,
         PS.squeezeCharge or 0,
         PS.tierScore or 0,
+        PS.tierEvalScore or 0,
+        PS.tierMomentumBoost or 0,
         hitKick or 0,
         PS.tierCapReason or "ok"
     ))
@@ -544,6 +628,10 @@ local function ResetPressureState()
     PS.instantScore = 0
     PS.squeezeScore = 0
     PS.tierScore = 0
+    PS.tierEvalScore = 0
+    PS.tierEdgeResistance = 0
+    PS.tierEdgeSlip = 0
+    PS.tierMomentumBoost = 0
     PS.currentTier = 0
     PS.lastTierChangeAt = 0
     PS.tierCapReason = "ok"
@@ -675,20 +763,25 @@ local function OnPressureTick(_, dt)
     PS.instantScore = PS.pressureDisplaySmoothed
     PS.squeezeScore = PS.squeezeCharge * PS.squeezeBonusMax
     PS.tierScore = (PS.instantScore * PS.tierInstantWeight) + (PS.squeezeScore * PS.tierSqueezeWeight)
+    UpdateTierMomentumBonus(elapsed, now)
+    local edgeResistance, edgeSlip = GetTierResistanceAndSlip(PS.tierScore, now)
+    PS.tierEdgeResistance = edgeResistance
+    PS.tierEdgeSlip = edgeSlip
+    PS.tierEvalScore = PS.tierScore - edgeResistance - edgeSlip + (PS.tierMomentumBoost or 0)
 
     PS.recentHitImpulse = PS.recentHitImpulse * math_exp(-elapsed / math_max(PS.hitImpulseTau, 0.1))
     local hitKick = math_min((PS.recentHitImpulse / math_max(dampedDen, PS.epsilon)) * 0.25, 1.0)
 
     local activeSec = PS.firstPressureAt and (now - PS.firstPressureAt) or 0
-    local candidateTier = GetTier(PS.tierScore)
+    local candidateTier = GetTier(PS.tierEvalScore)
 
     if PS.currentTier < 5 then
         local nextTier = PS.currentTier + 1
         local nextThreshold = GetPromoteThreshold(nextTier)
         if nextThreshold > 0 then
-            local progress = PS.tierScore / nextThreshold
+            local progress = PS.tierEvalScore / nextThreshold
             if progress >= PS.nearTierProgressFrac and hitKick >= PS.nearTierKickMin then
-                local promotionScore = PS.tierScore + (hitKick * PS.nearTierKickWeight)
+                local promotionScore = PS.tierEvalScore + (hitKick * PS.nearTierKickWeight)
                 local promotedTier = GetTier(promotionScore)
                 candidateTier = math_max(candidateTier, math_min(promotedTier, nextTier))
             end
@@ -701,12 +794,16 @@ local function OnPressureTick(_, dt)
     if gatedTier > PS.currentTier then
         PS.currentTier = gatedTier
         PS.lastTierChangeAt = now
+        PS.tierMomentumBoost = math_min(
+            (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
+            math_max(PS.tierMomentumMax or 0, 0)
+        )
     elseif gatedTier < PS.currentTier then
         local currentIdx = PS.currentTier + 1
         local gateFailsCurrentTier = (PS.squeezeCharge < (PS.tierMinSqueeze[currentIdx] or 0))
                                   or (activeSec < (PS.tierMinActiveSec[currentIdx] or 0))
         local demoteThreshold = GetDemoteThreshold(PS.currentTier)
-        local scoreWantsDemote = PS.tierScore <= demoteThreshold
+        local scoreWantsDemote = PS.tierEvalScore <= demoteThreshold
         local holdElapsed = now - PS.lastTierChangeAt
         if holdElapsed >= PS.tierHoldMinSec and (gateFailsCurrentTier or scoreWantsDemote) then
             PS.currentTier = math_max(gatedTier, PS.currentTier - 1)
@@ -790,8 +887,9 @@ local function HandlePressureSlash(msg)
     end
     if cmd == "status" then
         print(ADDON_PREFIX .. string.format(
-            " n=%.3f i=%.3f q=%.2f ts=%.3f tier=T%d cap=%s",
+            " n=%.3f i=%.3f q=%.2f ts=%.3f te=%.3f m=%.3f r=%.3f s=%.3f tier=T%d cap=%s",
             PS.pressureRatio, PS.instantScore, PS.squeezeCharge, PS.tierScore,
+            PS.tierEvalScore or 0, PS.tierMomentumBoost or 0, PS.tierEdgeResistance or 0, PS.tierEdgeSlip or 0,
             PS.currentTier or 0, PS.tierCapReason or "ok"
         ))
         print(ADDON_PREFIX .. string.format(

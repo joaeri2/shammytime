@@ -2060,6 +2060,7 @@ local function PrintMainHelp()
     print(C.gray .. "    • " .. C.gold .. "/st dev on|off" .. C.r .. C.gray .. "  — Toggle Developer tab in options" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st resync" .. C.r .. C.gray .. "  — Tell stagger bar you pressed the resync macro (add to macro so OH bar resets to 50%)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st staggerdebug [on|off]" .. C.r .. C.gray .. "  — Toggle stagger swing log (Left/Right hits and misses to chat; default off)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st pressure" .. C.r .. C.gray .. "  — Toggle pressure debug panel (bar + bucket stats for tuning)" .. C.r)
     print("")
     print(C.gray .. "  For all settings, use " .. C.gold .. "/st options" .. C.r .. C.gray .. " to open the settings panel." .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
@@ -2372,6 +2373,13 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.gray .. "ShammyTime ICD commands:" .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st icd debug" .. C.r .. C.gray .. "  — Toggle verbose combat log debug output" .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st icd status" .. C.r .. C.gray .. " — Print current ICD state (frame, imbues, totems)" .. C.r)
+        end
+    -- Pressure debug/tuning panel
+    elseif cmd == "pressure" then
+        if ShammyTime.HandlePressureSlash then
+            ShammyTime.HandlePressureSlash(arg)
+        else
+            print(C.red .. "ShammyTime: Pressure module is not available." .. C.r)
         end
     -- Show/hide elements: /st show [circle|totem|focus|imbue] [on|off]
     elseif cmd == "show" then

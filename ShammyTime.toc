@@ -30,5 +30,3 @@ ShammyTime_WindfuryICD.lua
 ShammyTime_StaggerBar.lua
 ShammyTime_Pressure.lua
 ShammyTime_WFImpact.lua
-ShammyTime_POC_CombatCapture.lua
-ShammyTime_PressureOverlay.lua

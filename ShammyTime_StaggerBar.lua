@@ -1,7 +1,7 @@
 -- ShammyTime_StaggerBar.lua
 -- Dual-wield stagger visual: two swing timer bars (MH on top, OH below) with
--- dynamic color coding (gold / yellow / red) based on stagger quality, a delta
--- readout, and activity-based smart hide.
+-- bar coloring (gold when perfect, otherwise white), a delta readout, and
+-- activity-based smart hide.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
 local ShammyTime = _G.ShammyTime
@@ -20,24 +20,18 @@ local CROP_BOTTOM      = 0.65         -- skip bottom 35 %
 local FRAME_H          = math.floor(FRAME_W * (CROP_BOTTOM - CROP_TOP) + 0.5)
 
 -- Stagger quality thresholds (per enhanceshaman.com: 0.5 s sync window)
-local GOOD_THRESHOLD       = 0.5       -- MH first, delta <= 0.5 s  → gold (when not same-time)
-local SAME_TIME_THRESHOLD  = 0.01      -- delta < 0.01 = same time (0.00), not gold; 0.05 is gold
+local GOOD_THRESHOLD       = 0.5       -- MH first and <= 0.5s is the target window
+local SAME_TIME_THRESHOLD  = 0.01      -- below this counts as same-time (0.00), not staggered
 local OVERDUE_GRACE        = 0.45      -- tolerate normal event jitter before overdue/resync
 local OVERDUE_CONFIRM_TIME = 0.08      -- require brief persistence to avoid single-frame false positives
--- MH first, delta > 0.5 s  → yellow (drifting)
--- OH first (negative delta)  → red (reversed)
 
 -- Colors: { r, g, b }
 local COLOR_GOLD   = { 1.00, 0.84, 0.00 }
-local COLOR_WHITE   = { 1.00, 1.00, 1.00 }
-local COLOR_YELLOW = { 1.00, 1.00, 0.00 }
-local COLOR_RED    = { 1.00, 0.30, 0.30 }
+local COLOR_WHITE  = { 1.00, 1.00, 1.00 }
 local COLOR_DELTA  = { 1.00, 0.82, 0.00 }  -- fixed WoW-like yellow for delta readout
 
 -- Action cue colors
-local COLOR_CUE_CLICK = { 0.20, 1.00, 0.20 }   -- bright green  "CLICK NOW!"
-local COLOR_CUE_READY = { 1.00, 0.60, 0.30 }   -- orange        "Wait for OH 50-60"
-local COLOR_CUE_WAIT  = { 0.55, 0.55, 0.55 }   -- gray          "Wait..."
+local COLOR_CUE_CLICK = { 0.20, 1.00, 0.20 }   -- bright green "Click!"
 
 -- Stormstrike spell ID (logging only; does NOT affect swing timers)
 local STORMSTRIKE_ID = 17364
@@ -90,7 +84,7 @@ local smartHide = {
     fadeTarget = 0,
 }
 
--- Action cue: time-gated "CLICK NOW!" / "Wait..." resync prompt
+-- Action cue: time-gated resync prompt that only shows "Click!" in the tap window
 local actionCue = {
     state          = "idle",   -- idle | resync_needed | click_now | cooldown
     mhSwingAt      = 0,        -- GetTime() of most recent MH swing
@@ -291,32 +285,9 @@ local function IsPerfectStagger()
        and d <= GOOD_THRESHOLD
 end
 
---- Return the stagger color for delta/helper readouts.
-local function GetStaggerColor()
-    local d = swingState.delta
-    if not d then return COLOR_WHITE end
-    if swingState.deltaSign < 0 then
-        return COLOR_RED     -- OH hit first
-    elseif d < SAME_TIME_THRESHOLD then
-        return COLOR_YELLOW  -- same time (0.00), synced but not staggered
-    elseif d > GOOD_THRESHOLD then
-        return COLOR_YELLOW  -- MH first but drifting
-    elseif IsPerfectStagger() then
-        return COLOR_GOLD    -- MH first, in-window lead (target state)
-    else
-        return COLOR_WHITE
-    end
-end
-
 --- Return swing bar fill color (gold only for perfect stagger, otherwise white).
 local function GetSwingBarColor()
     return IsPerfectStagger() and COLOR_GOLD or COLOR_WHITE
-end
-
---- Return helper text and color based on current stagger state.
---- Returns (text, {r,g,b}) or ("", nil) when no advice is needed.
-local function GetHelperText()
-    return "", nil
 end
 
 --- Refresh weapon speeds from UnitAttackSpeed.
@@ -425,7 +396,7 @@ local function RecordSwing(hand, now)
            and swingState.ohExpected > swingState.mhLast then
             -- MH just started a new cycle; OH's last swing is from the previous
             -- cycle (cross-cycle).  Use OH's expected time to predict the
-            -- stagger quality instead of flashing red incorrectly.
+            -- stagger quality instead of incorrectly flagging OH-first.
             local predicted = swingState.ohExpected - swingState.mhLast
             swingState.delta = math.min(predicted, maxWindow)
             swingState.deltaSign = 1   -- MH first (predicted)
@@ -1061,11 +1032,11 @@ local function OnUpdate(self, elapsed)
         local cueEnabled = p and p.staggerActionCueEnabled ~= false
 
         if cueEnabled and swingState.delta then
-            local showYellowCue = p.staggerActionCueYellow ~= false
-            local isRed      = (swingState.deltaSign < 0)
+            local showDriftCue = p.staggerActionCueYellow ~= false
+            local isOHFirst = (swingState.deltaSign < 0)
             local isSameTime = (swingState.deltaSign >= 0) and (swingState.delta < SAME_TIME_THRESHOLD)
-            local isYellow   = (not isRed) and (not isSameTime) and (swingState.delta > GOOD_THRESHOLD)
-            local needsResync = isRed or isSameTime or (showYellowCue and isYellow)
+            local isDrifting = (not isOHFirst) and (not isSameTime) and (swingState.delta > GOOD_THRESHOLD)
+            local needsResync = isOHFirst or isSameTime or (showDriftCue and isDrifting)
 
             -- Resync tap window: OH must be between 50% and 60%.
             -- This is where the in-game macro reliably shifts the offhand timer.
@@ -1081,9 +1052,9 @@ local function OnUpdate(self, elapsed)
             ----------------------------------------------------------------
             if actionCue.state == "idle" then
                 if needsResync then
-                    local reason = isRed and "delta:OH_first"
+                    local reason = isOHFirst and "delta:OH_first"
                         or (isSameTime and "delta:same_time")
-                        or (isYellow and "delta:drift")
+                        or (isDrifting and "delta:drift")
                         or "delta:unspecified"
                     EnterResyncNeeded(now, reason)
                 end

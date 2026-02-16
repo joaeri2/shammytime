@@ -42,6 +42,67 @@ local function getModule(name)
     return p and p.modules and p.modules[name]
 end
 
+-- Normalize user-facing scale values so "current default visual size" = 1.0
+-- for specific circular indicators that historically used different raw scales.
+local MODULE_SCALE_NORMALIZATION = {
+    shieldIndicator = { base = 0.4, minRaw = 0.05, maxRaw = 3 },
+    shamanisticFocus = { base = 1.3, minRaw = 0.1, maxRaw = 3 },
+    windfuryIcd = { base = 1.1, minRaw = 0.1, maxRaw = 3 },
+}
+local MODULE_SCALE_STEP = 0.05
+
+local function round2(v)
+    return math.floor((v * 100) + 0.5) / 100
+end
+
+local function roundUpToStep(v, step)
+    return math.ceil((v / step) - 1e-9) * step
+end
+
+local function roundDownToStep(v, step)
+    return math.floor((v / step) + 1e-9) * step
+end
+
+local function getScaleRule(moduleName)
+    return moduleName and MODULE_SCALE_NORMALIZATION[moduleName] or nil
+end
+
+local function toDisplayScale(moduleName, rawScale)
+    local rule = getScaleRule(moduleName)
+    if not rule then return rawScale end
+    return rawScale / rule.base
+end
+
+local function toRawScale(moduleName, displayScale)
+    local rule = getScaleRule(moduleName)
+    if not rule then return displayScale end
+    return displayScale * rule.base
+end
+
+local function getScaleRawDefault(moduleName)
+    local rule = getScaleRule(moduleName)
+    if rule then return rule.base end
+    return 1
+end
+
+local function getScaleRawBounds(moduleName)
+    local rule = getScaleRule(moduleName)
+    if rule then
+        return rule.minRaw, rule.maxRaw
+    end
+    return 0.1, 3
+end
+
+local function getScaleDisplayBounds(moduleName)
+    local minRaw, maxRaw = getScaleRawBounds(moduleName)
+    local minDisplay = toDisplayScale(moduleName, minRaw)
+    local maxDisplay = toDisplayScale(moduleName, maxRaw)
+    minDisplay = round2(roundUpToStep(minDisplay, MODULE_SCALE_STEP))
+    maxDisplay = round2(roundDownToStep(maxDisplay, MODULE_SCALE_STEP))
+    if maxDisplay < minDisplay then maxDisplay = minDisplay end
+    return minDisplay, maxDisplay
+end
+
 -- Resolve module name from AceConfig info (arg, option.arg, or path when in Modules group)
 local function getModuleKeyFromInfo(info)
     if info.arg and info.arg.module then return info.arg.module end
@@ -57,7 +118,14 @@ local function getModuleOption(info, key)
     local m = getModule(modKey)
     if not m then return nil end
     if key == "enabled" then return m.enabled ~= false end
-    if key == "scale" then return m.scale or 1 end
+    if key == "scale" then
+        local rawScale = (type(m.scale) == "number") and m.scale or getScaleRawDefault(modKey)
+        local displayScale = toDisplayScale(modKey, rawScale)
+        local minDisplay, maxDisplay = getScaleDisplayBounds(modKey)
+        if displayScale < minDisplay then displayScale = minDisplay end
+        if displayScale > maxDisplay then displayScale = maxDisplay end
+        return round2(displayScale)
+    end
     if key == "alpha" then return m.alpha or 1 end
     if key == "fadeEnabled" then return m.fade and m.fade.enabled or false end
     if key == "inactiveAlpha" then return m.fade and m.fade.inactiveAlpha or 0 end
@@ -76,7 +144,14 @@ local function setModuleOption(info, val, key)
     local m = getModule(modKey)
     if not m then return end
     if key == "enabled" then m.enabled = val end
-    if key == "scale" then m.scale = val end
+    if key == "scale" then
+        local rawMin, rawMax = getScaleRawBounds(modKey)
+        local displayScale = round2(tonumber(val) or 1)
+        local rawScale = toRawScale(modKey, displayScale)
+        if rawScale < rawMin then rawScale = rawMin end
+        if rawScale > rawMax then rawScale = rawMax end
+        m.scale = rawScale
+    end
     if key == "alpha" then m.alpha = val end
     if key == "fadeEnabled" then m.fade = m.fade or {}; m.fade.enabled = val end
     if key == "inactiveAlpha" then m.fade = m.fade or {}; m.fade.inactiveAlpha = val end
@@ -397,6 +472,22 @@ local function ShowCopyPopup(title, text)
     copyFrame.editBox:HighlightText()
 end
 
+local STAGGER_GUIDE_URL = "https://www.enhanceshaman.com/pages/guide/sync_stagger"
+local STAGGER_RESYNC_MACRO = table.concat({
+    "/cleartarget",
+    "/targetlasttarget",
+    "/startattack",
+    "/st resync",
+}, "\n")
+
+local function CopyStaggerGuideLink()
+    ShowCopyPopup("ShammyTime - Sync/Stagger Guide Link", STAGGER_GUIDE_URL)
+end
+
+local function CopyStaggerMacro()
+    ShowCopyPopup("ShammyTime - ShammyTime Custom Resync Macro", STAGGER_RESYNC_MACRO)
+end
+
 local function ExportAllToClipboard()
     local header = { "ShammyTime - All Settings (100% coverage)", "Copy everything below; paste to developer or backup.", "" }
     local body = BuildFullExportLines(false)
@@ -412,6 +503,7 @@ _G.ShammyTime.CopyTextSettings = ExportAllToClipboard
 -- Module Options Builder (simplified)
 --------------------------------------------------------------------------------
 local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
+    local scaleMin, scaleMax = getScaleDisplayBounds(moduleName)
     local opts = {
         type = "group",
         name = displayName,
@@ -430,7 +522,9 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
             scale = {
                 type = "range",
                 name = "Scale",
-                min = 0.1, max = 3, step = 0.05,
+                min = scaleMin,
+                max = scaleMax,
+                step = 0.05,
                 order = 2,
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "scale") end,
@@ -1356,23 +1450,71 @@ function ShammyTime:SetupOptions()
                         moduleDesc = {
                             type = "group",
                             inline = true,
-                            name = "Info",
+                            name = "Quick Guide",
                             order = 0,
                             args = {
-                                desc = {
+                                infoTitle = {
                                     type = "description",
-                                    name = "|cffffd700Sync vs Stagger|r — Goal: MH first, OH within 0.5s. Bar: |cffffd700Gold|r = good | |cffffff00Yellow|r = drifting | |cffff4c4cRed|r = OH first.\n\n" ..
-                                           "|cffffd700When to resync|r\n\n" ..
-                                           "|cffffffffOH hitting first (wrong order)|r\n" ..
-                                           "Wait until OH is between 50%-60% of its swing. Press the macro once. Usually enough to flip priority.\n\n" ..
-                                           "|cffffffffBoth hands hit at same time (synced but not staggered)|r\n" ..
-                                           "Wait until OH is between 50%-60% of its swing, then press once. Creates a small MH lead. Do not press again.\n\n" ..
-                                           "|cffffffffMH first but OH not in window (drifting)|r\n" ..
-                                           "Wait until OH is between 50%-60% of its swing. Press the macro repeatedly while OH is in that window; stop as soon as OH lines up behind MH.\n",
+                                    name = "|cffffd700Sync and Stagger - Simple Setup|r\n" ..
+                                           "Good staggering increases DPS because Flurry charges are more often spent on two white hits instead of one, and your stronger main-hand gets more valuable Windfury proc opportunities than off-hand.",
                                     order = 1,
                                     width = "full",
                                 },
+                                infoHowItWorks = {
+                                    type = "description",
+                                    name = "Goal:\n" ..
+                                           "Gold = perfect stagger (MH first, OH lands within 0.5s).\n" ..
+                                           "White = not perfect (OH-first, same-time, or drifting).\n\n" ..
+                                           "When to press your macro:\n" ..
+                                           "Only press while OH is in |cffffff0050%-60%|r.\n" ..
+                                           "OH-first: press once.\n" ..
+                                           "Same-time (0.00): press once.\n" ..
+                                           "Drifting (MH first, gap too wide): press while OH stays in 50%-60%, then stop when it turns gold.\n\n" ..
+                                           "If OH is below 50%, pressing does nothing.",
+                                    order = 2,
+                                    width = "full",
+                                },
+                                infoMacro = {
+                                    type = "description",
+                                    name = "|cffffd700Custom ShammyTime Macro (bind this):|r\n" ..
+                                           "|cffffcc00/cleartarget|r\n" ..
+                                           "|cffffcc00/targetlasttarget|r\n" ..
+                                           "|cffffcc00/startattack|r\n" ..
+                                           "|cff33ff33/st resync|r\n\n" ..
+                                           "This macro is custom for this addon and makes stagger timing easier to learn with the bar.",
+                                    order = 3,
+                                    width = "full",
+                                },
+                                infoReference = {
+                                    type = "description",
+                                    name = "External guide (not my website):\n" ..
+                                           STAGGER_GUIDE_URL .. "\n" ..
+                                           "There are also useful YouTube videos covering sync/stagger.",
+                                    order = 4,
+                                    width = "full",
+                                },
+                                staggerGuideCopy = {
+                                    type = "execute",
+                                    name = "Copy Guide Link",
+                                    desc = "Open a copy box with the guide URL.",
+                                    order = 5,
+                                    width = "full",
+                                    func = CopyStaggerGuideLink,
+                                },
+                                staggerCopyMacro = {
+                                    type = "execute",
+                                    name = "Copy Custom ShammyTime Macro",
+                                    desc = "Open a copy box with the custom ShammyTime resync macro.",
+                                    order = 6,
+                                    width = "full",
+                                    func = CopyStaggerMacro,
+                                },
                             },
+                        },
+                        settingsHeader = {
+                            type = "header",
+                            name = "Settings",
+                            order = 0.9,
                         },
                         barHeader = {
                             type = "header",
@@ -1385,7 +1527,7 @@ function ShammyTime:SetupOptions()
                             desc = "Length of each swing bar in pixels.",
                             min = 50, max = 400, step = 5,
                             order = 4.1,
-                            get = function() return getFlatDB("staggerBarWidth", 200) end,
+                            get = function() return getFlatDB("staggerBarWidth", 335) end,
                             set = function(_, v)
                                 setFlatDB("staggerBarWidth", v)
                                 local st = _G.ShammyTime
@@ -1398,7 +1540,7 @@ function ShammyTime:SetupOptions()
                             desc = "Thickness of each swing bar in pixels.",
                             min = 2, max = 20, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("staggerBarHeight", 6) end,
+                            get = function() return getFlatDB("staggerBarHeight", 15) end,
                             set = function(_, v)
                                 setFlatDB("staggerBarHeight", v)
                                 local st = _G.ShammyTime
@@ -1411,7 +1553,7 @@ function ShammyTime:SetupOptions()
                             desc = "Vertical space between MH and OH bars.",
                             min = 0, max = 20, step = 1,
                             order = 4.3,
-                            get = function() return getFlatDB("staggerBarGap", 4) end,
+                            get = function() return getFlatDB("staggerBarGap", 5) end,
                             set = function(_, v)
                                 setFlatDB("staggerBarGap", v)
                                 local st = _G.ShammyTime
@@ -1424,7 +1566,7 @@ function ShammyTime:SetupOptions()
                             desc = "Transparency of the MH/OH swing bars. Lower values let the background texture show through.",
                             min = 0, max = 1, step = 0.05,
                             order = 4.4,
-                            get = function() return getFlatDB("staggerSwingBarAlpha", 1) end,
+                            get = function() return getFlatDB("staggerSwingBarAlpha", 0.8) end,
                             set = function(_, v)
                                 setFlatDB("staggerSwingBarAlpha", v)
                             end,
@@ -1438,9 +1580,9 @@ function ShammyTime:SetupOptions()
                             type = "range",
                             name = "Font Size",
                             desc = "Size of the stagger delta readout.",
-                            min = 6, max = 32, step = 1,
+                            min = 6, max = 48, step = 1,
                             order = 5.1,
-                            get = function() return getFlatDB("staggerDeltaFontSize", 14) end,
+                            get = function() return getFlatDB("staggerDeltaFontSize", 27) end,
                             set = function(_, v)
                                 setFlatDB("staggerDeltaFontSize", v)
                                 local st = _G.ShammyTime
@@ -1453,7 +1595,7 @@ function ShammyTime:SetupOptions()
                             desc = "Horizontal offset for the delta text (positive = right).",
                             min = -100, max = 100, step = 1,
                             order = 5.2,
-                            get = function() return getFlatDB("staggerDeltaX", 0) end,
+                            get = function() return getFlatDB("staggerDeltaX", 46) end,
                             set = function(_, v)
                                 setFlatDB("staggerDeltaX", v)
                                 local st = _G.ShammyTime
@@ -1466,7 +1608,7 @@ function ShammyTime:SetupOptions()
                             desc = "Vertical offset for the delta text (positive = up).",
                             min = -100, max = 100, step = 1,
                             order = 5.3,
-                            get = function() return getFlatDB("staggerDeltaY", 0) end,
+                            get = function() return getFlatDB("staggerDeltaY", 12) end,
                             set = function(_, v)
                                 setFlatDB("staggerDeltaY", v)
                                 local st = _G.ShammyTime
@@ -1478,23 +1620,13 @@ function ShammyTime:SetupOptions()
                             name = "Helper Text",
                             order = 5.5,
                         },
-                        helperDesc = {
-                            type = "description",
-                            name = "A short advice message that appears based on your stagger state:\n" ..
-                                   "  |cffff4c4c\"Wait OH 50-60 - click once\"|r - OH hit before MH.\n" ..
-                                   "  |cffffff00\"Wait OH 50-60 - click once\"|r - same-time (0.00), synced but not staggered.\n" ..
-                                   "  |cffffff00\"Wait OH 50-60 - spam to align\"|r - MH first but gap is too wide (drifting).\n" ..
-                                   "  When stagger is |cffffd700gold|r (good), no message is shown.\n",
-                            order = 5.55,
-                            width = "full",
-                        },
                         staggerHelperFontSize = {
                             type = "range",
                             name = "Font Size",
                             desc = "Size of the helper advice text.",
-                            min = 6, max = 24, step = 1,
+                            min = 6, max = 48, step = 1,
                             order = 5.6,
-                            get = function() return getFlatDB("staggerHelperFontSize", 11) end,
+                            get = function() return getFlatDB("staggerHelperFontSize", 24) end,
                             set = function(_, v)
                                 setFlatDB("staggerHelperFontSize", v)
                                 local st = _G.ShammyTime
@@ -1520,7 +1652,7 @@ function ShammyTime:SetupOptions()
                             desc = "Vertical offset for the helper text (positive = up).",
                             min = -100, max = 100, step = 1,
                             order = 5.8,
-                            get = function() return getFlatDB("staggerHelperY", -20) end,
+                            get = function() return getFlatDB("staggerHelperY", -10) end,
                             set = function(_, v)
                                 setFlatDB("staggerHelperY", v)
                                 local st = _G.ShammyTime
@@ -1529,29 +1661,8 @@ function ShammyTime:SetupOptions()
                         },
                         actionCueHeader = {
                             type = "header",
-                            name = "Resync Action Cue",
+                            name = "Resync Action Cue Settings",
                             order = 5.82,
-                        },
-                        actionCueDesc = {
-                            type = "description",
-                            name = "Tap timing is fixed: use the macro only when the |cffffff00OH bar is between 50%-60%|r.\n" ..
-                                   "When |cffff4c4cRed|r (OH first): |cff33ff33Click once!|r\n" ..
-                                   "When |cffffff00Same-time|r (0.00): |cff33ff33Click once to stagger!|r\n" ..
-                                   "When |cffffff00Yellow|r (drifting): |cff33ff33Spam to align!|r while OH stays in 50%-60%.\n" ..
-                                   "The helper also shows wait/observe states to prevent mistimed presses.\n",
-                            order = 5.83,
-                            width = "full",
-                        },
-                        staggerResyncMacroDesc = {
-                            type = "description",
-                            name = "Resync macro (bind to a key):\n" ..
-                                   "|cffffcc00/cleartarget|r\n" ..
-                                   "|cffffcc00/targetlasttarget|r\n" ..
-                                   "|cffffcc00/startattack|r\n" ..
-                                   "|cff33ff33/st resync|r\n\n" ..
-                                   "The first three lines reset your swing timers in-game. |cff33ff33/st resync|r updates the OH bar to 50%% so the display matches.",
-                            order = 5.835,
-                            width = "full",
                         },
                         staggerActionCueEnabled = {
                             type = "toggle",
@@ -1564,19 +1675,13 @@ function ShammyTime:SetupOptions()
                         },
                         staggerActionCueYellow = {
                             type = "toggle",
-                            name = "Also Show for Yellow (Drifting)",
-                            desc = "Show the resync action cue when stagger is Yellow (drifting), not just Red (reversed). A delta over 0.5s means Flurry charges are being wasted.",
+                            name = "Also Show for Drifting",
+                            desc = "Show the resync action cue when MH is still first but the gap is too wide (>0.5s), not only when OH-first/same-time.",
                             width = "full",
                             order = 5.85,
                             disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
                             get = function() return getFlatDB("staggerActionCueYellow", true) end,
                             set = function(_, v) setFlatDB("staggerActionCueYellow", v) end,
-                        },
-                        staggerClickZoneWidth = {
-                            type = "description",
-                            name = "Tap window is fixed to OH 50%-60% (recommended and enforced).",
-                            order = 5.86,
-                            width = "full",
                         },
                         staggerCooldownDuration = {
                             type = "range",

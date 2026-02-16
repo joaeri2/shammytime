@@ -61,7 +61,7 @@ Shield charges (and time left where applicable).
 
 ### Stagger Bar (Sync & Stagger)
 
-Dual-wield swing timers (MH/OH bars) with **Gold** (good stagger), **Yellow** (drifting), and **Red** (reversed). Shows the time gap between swings and a **Resync Action Cue**: “CLICK NOW!” when the main-hand bar reaches 50% (safest moment to press your resync macro). Logic follows the [Enhance Shaman Guide: Sync and Stagger](https://www.enhanceshaman.com/pages/guide/sync_stagger). **Resync macro** (bind to a key)—use this so the game and the OH bar stay in sync:
+Dual-wield swing timers (MH/OH bars) with **Gold** (perfect stagger) and **White** (not perfect). Shows the time gap between swings and a **Resync Action Cue**: “CLICK!” only when resync is needed and the off-hand bar is in the 50%-60% window. Logic follows the [Enhance Shaman Guide: Sync and Stagger](https://www.enhanceshaman.com/pages/guide/sync_stagger). **Resync macro** (bind to a key)—use this so the game and the OH bar stay in sync:
 
 ```
 /cleartarget

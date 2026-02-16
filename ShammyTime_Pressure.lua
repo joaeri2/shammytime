@@ -27,8 +27,15 @@ local SIZE = 1024
 local DEFAULT_SCALE = 0.5
 local CROP_TOP = 0.20
 local CROP_BOTTOM = 0.20
-local PRESSURE_FILL_MAX = 4.0
 local MIN_FILL_U = 0.001
+local FILL_SHOW_EPS = 0.003
+local FILL_HIDE_EPS = 0.0005
+local FILL_SMOOTH_TAU_RISE = 0.30
+local FILL_SMOOTH_TAU_FALL = 2.04
+local FILL_FULL_HOLD_SEC = 0.40
+local FILL_FULL_EPSILON = 0.995
+local OVERLAY_COLOR_TAU_IN = 0.08
+local OVERLAY_COLOR_TAU_OUT = 0.16
 local VISIBLE_HEIGHT_FRACTION = 1 - CROP_TOP - CROP_BOTTOM
 if VISIBLE_HEIGHT_FRACTION <= 0 then
     VISIBLE_HEIGHT_FRACTION = 1
@@ -78,19 +85,30 @@ local gaugeKeys = {
 
 local gaugeCurrentAlpha = { 1, 0, 0, 0, 0 }
 local colorOverlayFillFrac = 0
+local colorOverlayFullHoldRemaining = 0
+local colorOverlayFillVisible = false
+local colorOverlayCurrentColor = { 0.50, 0.50, 0.50 }
 
 local function SetColorOverlayFill(fillFrac)
     local colorOverlay = frame.textures.colorOverlay
     if not colorOverlay then return end
 
     local frac = math_min(math_max(fillFrac or 0, 0), 1)
-    if frac <= 0 then
+    if frac <= FILL_HIDE_EPS then
+        colorOverlayFillVisible = false
         colorOverlay:Hide()
         colorOverlay:SetWidth(1)
         colorOverlay:SetTexCoord(0, MIN_FILL_U, CROP_TOP, 1 - CROP_BOTTOM)
         return
     end
 
+    if (not colorOverlayFillVisible) and frac < FILL_SHOW_EPS then
+        colorOverlay:SetWidth(1)
+        colorOverlay:SetTexCoord(0, MIN_FILL_U, CROP_TOP, 1 - CROP_BOTTOM)
+        return
+    end
+
+    colorOverlayFillVisible = true
     local uRight = math_max(frac, MIN_FILL_U)
     colorOverlay:Show()
     colorOverlay:SetWidth(DISPLAY_WIDTH * uRight)
@@ -314,6 +332,24 @@ local function GetDemoteThreshold(tier)
     return GetPromoteThreshold(tier) - PS.tierHysteresis
 end
 
+local function GetTierFillTarget(score, tier)
+    local clampedTier = math_min(math_max(tier or 0, 0), 5)
+    if clampedTier >= 5 then
+        return 1
+    end
+
+    local lower
+    if clampedTier <= 0 then
+        lower = 0
+    else
+        lower = GetPromoteThreshold(clampedTier)
+    end
+    local upper = GetPromoteThreshold(clampedTier + 1)
+    local span = math_max(upper - lower, 0.001)
+
+    return math_min(math_max(((score or 0) - lower) / span, 0), 1)
+end
+
 local function GetGateCappedTier(candidateTier, squeeze, activeSec)
     local capped = candidateTier
     local reason = "ok"
@@ -387,11 +423,42 @@ local function UpdatePressureVisuals(elapsed)
     local tier = PS.currentTier or 0
     local tierColor = TIER_COLORS[tier + 1] or TIER_COLORS[1]
 
-    local fillTarget = math_min(math_max((PS.pressureComposite or 0) / PRESSURE_FILL_MAX, 0), 1)
-    colorOverlayFillFrac = SmoothAlpha(colorOverlayFillFrac, fillTarget, elapsed, 0.08, 0.20)
+    if tier >= 1 then
+        colorOverlayFullHoldRemaining = 0
+        colorOverlayFillFrac = 1
+    else
+        local fillTarget = GetTierFillTarget(PS.tierScore or 0, tier)
+        if fillTarget >= FILL_FULL_EPSILON then
+            colorOverlayFullHoldRemaining = FILL_FULL_HOLD_SEC
+            fillTarget = 1
+        elseif colorOverlayFullHoldRemaining > 0 then
+            colorOverlayFullHoldRemaining = math_max(colorOverlayFullHoldRemaining - elapsed, 0)
+            fillTarget = 1
+        end
+        colorOverlayFillFrac = SmoothAlpha(
+            colorOverlayFillFrac,
+            fillTarget,
+            elapsed,
+            FILL_SMOOTH_TAU_RISE,
+            FILL_SMOOTH_TAU_FALL
+        )
+    end
     local colorOverlay = frame.textures.colorOverlay
     if colorOverlay then
-        colorOverlay:SetVertexColor(tierColor[1], tierColor[2], tierColor[3])
+        colorOverlayCurrentColor[1] = SmoothAlpha(
+            colorOverlayCurrentColor[1], tierColor[1], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
+        )
+        colorOverlayCurrentColor[2] = SmoothAlpha(
+            colorOverlayCurrentColor[2], tierColor[2], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
+        )
+        colorOverlayCurrentColor[3] = SmoothAlpha(
+            colorOverlayCurrentColor[3], tierColor[3], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
+        )
+        colorOverlay:SetVertexColor(
+            colorOverlayCurrentColor[1],
+            colorOverlayCurrentColor[2],
+            colorOverlayCurrentColor[3]
+        )
         colorOverlay:SetAlpha(1)
     end
     SetColorOverlayFill(colorOverlayFillFrac)
@@ -407,7 +474,7 @@ local function UpdatePressureVisuals(elapsed)
         else
             targetAlpha = 0
         end
-        gaugeCurrentAlpha[i] = SmoothAlpha(gaugeCurrentAlpha[i], targetAlpha, elapsed, 0.10, 0.20)
+        gaugeCurrentAlpha[i] = SmoothAlpha(gaugeCurrentAlpha[i], targetAlpha, elapsed, 0.05, 0.40)
         local tex = frame.textures[key]
         if tex then
             tex:SetAlpha(gaugeCurrentAlpha[i])
@@ -492,6 +559,20 @@ local function ResetPressureState()
         PS.pressureBucketAvg[wi] = 0
         PS.pressureBucketMax[wi] = 0
     end
+    colorOverlayFillFrac = 0
+    colorOverlayFullHoldRemaining = 0
+    colorOverlayFillVisible = false
+    colorOverlayCurrentColor[1] = TIER_COLORS[1][1]
+    colorOverlayCurrentColor[2] = TIER_COLORS[1][2]
+    colorOverlayCurrentColor[3] = TIER_COLORS[1][3]
+    if frame.textures.colorOverlay then
+        frame.textures.colorOverlay:SetVertexColor(
+            colorOverlayCurrentColor[1],
+            colorOverlayCurrentColor[2],
+            colorOverlayCurrentColor[3]
+        )
+    end
+    SetColorOverlayFill(colorOverlayFillFrac)
     ClearPressureDebugFrame()
 end
 

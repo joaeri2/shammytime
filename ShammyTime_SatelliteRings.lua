@@ -104,7 +104,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     local f = CreateFrame("Frame", "ShammyTimeSatellite_" .. name, parentFrame)
     f.baseOffsetX = offsetX
     f.baseOffsetY = offsetY
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetFrameLevel(5)
     f:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     f:SetScale(GetSatelliteBubbleScale())
@@ -159,7 +159,7 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
 
     -- Text as child of satellite so it scales with the ring when radial is resized
     local textFrame = CreateFrame("Frame", "ShammyTimeSatelliteText_" .. name, f)
-    textFrame:SetFrameStrata("MEDIUM")
+    textFrame:SetFrameStrata("LOW")
     textFrame:SetFrameLevel(10)
     textFrame:SetSize(SATELLITE_SIZE, SATELLITE_SIZE)
     textFrame:SetPoint("CENTER", f, "CENTER", 0, 0)

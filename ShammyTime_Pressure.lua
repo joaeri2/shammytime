@@ -16,6 +16,7 @@ local math_exp = math.exp
 local math_max = math.max
 local math_min = math.min
 local math_abs = math.abs
+local math_floor = math.floor
 local bit_band = bit and bit.band
 
 local ADDON_PREFIX = "|cff00b4ff[ShammyTime]|r"
@@ -43,20 +44,51 @@ end
 local DISPLAY_WIDTH = SIZE
 local DISPLAY_HEIGHT = SIZE * VISIBLE_HEIGHT_FRACTION
 
+local STORMSTRIKE_SPELL_ID = 17364
+local EARTH_SHOCK_SPELL_IDS = {
+    [8042] = true,
+    [8044] = true,
+    [8045] = true,
+    [8046] = true,
+    [10412] = true,
+    [10413] = true,
+    [10414] = true,
+    [25454] = true,
+}
+
+local SPELL_POPUP_ICON_SIZE = 78
+local SPELL_POPUP_ICON_OFFSET_X = -130
+local SPELL_POPUP_ICON_OFFSET_Y = -90
+local SPELL_POPUP_ICON_ROTATION_DEG = -15
+local SPELL_POPUP_ICON_INSET = 0.08
+local SPELL_POPUP_HOLD_SEC = 1.15
+local SPELL_POPUP_FADE_SEC = 0.90
+local SPELL_POPUP_MERGE_WINDOW = 0.12
+local STORMSTRIKE_SWING_WINDOW_SEC = 0.60
+local STORMSTRIKE_SWING_MAX_HITS = 2
+
+local MONITORED_POPUP_SPELL_IDS = {
+    [STORMSTRIKE_SPELL_ID] = true,
+}
+for spellId in pairs(EARTH_SHOCK_SPELL_IDS) do
+    MONITORED_POPUP_SPELL_IDS[spellId] = true
+end
+
 local STACK = {
-    { key = "background",                   file = "Pressure\\v2_pressure_bar_background_1024x1024.tga",         layer = "BACKGROUND", sub = 0 },
     { key = "backgroundSquares",            file = "Pressure\\v2_pressure_bar_background_squares_1024x1024.tga", layer = "ARTWORK",    sub = 0 },
-    { key = "colorOverlay",                 file = "Pressure\\v2_pressure_bar_color_overlay_on_1024x1024.tga",   layer = "ARTWORK",    sub = 1 },
-    { key = "gaugeZero",                    file = "Pressure\\v2_pressure_gauge_zero_pct_1024x1024.tga",         layer = "ARTWORK",    sub = 2 },
-    { key = "gaugeTen",                     file = "Pressure\\v2_pressure_gauge_ten_pct_1024x1024.tga",          layer = "ARTWORK",    sub = 3 },
-    { key = "gaugeFifty",                   file = "Pressure\\v2_pressure_gauge_fifty_pct_1024x1024.tga",        layer = "ARTWORK",    sub = 4 },
-    { key = "gaugeSeventyFive",             file = "Pressure\\v2_pressure_gauge_seventyfive_pct_1024x1024.tga",  layer = "ARTWORK",    sub = 5 },
-    { key = "gaugeHundred",                 file = "Pressure\\v2_pressure_gauge_hundred_pct_1024x1024.tga",      layer = "ARTWORK",    sub = 6 },
+    { key = "background",                   file = "Pressure\\v2_pressure_bar_background_1024x1024.tga",         layer = "ARTWORK",    sub = 2 },
+    { key = "colorOverlay",                 file = "Pressure\\v2_pressure_bar_color_overlay_on_1024x1024.tga",   layer = "ARTWORK",    sub = 3 },
+    { key = "gaugeZero",                    file = "Pressure\\v2_pressure_gauge_zero_pct_1024x1024.tga",         layer = "ARTWORK",    sub = 4 },
+    { key = "gaugeTen",                     file = "Pressure\\v2_pressure_gauge_ten_pct_1024x1024.tga",          layer = "ARTWORK",    sub = 5 },
+    { key = "gaugeFifty",                   file = "Pressure\\v2_pressure_gauge_fifty_pct_1024x1024.tga",        layer = "ARTWORK",    sub = 6 },
+    { key = "gaugeSeventyFive",             file = "Pressure\\v2_pressure_gauge_seventyfive_pct_1024x1024.tga",  layer = "ARTWORK",    sub = 7 },
+    { key = "gaugeHundred",                 file = "Pressure\\v2_pressure_gauge_hundred_pct_1024x1024.tga",      layer = "ARTWORK",    sub = 7 },
 }
 
 local frame = CreateFrame("Frame", "ShammyTimePressureFrame", UIParent)
 frame:SetSize(DISPLAY_WIDTH, DISPLAY_HEIGHT)
 frame:SetPoint("CENTER", 0, 0)
+frame:SetFrameStrata("LOW")
 frame:SetScale(DEFAULT_SCALE)
 frame:SetClampedToScreen(true)
 frame:SetMovable(true)
@@ -74,6 +106,142 @@ for _, info in ipairs(STACK) do
     tex:SetAllPoints(frame)
     frame.textures[info.key] = tex
 end
+
+local spellPopupIcon = frame:CreateTexture(nil, "ARTWORK")
+spellPopupIcon:SetDrawLayer("ARTWORK", 1)
+spellPopupIcon:SetSize(SPELL_POPUP_ICON_SIZE, SPELL_POPUP_ICON_SIZE)
+spellPopupIcon:SetPoint("CENTER", frame, "CENTER", SPELL_POPUP_ICON_OFFSET_X, SPELL_POPUP_ICON_OFFSET_Y)
+spellPopupIcon:SetTexture(GetSpellTexture(STORMSTRIKE_SPELL_ID) or "Interface\\Icons\\INV_Misc_QuestionMark")
+spellPopupIcon:SetTexCoord(
+    SPELL_POPUP_ICON_INSET,
+    1 - SPELL_POPUP_ICON_INSET,
+    SPELL_POPUP_ICON_INSET,
+    1 - SPELL_POPUP_ICON_INSET
+)
+spellPopupIcon:SetRotation(math.rad(SPELL_POPUP_ICON_ROTATION_DEG))
+
+local spellPopupDamageText = frame:CreateFontString(nil, "OVERLAY")
+spellPopupDamageText:SetFont(FONT_PATH, 16, "OUTLINE")
+spellPopupDamageText:SetPoint("TOP", spellPopupIcon, "TOP", 0, -3)
+spellPopupDamageText:SetTextColor(0.98, 0.92, 0.80)
+spellPopupDamageText:SetShadowColor(0, 0, 0, 1)
+spellPopupDamageText:SetShadowOffset(1, -1)
+
+local function FormatCompactDamage(value)
+    local v = math_max(tonumber(value) or 0, 0)
+    if v < 1000 then
+        return tostring(math_floor(v + 0.5))
+    end
+    if v < 1000000 then
+        local short = string.format("%.1fk", v / 1000)
+        return (short:gsub("%.0k", "k"))
+    end
+    local short = string.format("%.1fm", v / 1000000)
+    return (short:gsub("%.0m", "m"))
+end
+
+local function SetSpellPopupDamageText(amount)
+    spellPopupDamageText:SetText(FormatCompactDamage(amount))
+end
+
+local spellPopupQueue = {}
+local spellPopupAccumulator = {}
+local stormstrikeSwingWindow = {
+    activeUntil = 0,
+    remainingHits = 0,
+}
+local spellPopupState = {
+    active = false,
+    holdUntil = 0,
+    fadeUntil = 0,
+}
+
+local function HideSpellPopup()
+    spellPopupState.active = false
+    spellPopupIcon:SetAlpha(0)
+    spellPopupDamageText:SetAlpha(0)
+    spellPopupIcon:Hide()
+    spellPopupDamageText:Hide()
+end
+
+local function StartSpellPopup(entry, now)
+    spellPopupIcon:SetTexture(GetSpellTexture(entry.spellId) or "Interface\\Icons\\INV_Misc_QuestionMark")
+    SetSpellPopupDamageText(entry.damage)
+    spellPopupIcon:SetAlpha(1)
+    spellPopupDamageText:SetAlpha(1)
+    spellPopupIcon:Show()
+    spellPopupDamageText:Show()
+    spellPopupState.active = true
+    spellPopupState.holdUntil = now + SPELL_POPUP_HOLD_SEC
+    spellPopupState.fadeUntil = spellPopupState.holdUntil + SPELL_POPUP_FADE_SEC
+end
+
+local function QueueSpellPopup(spellId, damage)
+    local amount = tonumber(damage) or 0
+    if amount <= 0 then return end
+    spellPopupQueue[#spellPopupQueue + 1] = { spellId = spellId, damage = amount }
+end
+
+local function TrackPopupSpellDamage(spellId, damage, now)
+    local amount = tonumber(damage) or 0
+    if amount <= 0 then return end
+
+    local bucket = spellPopupAccumulator[spellId]
+    if not bucket then
+        bucket = { damage = 0, lastHitAt = 0 }
+        spellPopupAccumulator[spellId] = bucket
+    end
+
+    if (now - (bucket.lastHitAt or 0)) > SPELL_POPUP_MERGE_WINDOW then
+        bucket.damage = 0
+    end
+
+    bucket.damage = bucket.damage + amount
+    bucket.lastHitAt = now
+end
+
+local function FlushPopupAccumulator(now)
+    for spellId, bucket in pairs(spellPopupAccumulator) do
+        if bucket.damage > 0 and (now - bucket.lastHitAt) >= SPELL_POPUP_MERGE_WINDOW then
+            QueueSpellPopup(spellId, bucket.damage)
+            bucket.damage = 0
+            bucket.lastHitAt = 0
+        end
+    end
+end
+
+local function UpdateSpellPopup(now)
+    FlushPopupAccumulator(now)
+
+    if not spellPopupState.active then
+        local nextPopup = table.remove(spellPopupQueue, 1)
+        if nextPopup then
+            StartSpellPopup(nextPopup, now)
+        end
+        return
+    end
+
+    if now <= spellPopupState.holdUntil then
+        return
+    end
+
+    if now < spellPopupState.fadeUntil then
+        local fadeProgress = (now - spellPopupState.holdUntil) / math_max(SPELL_POPUP_FADE_SEC, 0.01)
+        local alpha = 1 - math_min(math_max(fadeProgress, 0), 1)
+        spellPopupIcon:SetAlpha(alpha)
+        spellPopupDamageText:SetAlpha(alpha)
+        return
+    end
+
+    HideSpellPopup()
+
+    local nextPopup = table.remove(spellPopupQueue, 1)
+    if nextPopup then
+        StartSpellPopup(nextPopup, now)
+    end
+end
+
+HideSpellPopup()
 
 local gaugeKeys = {
     "gaugeZero",
@@ -155,7 +323,7 @@ debugFrame:SetBackdrop({
 })
 debugFrame:SetBackdropColor(0, 0, 0, 0.85)
 debugFrame:SetBackdropBorderColor(0.3, 0.3, 0.3, 0.9)
-debugFrame:SetFrameStrata("MEDIUM")
+debugFrame:SetFrameStrata("LOW")
 debugFrame:SetClampedToScreen(true)
 debugFrame:SetMovable(true)
 debugFrame:EnableMouse(true)
@@ -457,12 +625,14 @@ local function GetGateCappedTier(candidateTier, squeeze, activeSec)
 end
 
 local SUBEVENT_MAP = {
-    SWING_DAMAGE        = { 12, 18 },
-    SWING_DAMAGE_LANDED = { 12, 18 },
-    SPELL_DAMAGE          = { 15, 21 },
-    RANGE_DAMAGE          = { 15, 21 },
-    SPELL_PERIODIC_DAMAGE = { 15, 21 },
-    DAMAGE_SHIELD         = { 15, 21 },
+    SWING_DAMAGE = { amountIdx = 12, critIdx = 18 },
+    SWING_DAMAGE_LANDED = { amountIdx = 12, critIdx = 18 },
+    SPELL_DAMAGE = { amountIdx = 15, critIdx = 21, spellIdIdx = 12 },
+    SPELL_DAMAGE_LANDED = { amountIdx = 15, critIdx = 21, spellIdIdx = 12 },
+    RANGE_DAMAGE = { amountIdx = 15, critIdx = 21, spellIdIdx = 12 },
+    RANGE_DAMAGE_LANDED = { amountIdx = 15, critIdx = 21, spellIdIdx = 12 },
+    SPELL_PERIODIC_DAMAGE = { amountIdx = 15, critIdx = 21, spellIdIdx = 12 },
+    DAMAGE_SHIELD = { amountIdx = 15, critIdx = 21, spellIdIdx = 12 },
 }
 
 local AFFILIATION_MINE = COMBATLOG_OBJECT_AFFILIATION_MINE or 0x00000001
@@ -471,21 +641,30 @@ local function OnCombatLogPressure()
     if not CombatLogGetCurrentEventInfo then return end
     if not bit_band then return end
 
-    local subevent = select(2, CombatLogGetCurrentEventInfo())
-    local info = SUBEVENT_MAP[subevent]
-    if not info then return end
-
     local p = { CombatLogGetCurrentEventInfo() }
+    local subevent = p[2]
+    local info = SUBEVENT_MAP[subevent]
     local sourceFlags = p[6]
     if not sourceFlags or bit_band(sourceFlags, AFFILIATION_MINE) == 0 then return end
+    local now = GetTime()
 
-    local amount = p[info[1]]
+    if subevent == "SPELL_CAST_SUCCESS" then
+        local spellId = p[12]
+        if spellId == STORMSTRIKE_SPELL_ID then
+            stormstrikeSwingWindow.activeUntil = now + STORMSTRIKE_SWING_WINDOW_SEC
+            stormstrikeSwingWindow.remainingHits = STORMSTRIKE_SWING_MAX_HITS
+        end
+        return
+    end
+
+    if not info then return end
+
+    local amount = p[info.amountIdx]
     if not amount or amount <= 0 then return end
 
-    local critFlag = p[info[2]]
+    local critFlag = p[info.critIdx]
     local isCrit = (critFlag == true or critFlag == 1)
 
-    local now = GetTime()
     if not PS.firstPressureAt then
         PS.firstPressureAt = now
     end
@@ -499,6 +678,27 @@ local function OnCombatLogPressure()
     PS.slowCharge = PS.slowCharge + amount
     PS.recentHitImpulse = PS.recentHitImpulse + feedAmount
     PS.lastDamageTime = now
+
+    local spellId = info.spellIdIdx and p[info.spellIdIdx]
+    if spellId and MONITORED_POPUP_SPELL_IDS[spellId] then
+        TrackPopupSpellDamage(spellId, amount, now)
+        if spellId == STORMSTRIKE_SPELL_ID then
+            stormstrikeSwingWindow.remainingHits = 0
+            stormstrikeSwingWindow.activeUntil = 0
+        end
+    end
+
+    if (subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED")
+        and stormstrikeSwingWindow.remainingHits > 0
+        and now <= stormstrikeSwingWindow.activeUntil
+    then
+        TrackPopupSpellDamage(STORMSTRIKE_SPELL_ID, amount, now)
+        stormstrikeSwingWindow.remainingHits = stormstrikeSwingWindow.remainingHits - 1
+        if stormstrikeSwingWindow.remainingHits <= 0 then
+            stormstrikeSwingWindow.remainingHits = 0
+            stormstrikeSwingWindow.activeUntil = 0
+        end
+    end
 end
 
 local function UpdatePressureVisuals(elapsed)
@@ -660,6 +860,11 @@ local function ResetPressureState()
             colorOverlayCurrentColor[3]
         )
     end
+    spellPopupAccumulator = {}
+    spellPopupQueue = {}
+    stormstrikeSwingWindow.activeUntil = 0
+    stormstrikeSwingWindow.remainingHits = 0
+    HideSpellPopup()
     SetColorOverlayFill(colorOverlayFillFrac)
     ClearPressureDebugFrame()
 end
@@ -667,12 +872,14 @@ end
 ShammyTime.ResetPressureState = ResetPressureState
 
 local function OnPressureTick(_, dt)
+    local now = GetTime()
+    UpdateSpellPopup(now)
+
     PS.pressureElapsed = PS.pressureElapsed + dt
     if PS.pressureElapsed < PS.pressureTick then return end
     local elapsed = PS.pressureElapsed
     PS.pressureElapsed = 0
 
-    local now = GetTime()
     PS.fastCharge = PS.fastCharge * math_exp(-elapsed / math_max(PS.tauFast, 0.01))
     PS.slowCharge = PS.slowCharge * math_exp(-elapsed / math_max(PS.tauSlow, 0.01))
     if PS.fastCharge < 0.01 then PS.fastCharge = 0 end

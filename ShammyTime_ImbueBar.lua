@@ -335,7 +335,7 @@ local function CreateImbueBarFrame()
     if imbueBarFrame then return imbueBarFrame end
 
     local f = CreateFrame("Frame", "ShammyTimeImbueBarFrame", UIParent)
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetSize(BAR_W, BAR_H)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, -260)
     ApplyImbueBarPosition(f)
@@ -484,7 +484,7 @@ local function CreateShieldFrame()
     local scale = (db.shieldScale and db.shieldScale >= 0.05 and db.shieldScale <= 2) and db.shieldScale or DEFAULT_SHIELD_SCALE
 
     local f = CreateFrame("Frame", "ShammyTimeShieldFrame", UIParent)
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetSize(SHIELD_ICON_SIZE + 8, SHIELD_ICON_SIZE + 50)
     ApplyShieldPosition(f)
     f:SetScale(scale)

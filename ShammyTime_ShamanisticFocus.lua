@@ -134,7 +134,7 @@ local function CreateFocusFrame()
     local iconSize = 80
     local padW, padH = 16, 24
     local f = CreateFrame("Frame", "ShammyTimeShamanisticFocus", UIParent)
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetSize(iconSize + padW, iconSize + padH)
     f:SetClipsChildren(false)
     f:SetScale(db.scale or 0.8)

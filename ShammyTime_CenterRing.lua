@@ -139,7 +139,7 @@ local function CreateRadialWrapper()
     if radialWrapper then return radialWrapper end
     local WrapperSize = (ShammyTime.GetWindfuryRadialWrapperSize and ShammyTime.GetWindfuryRadialWrapperSize()) or 600
     radialWrapper = CreateFrame("Frame", "ShammyTimeWindfuryRadial", UIParent)
-    radialWrapper:SetFrameStrata("MEDIUM")
+    radialWrapper:SetFrameStrata("LOW")
     radialWrapper:SetSize(WrapperSize, WrapperSize)
     radialWrapper:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     ApplyCenterPosition(radialWrapper)
@@ -163,7 +163,7 @@ local function CreateCenterRingFrame()
     local f = CreateFrame("Frame", "ShammyTimeCenterRing", radialWrapper)
     f.wfProcAnimPlaying = false
     f.wrapper = radialWrapper
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetSize(centerSize, centerSize)
     f:SetScale(1)  -- scale is on wrapper only so center + satellites scale as one
     f:SetPoint("CENTER", radialWrapper, "CENTER", 0, 0)
@@ -277,7 +277,7 @@ local function CreateCenterRingFrame()
 
     -- Text frame: holds "Windfury!", "TOTAL: xxx", and optional "CRITICAL". Child of main frame so it doesn't get scaled by the ring's proc pop; it stays crisp. Still scales with /st circle scale (whole frame scale).
     local textFrame = CreateFrame("Frame", "ShammyTimeCenterRingText", f)
-    textFrame:SetFrameStrata("MEDIUM")
+    textFrame:SetFrameStrata("LOW")
     textFrame:SetFrameLevel(10)
     textFrame:SetSize(centerSize, centerSize)
     textFrame:SetPoint("CENTER", f, "CENTER", 0, 0)
@@ -688,7 +688,7 @@ local function CreateWindfuryTotemBarFrame()
     local CROP_BOTTOM = 0.65  -- skip bottom 30% of texture (empty)
     local barH = math.floor(barW * (CROP_BOTTOM - CROP_TOP) + 0.5)
     local f = CreateFrame("Frame", "ShammyTimeWindfuryTotemBarFrame", UIParent)
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetSize(barW, barH)
     f:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
     ApplyTotemBarPosition(f)

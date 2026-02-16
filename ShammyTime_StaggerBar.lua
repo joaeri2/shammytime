@@ -1,6 +1,6 @@
 -- ShammyTime_StaggerBar.lua
 -- Dual-wield stagger visual: two swing timer bars (MH on top, OH below) with
--- dynamic color coding (gold / yellow / red) based on stagger quality, a delta
+-- dynamic color coding (white / yellow / red) based on stagger quality, a delta
 -- readout, and activity-based smart hide.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
@@ -20,13 +20,15 @@ local CROP_BOTTOM      = 0.65         -- skip bottom 35 %
 local FRAME_H          = math.floor(FRAME_W * (CROP_BOTTOM - CROP_TOP) + 0.5)
 
 -- Stagger quality thresholds (per enhanceshaman.com: 0.5 s sync window)
-local GOOD_THRESHOLD       = 0.5       -- MH first, delta <= 0.5 s  → gold
-local SAME_TIME_THRESHOLD  = 0.01     -- delta < 0.01 = same time (0.00), not gold; 0.05 is gold
+local GOOD_THRESHOLD       = 0.5       -- MH first, delta <= 0.5 s  → white
+local SAME_TIME_THRESHOLD  = 0.01     -- delta < 0.01 = same time (0.00), not white; 0.05 is white
+local OVERDUE_GRACE        = 0.45      -- tolerate normal event jitter before overdue/resync
+local OVERDUE_CONFIRM_TIME = 0.08      -- require brief persistence to avoid single-frame false positives
 -- MH first, delta > 0.5 s  → yellow (drifting)
 -- OH first (negative delta)  → red (reversed)
 
 -- Colors: { r, g, b }
-local COLOR_GOLD   = { 1.00, 0.82, 0.00 }
+local COLOR_WHITE   = { 1.00, 1.00, 1.00 }
 local COLOR_YELLOW = { 1.00, 1.00, 0.00 }
 local COLOR_RED    = { 1.00, 0.30, 0.30 }
 
@@ -35,7 +37,7 @@ local COLOR_CUE_CLICK = { 0.20, 1.00, 0.20 }   -- bright green  "CLICK NOW!"
 local COLOR_CUE_READY = { 1.00, 0.60, 0.30 }   -- orange        "Click after MH hit"
 local COLOR_CUE_WAIT  = { 0.55, 0.55, 0.55 }   -- gray          "Wait..."
 
--- Stormstrike spell ID (resets MH swing timer)
+-- Stormstrike spell ID (logging only; does NOT affect swing timers)
 local STORMSTRIKE_ID = 17364
 
 -- Swing timer update throttle (seconds)
@@ -63,6 +65,8 @@ local staggerFrame = nil           -- the main frame
 local swingState = {
     mhSpeed    = 0,                -- current MH weapon speed (haste-adjusted)
     ohSpeed    = 0,                -- current OH weapon speed
+    mhSpeedAtStart = 0,            -- MH speed snapshot taken at MH swing start
+    ohSpeedAtStart = 0,            -- OH speed snapshot taken at OH swing start
     mhLast     = 0,                -- GetTime() of last MH swing
     ohLast     = 0,                -- GetTime() of last OH swing
     mhExpected = 0,                -- expected next MH swing time
@@ -73,6 +77,9 @@ local swingState = {
     lastSwing  = 0,                -- GetTime() of any last swing (for smart hide)
     delta      = nil,              -- current stagger delta (seconds), nil = unknown
     deltaSign  = 0,                -- 1 = MH first, -1 = OH first, 0 = unknown
+    extraAttacksFlag = false,      -- next MH swing is extra attack, skip recording (SPELL_EXTRA_ATTACKS)
+    ohSeeded   = false,            -- true if ohExpected/ohLast came from MH-seed only (not a real OH swing yet)
+    mhSeeded   = false,            -- true if mhExpected came from OH-seed only (not a real MH swing yet)
 }
 
 local smartHide = {
@@ -90,6 +97,181 @@ local actionCue = {
     stateEnteredAt = 0,        -- GetTime() when we entered current state
 }
 
+-- Cast-time detection: non-instant spell completion resets weapon swing in-game
+local castState = {
+    lastCastStartSpellId = nil,  -- spellId when UNIT_SPELLCAST_START fired
+    lastCastStartTime    = 0,    -- GetTime() at START; SUCCEEDED within ~30s = same cast
+}
+
+-- Tracks when each hand first went overdue; cleared by real swing updates.
+local overdueState = {
+    mhSince = nil,
+    ohSince = nil,
+}
+
+-- Temporary instrumentation counters (printed when resync_needed is entered).
+local swingDebugCounters = {
+    mhEventsSeen = 0,
+    ohEventsSeen = 0,
+    missEventsSeenNilIsOffHand = 0,
+}
+
+local function ResetSwingDebugCounters()
+    swingDebugCounters.mhEventsSeen = 0
+    swingDebugCounters.ohEventsSeen = 0
+    swingDebugCounters.missEventsSeenNilIsOffHand = 0
+end
+
+local function BumpSwingDebugCounters(hand, isMissNilIsOffHand)
+    if hand == "mh" then
+        swingDebugCounters.mhEventsSeen = swingDebugCounters.mhEventsSeen + 1
+    elseif hand == "oh" then
+        swingDebugCounters.ohEventsSeen = swingDebugCounters.ohEventsSeen + 1
+    end
+    if isMissNilIsOffHand then
+        swingDebugCounters.missEventsSeenNilIsOffHand = swingDebugCounters.missEventsSeenNilIsOffHand + 1
+    end
+end
+
+local function SwingDebugCounterSummary()
+    return string.format(
+        "mhEventsSeen=%d ohEventsSeen=%d missEventsSeenNilIsOffHand=%d",
+        swingDebugCounters.mhEventsSeen,
+        swingDebugCounters.ohEventsSeen,
+        swingDebugCounters.missEventsSeenNilIsOffHand
+    )
+end
+
+local function GetHandCycleSpeed(hand)
+    if hand == "mh" then
+        if swingState.mhSpeedAtStart and swingState.mhSpeedAtStart > 0 then
+            return swingState.mhSpeedAtStart
+        end
+        return swingState.mhSpeed
+    end
+    if swingState.ohSpeedAtStart and swingState.ohSpeedAtStart > 0 then
+        return swingState.ohSpeedAtStart
+    end
+    return swingState.ohSpeed
+end
+
+--- Shared visual snapshot used by both bars and debug output.
+--- Returns clamped next swing deltas and clamped bar progress values.
+local function BuildSwingVisualSnapshot(now)
+    now = now or GetTime()
+    local snap = {
+        nextMh = nil,
+        nextOh = nil,
+        mhProgress = 0,
+        ohProgress = 0,
+        mhPct = 0,
+        ohPct = 0,
+    }
+
+    if swingState.mhExpected > 0 then
+        snap.nextMh = math.max(0, swingState.mhExpected - now)
+    end
+    if swingState.ohExpected > 0 then
+        snap.nextOh = math.max(0, swingState.ohExpected - now)
+    end
+
+    local mhCycleSpeed = GetHandCycleSpeed("mh")
+    local ohCycleSpeed = GetHandCycleSpeed("oh")
+
+    if mhCycleSpeed > 0 and swingState.mhLast > 0 then
+        snap.mhProgress = math.max(0, math.min(1, (now - swingState.mhLast) / mhCycleSpeed))
+    end
+    if ohCycleSpeed > 0 and swingState.ohLast > 0 then
+        snap.ohProgress = math.max(0, math.min(1, (now - swingState.ohLast) / ohCycleSpeed))
+    end
+
+    snap.mhPct = math.floor(100 * snap.mhProgress + 0.5)
+    snap.ohPct = math.floor(100 * snap.ohProgress + 0.5)
+    return snap
+end
+
+local function FirstBoolean(...)
+    local n = select("#", ...)
+    for i = 1, n do
+        local v = select(i, ...)
+        if type(v) == "boolean" then
+            return v
+        end
+    end
+    return nil
+end
+
+local function ResolveHandFromIsOffHandFlag(isOffHand)
+    -- Only trust explicit booleans; numeric fields in some CLEU layouts are damage/amount values.
+    if type(isOffHand) == "boolean" then
+        return isOffHand and "oh" or "mh"
+    end
+    return nil
+end
+
+local function SwingDebugDumpIndexedArgs(eventName, args)
+    if not IsSwingDebugEnabled() then return end
+    local parts = {}
+    for i = 1, #args do
+        parts[#parts + 1] = string.format("%d=%s(%s)", i, type(args[i]), tostring(args[i]))
+    end
+    SwingDebugLog(eventName .. " args[" .. tostring(#args) .. "]: " .. table.concat(parts, " | "))
+end
+
+local function ResetOverdueTracking()
+    overdueState.mhSince = nil
+    overdueState.ohSince = nil
+end
+
+local function ClearOverdueTrackingForHand(hand)
+    if hand == "mh" then
+        overdueState.mhSince = nil
+    elseif hand == "oh" then
+        overdueState.ohSince = nil
+    end
+end
+
+local function SwingDebugLogEventTrace(eventName, missType, isOffHand, chosenHand, now, decision)
+    if not IsSwingDebugEnabled() then return end
+    SwingDebugLog(string.format(
+        "trace event=%s missType=%s isOffHand=%s chosenHand=%s now=%.2f mhLast=%.2f ohLast=%.2f mhExpected=%.2f ohExpected=%.2f decision=%s",
+        tostring(eventName),
+        missType and tostring(missType) or "-",
+        tostring(isOffHand),
+        chosenHand or "-",
+        now or 0,
+        swingState.mhLast or 0,
+        swingState.ohLast or 0,
+        swingState.mhExpected or 0,
+        swingState.ohExpected or 0,
+        decision or "-"
+    ))
+end
+
+local function EnterResyncNeeded(now, reason)
+    if actionCue.state == "resync_needed" then return end
+    actionCue.state = "resync_needed"
+    actionCue.stateEnteredAt = now
+    SwingDebugLog("cue -> resync_needed (" .. (reason or "unknown") .. ") | " .. SwingDebugCounterSummary())
+end
+
+--- Log current visual state (delta, next swing times, bar fill %, action cue) so chat matches the bar.
+--- Call after swing events when staggerSwingDebugLog is enabled. Defined after swingState/actionCue so closure captures them.
+local function SwingDebugLogVisualState(now)
+    if not IsSwingDebugEnabled() then return end
+    now = now or GetTime()
+    local snap = BuildSwingVisualSnapshot(now)
+    local deltaStr = (swingState.delta ~= nil) and string.format("%.2fs", swingState.delta) or "?"
+    local signStr = (swingState.deltaSign > 0) and "MH first" or ((swingState.deltaSign < 0) and "OH first" or "?")
+    local nextMh = (snap.nextMh ~= nil) and string.format("%.2fs", snap.nextMh) or "-"
+    local nextOh = (snap.nextOh ~= nil) and string.format("%.2fs", snap.nextOh) or "-"
+    if swingState.mhSeeded and nextMh ~= "-" then nextMh = nextMh .. " (seeded)" end
+    if swingState.ohSeeded and nextOh ~= "-" then nextOh = nextOh .. " (seeded)" end
+    local cueStr = actionCue.state or "idle"
+    local speedStr = string.format("MH %.2fs OH %.2fs", swingState.mhSpeed or 0, swingState.ohSpeed or 0)
+    print("|cff00b4ff[ShammyTime]|r   → delta " .. deltaStr .. " " .. signStr .. " | next MH " .. nextMh .. " OH " .. nextOh .. " | bar MH " .. snap.mhPct .. "% OH " .. snap.ohPct .. "% | cue " .. cueStr .. " | speeds: " .. speedStr)
+end
+
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
@@ -101,7 +283,7 @@ end
 --- Return the stagger color based on current delta.
 local function GetStaggerColor()
     local d = swingState.delta
-    if not d then return COLOR_GOLD end
+    if not d then return COLOR_WHITE end
     if swingState.deltaSign < 0 then
         return COLOR_RED     -- OH hit first
     elseif d < SAME_TIME_THRESHOLD then
@@ -109,7 +291,7 @@ local function GetStaggerColor()
     elseif d > GOOD_THRESHOLD then
         return COLOR_YELLOW  -- MH first but drifting
     else
-        return COLOR_GOLD    -- MH first, small lead (e.g. 0.05–0.5 s)
+        return COLOR_WHITE    -- MH first, small lead (e.g. 0.05–0.5 s)
     end
 end
 
@@ -185,21 +367,34 @@ end
 --- Record a swing for the given hand.
 local function RecordSwing(hand, now)
     RefreshWeaponSpeeds()  -- pick up haste changes (Flurry etc.)
+    -- Any real swing means we're still receiving events; clear overdue latches.
+    ResetOverdueTracking()
     if hand == "mh" then
+        swingState.mhSpeedAtStart = swingState.mhSpeed or 0
         swingState.mhLast = now
-        swingState.mhExpected = now + swingState.mhSpeed
+        swingState.mhExpected = (swingState.mhSpeedAtStart > 0) and (now + swingState.mhSpeedAtStart) or 0
+        swingState.mhSeeded = false  -- real MH swing
         -- Seed OH expected time on the very first MH swing so future
         -- attribution has something sensible to compare against.
         -- In WoW dual wield, OH fires ~50% of OH speed after MH.
         if swingState.ohExpected == 0 and swingState.ohSpeed > 0 then
-            swingState.ohExpected = now + swingState.ohSpeed * 0.5
+            swingState.ohSpeedAtStart = swingState.ohSpeed
+            swingState.ohExpected = now + swingState.ohSpeedAtStart * 0.5
+            swingState.ohLast = now - swingState.ohSpeedAtStart * 0.5  -- synthetic: OH bar shows 50% to match "next OH"
+            swingState.ohSeeded = true
         end
     else
+        swingState.ohSpeedAtStart = swingState.ohSpeed or 0
         swingState.ohLast = now
-        swingState.ohExpected = now + swingState.ohSpeed
-        -- Mirror: seed MH if it somehow hasn't been set
+        swingState.ohExpected = (swingState.ohSpeedAtStart > 0) and (now + swingState.ohSpeedAtStart) or 0
+        swingState.ohSeeded = false  -- real OH swing
+        -- Mirror: seed MH if it somehow hasn't been set (e.g. first event was OH, or state was cleared by staleness).
+        -- Set mhLast so MH bar shows 50% and matches "next MH (seeded)" instead of staying at 0%.
         if swingState.mhExpected == 0 and swingState.mhSpeed > 0 then
-            swingState.mhExpected = now + swingState.mhSpeed * 0.5
+            swingState.mhSpeedAtStart = swingState.mhSpeed
+            swingState.mhExpected = now + swingState.mhSpeedAtStart * 0.5
+            swingState.mhLast = now - swingState.mhSpeedAtStart * 0.5  -- synthetic: MH bar shows 50% to match "next MH"
+            swingState.mhSeeded = true
         end
     end
     swingState.lastSwing = now
@@ -219,7 +414,7 @@ local function RecordSwing(hand, now)
     -- Update delta: how close are the most recent MH and OH swings?
     if swingState.mhLast > 0 and swingState.ohLast > 0 then
         local raw = swingState.ohLast - swingState.mhLast
-        local maxWindow = math.max(swingState.mhSpeed, swingState.ohSpeed, 1)
+        local maxWindow = math.max(GetHandCycleSpeed("mh"), GetHandCycleSpeed("oh"), 1)
         local halfWindow = maxWindow * 0.5
 
         if raw < 0 and math.abs(raw) > halfWindow
@@ -249,36 +444,48 @@ local function RecordSwing(hand, now)
 end
 
 --- Attribute the first two SWING_DAMAGE events by gap: small gap = OH then MH (left first), large gap = MH then OH.
+--- Always assigns both mhLast and ohLast from t1 and t2 so both bars get valid state.
 local function AttributeFirstTwoSwings(now)
     local t1 = swingState.pendingFirstSwingTime
     if t1 <= 0 then return end
     local t2 = now
     local gap = t2 - t1
     RefreshWeaponSpeeds()
-    local maxWindow = math.max(swingState.mhSpeed, swingState.ohSpeed, 1)
+    swingState.mhSpeedAtStart = swingState.mhSpeed or 0
+    swingState.ohSpeedAtStart = swingState.ohSpeed or 0
+    local maxWindow = math.max(swingState.mhSpeedAtStart, swingState.ohSpeedAtStart, 1)
     local halfWindow = maxWindow * 0.5
 
     if gap < halfWindow then
         -- Small gap: same-cycle pair, treat as OH then MH (left first) so pull/resync is correct
+        if IsSwingDebugEnabled() then
+            SwingDebugLog(string.format("First two swings: gap=%.2fs < halfWindow -> OH then MH", gap))
+        end
         swingState.ohLast = t1
         swingState.mhLast = t2
-        swingState.ohExpected = t1 + swingState.ohSpeed
-        swingState.mhExpected = t2 + swingState.mhSpeed
+        swingState.ohExpected = t1 + swingState.ohSpeedAtStart
+        swingState.mhExpected = t2 + swingState.mhSpeedAtStart
         actionCue.mhSwingAt = t2
         SwingDebugLog("Left (OH) hit")
         SwingDebugLog("Right (MH) hit")
     else
         -- Large gap: first swing started a cycle, second is other hand → MH then OH
+        if IsSwingDebugEnabled() then
+            SwingDebugLog(string.format("First two swings: gap=%.2fs >= halfWindow -> MH then OH", gap))
+        end
         swingState.mhLast = t1
         swingState.ohLast = t2
-        swingState.mhExpected = t1 + swingState.mhSpeed
-        swingState.ohExpected = t2 + swingState.ohSpeed
+        swingState.mhExpected = t1 + swingState.mhSpeedAtStart
+        swingState.ohExpected = t2 + swingState.ohSpeedAtStart
         actionCue.mhSwingAt = t1
         SwingDebugLog("Right (MH) hit")
         SwingDebugLog("Left (OH) hit")
     end
     swingState.pendingFirstSwingTime = 0
     swingState.firstSwing = false
+    ResetOverdueTracking()
+    swingState.ohSeeded = false
+    swingState.mhSeeded = false
     swingState.lastSwing = now
     swingState.active = true
     ActivateFrame()
@@ -302,13 +509,25 @@ end
 --- Clear stagger visual data (bars, text) without affecting smart-hide state.
 --- Called when leaving combat and when swings go stale so the frame shows
 --- its default (empty) look while remaining visible.
-local function ClearStaggerVisuals()
+--- @param reason string|nil Optional: "staleness" | "leave_combat" | "smart_hide" for debug log.
+local function ClearStaggerVisuals(reason)
+    if reason and IsSwingDebugEnabled() then
+        local now = GetTime()
+        print("|cff00b4ff[ShammyTime]|r state cleared: " .. reason .. " | now=" .. string.format("%.2f", now) ..
+            " mhLast=" .. string.format("%.2f", swingState.mhLast) .. " ohLast=" .. string.format("%.2f", swingState.ohLast) ..
+            " mhExpected=" .. string.format("%.2f", swingState.mhExpected) .. " ohExpected=" .. string.format("%.2f", swingState.ohExpected))
+    end
     swingState.mhLast = 0
     swingState.ohLast = 0
+    swingState.mhSpeedAtStart = 0
+    swingState.ohSpeedAtStart = 0
     swingState.mhExpected = 0
     swingState.ohExpected = 0
     swingState.firstSwing = true
     swingState.pendingFirstSwingTime = 0
+    swingState.extraAttacksFlag = false
+    swingState.ohSeeded = false
+    swingState.mhSeeded = false
     swingState.delta = nil
     swingState.deltaSign = 0
     -- Reset action cue
@@ -317,11 +536,13 @@ local function ClearStaggerVisuals()
     actionCue.cooldownEnd = 0
     actionCue.cooldownSwings = 0
     actionCue.stateEnteredAt = 0
+    ResetOverdueTracking()
+    ResetSwingDebugCounters()
 end
 
 --- Full reset: clear visuals AND deactivate tracking (used by smart-hide timeout).
 local function ResetSwingState()
-    ClearStaggerVisuals()
+    ClearStaggerVisuals("smart_hide")
     swingState.active = false
 end
 
@@ -333,9 +554,18 @@ local function SimulateResyncMacro()
     RefreshWeaponSpeeds()
     if swingState.ohSpeed <= 0 then return end
     local now = GetTime()
-    swingState.ohLast = now - 0.5 * swingState.ohSpeed
-    swingState.ohExpected = now + 0.5 * swingState.ohSpeed
+    swingState.ohSpeedAtStart = swingState.ohSpeed
+    swingState.ohLast = now - 0.5 * swingState.ohSpeedAtStart
+    swingState.ohExpected = now + 0.5 * swingState.ohSpeedAtStart
+    ClearOverdueTrackingForHand("oh")
+    swingState.ohSeeded = false  -- resync is user-driven, not seeded
+    swingState.active = true
+    swingState.lastSwing = now
+    swingState.delta = nil
+    swingState.deltaSign = 0
     ActivateFrame()
+    SwingDebugLog("Resync macro (OH 50%)")
+    SwingDebugLogVisualState(now)
 end
 
 --------------------------------------------------------------------------------
@@ -431,11 +661,34 @@ local function CreateStaggerBarFrame()
 
     -- MH bar texture
     f.mhBar = f.barFrame:CreateTexture(nil, "ARTWORK")
-    f.mhBar:SetColorTexture(COLOR_GOLD[1], COLOR_GOLD[2], COLOR_GOLD[3], 1)
+    f.mhBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1)
 
     -- OH bar texture
     f.ohBar = f.barFrame:CreateTexture(nil, "ARTWORK")
-    f.ohBar:SetColorTexture(COLOR_GOLD[1], COLOR_GOLD[2], COLOR_GOLD[3], 1)
+    f.ohBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1)
+
+    -- Markers overlay: zone lines (50%, 60%) and OH cursor (moves with offhand progress)
+    f.markersFrame = CreateFrame("Frame", nil, f)
+    f.markersFrame:SetAllPoints(f)
+    f.markersFrame:SetFrameLevel(baseLevel + 0.5)
+    f.markersFrame:EnableMouse(false)
+
+    f.ohCursorTex = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.ohCursorTex:SetColorTexture(0.2, 1, 0.2, 0.9)  -- bright green
+    f.ohCursorTex:SetSize(4, 8)
+
+    f.mhZone50 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.mhZone50:SetColorTexture(1, 0.6, 0.2, 0.7)  -- orange
+    f.mhZone50:SetSize(2, 6)
+    f.mhZone60 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.mhZone60:SetColorTexture(0.2, 1, 0.2, 0.7)  -- green
+    f.mhZone60:SetSize(2, 6)
+    f.ohZone50 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.ohZone50:SetColorTexture(1, 0.6, 0.2, 0.7)
+    f.ohZone50:SetSize(2, 6)
+    f.ohZone60 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.ohZone60:SetColorTexture(0.2, 1, 0.2, 0.7)
+    f.ohZone60:SetSize(2, 6)
 
     -- Layer 3: Front texture (one level above bars)
     f.frontFrame = CreateFrame("Frame", nil, f)
@@ -541,9 +794,36 @@ local function ApplyStaggerBarLayout()
         f.helperText:SetPoint("CENTER", f, "CENTER", hx, hy)
     end
 
-    -- Store barW for OnUpdate
+    -- Store barW and bar layout for OnUpdate (cursor + markers)
     f._barMaxWidth = barW
     f._barHeight = barH
+    f._barBarsX = bx
+    f._barBarsY = by
+    f._barTopY = topY
+    f._barGap = gap
+
+    if f.mhZone50 and f.ohCursorTex then
+        local leftEdge = -(barW / 2) + bx
+        local mhY = topY - barH / 2 + by
+        local ohY = topY - barH - gap - barH / 2 + by
+
+        -- Zone markers at 50% and 60% of bar width (resync "click here" reference)
+        f.mhZone50:ClearAllPoints()
+        f.mhZone50:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.5, mhY)
+        f.mhZone50:SetSize(2, barH)
+        f.mhZone60:ClearAllPoints()
+        f.mhZone60:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.6, mhY)
+        f.mhZone60:SetSize(2, barH)
+        f.ohZone50:ClearAllPoints()
+        f.ohZone50:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.5, ohY)
+        f.ohZone50:SetSize(2, barH)
+        f.ohZone60:ClearAllPoints()
+        f.ohZone60:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.6, ohY)
+        f.ohZone60:SetSize(2, barH)
+
+        -- OH cursor size (position set in OnUpdate)
+        f.ohCursorTex:SetSize(4, barH + 2)
+    end
 end
 ShammyTime.ApplyStaggerBarLayout = ApplyStaggerBarLayout
 
@@ -649,32 +929,59 @@ local function OnUpdate(self, elapsed)
     UpdateSmartHide(now)
     if not smartHide.visible then return end
 
-    -- Staleness check: if no swing has landed for more than one full weapon-
-    -- speed cycle, clear the visual info so bars/text don't stay frozen.
-    -- This handles always-show mode and cases where PLAYER_REGEN_ENABLED
-    -- hasn't fired yet (e.g. still in combat but no longer meleeing).
+    -- Staleness check: if no swing has landed for long enough, clear the visual info so bars don't stay frozen.
+    -- Use a generous threshold (2 full cycles + 2s) so brief pauses (one cast, target swap) don't wipe state
+    -- and cause repeated "(seeded)" bootstrapping mid-fight.
     if swingState.mhLast > 0 then
         local maxSpeed = math.max(swingState.mhSpeed, swingState.ohSpeed, 1)
-        if (now - swingState.lastSwing) > maxSpeed + 1.0 then
-            ClearStaggerVisuals()
+        if (now - swingState.lastSwing) > (maxSpeed * 2 + 2.0) then
+            ClearStaggerVisuals("staleness")
+        end
+    end
+
+    -- Overdue detection: if we're past expected swing time and didn't get an event, mark as desynced
+    -- so the UI shows resync_needed instead of silently showing 100% bar / negative "next".
+    local mhDelta = (swingState.mhExpected > 0) and (swingState.mhExpected - now) or nil
+    local ohDelta = (swingState.ohExpected > 0) and (swingState.ohExpected - now) or nil
+    local mhOverdueRaw = mhDelta ~= nil and mhDelta < -OVERDUE_GRACE and swingState.mhLast > 0
+    local ohOverdueRaw = ohDelta ~= nil and ohDelta < -OVERDUE_GRACE and swingState.ohLast > 0
+    if mhOverdueRaw then
+        if overdueState.mhSince == nil then overdueState.mhSince = now end
+    else
+        overdueState.mhSince = nil
+    end
+    if ohOverdueRaw then
+        if overdueState.ohSince == nil then overdueState.ohSince = now end
+    else
+        overdueState.ohSince = nil
+    end
+    local mhOverdue = overdueState.mhSince ~= nil and (now - overdueState.mhSince) >= OVERDUE_CONFIRM_TIME
+    local ohOverdue = overdueState.ohSince ~= nil and (now - overdueState.ohSince) >= OVERDUE_CONFIRM_TIME
+    if (mhOverdue or ohOverdue) and actionCue.state ~= "click_now" and actionCue.state ~= "cooldown" then
+        if actionCue.state ~= "resync_needed" then
+            local reasonParts = {}
+            if mhOverdue then
+                SwingDebugLog(string.format(
+                    "overdue: MH | now=%.2f expected=%.2f last=%.2f speed=%.2f delta=%.2f",
+                    now, swingState.mhExpected, swingState.mhLast, GetHandCycleSpeed("mh") or 0, mhDelta or 0
+                ))
+                reasonParts[#reasonParts + 1] = "MH"
+            end
+            if ohOverdue then
+                SwingDebugLog(string.format(
+                    "overdue: OH | now=%.2f expected=%.2f last=%.2f speed=%.2f delta=%.2f",
+                    now, swingState.ohExpected, swingState.ohLast, GetHandCycleSpeed("oh") or 0, ohDelta or 0
+                ))
+                reasonParts[#reasonParts + 1] = "OH"
+            end
+            EnterResyncNeeded(now, "overdue:" .. table.concat(reasonParts, "+"))
         end
     end
 
     local maxW = f._barMaxWidth or 200
-
-    -- MH bar progress
-    local mhProgress = 0
-    if swingState.mhSpeed > 0 and swingState.mhLast > 0 then
-        mhProgress = (now - swingState.mhLast) / swingState.mhSpeed
-        mhProgress = math.max(0, math.min(1, mhProgress))
-    end
-
-    -- OH bar progress
-    local ohProgress = 0
-    if swingState.ohSpeed > 0 and swingState.ohLast > 0 then
-        ohProgress = (now - swingState.ohLast) / swingState.ohSpeed
-        ohProgress = math.max(0, math.min(1, ohProgress))
-    end
+    local snap = BuildSwingVisualSnapshot(now)
+    local mhProgress = snap.mhProgress
+    local ohProgress = snap.ohProgress
 
     -- Set bar widths (minimum 1 pixel to avoid SetSize(0, h) issues)
     local mhW = math.max(1, math.floor(maxW * mhProgress + 0.5))
@@ -682,12 +989,45 @@ local function OnUpdate(self, elapsed)
     f.mhBar:SetWidth(mhW)
     f.ohBar:SetWidth(ohW)
 
-    -- Color both bars based on stagger quality
-    local c = GetStaggerColor()
+    -- Bars always white so fill state is easy to read (stagger quality still drives delta/helper text color)
     local p = GetDB()
     local barAlpha = (p and p.staggerSwingBarAlpha) or 1
-    f.mhBar:SetColorTexture(c[1], c[2], c[3], barAlpha)
-    f.ohBar:SetColorTexture(c[1], c[2], c[3], barAlpha)
+    f.mhBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], barAlpha)
+    f.ohBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], barAlpha)
+    local c = GetStaggerColor()
+
+    -- Zone markers (50%, 60%) and OH cursor (moving line with offhand progress)
+    if f.mhZone50 and f.ohCursorTex then
+    local showZones = not p or p.staggerShowZoneMarkers ~= false
+    local showCursor = not p or p.staggerShowOhCursor ~= false
+    local bx = f._barBarsX or 0
+    local by = f._barBarsY or 0
+    local barH = f._barHeight or 6
+    local gap = f._barGap or 4
+    local topY = f._barTopY or (barH * 2 + gap) / 2
+    local leftEdge = -(maxW / 2) + bx
+    local ohY = topY - barH - gap - barH / 2 + by
+
+    if showZones then
+        f.mhZone50:Show()
+        f.mhZone60:Show()
+        f.ohZone50:Show()
+        f.ohZone60:Show()
+    else
+        f.mhZone50:Hide()
+        f.mhZone60:Hide()
+        f.ohZone50:Hide()
+        f.ohZone60:Hide()
+    end
+
+    if showCursor and swingState.ohLast > 0 then
+        f.ohCursorTex:ClearAllPoints()
+        f.ohCursorTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * ohProgress, ohY)
+        f.ohCursorTex:Show()
+    else
+        f.ohCursorTex:Hide()
+    end
+    end
 
     -- Delta text
     if swingState.delta then
@@ -731,8 +1071,11 @@ local function OnUpdate(self, elapsed)
             ----------------------------------------------------------------
             if actionCue.state == "idle" then
                 if needsResync then
-                    actionCue.state = "resync_needed"
-                    actionCue.stateEnteredAt = now
+                    local reason = isRed and "delta:OH_first"
+                        or (isSameTime and "delta:same_time")
+                        or (isYellow and "delta:drift")
+                        or "delta:unspecified"
+                    EnterResyncNeeded(now, reason)
                 end
 
             elseif actionCue.state == "resync_needed" then
@@ -764,8 +1107,7 @@ local function OnUpdate(self, elapsed)
                 elseif now >= actionCue.cooldownEnd
                        or actionCue.cooldownSwings >= 2 then
                     -- Time or swing-count based exit
-                    actionCue.state = "resync_needed"
-                    actionCue.stateEnteredAt = now
+                    EnterResyncNeeded(now, "cooldown:exit")
                 end
             end
 
@@ -833,6 +1175,11 @@ local function OnEvent(self, event, ...)
         local timestamp, subevent, _, sourceGUID = CombatLogGetCurrentEventInfo()
         if sourceGUID ~= UnitGUID("player") then return end
 
+        if subevent == "SPELL_EXTRA_ATTACKS" then
+            swingState.extraAttacksFlag = true
+            return
+        end
+
         if subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED"
         or subevent == "SWING_MISSED" then
             local now = GetTime()
@@ -842,53 +1189,177 @@ local function OnEvent(self, event, ...)
             if swingState.ohSpeed == 0 or swingState.ohSpeed == nil then return end
 
             if subevent == "SWING_MISSED" then
-                local _, _, _, _, _, _, _, _, _, _, _, missType, isOffHand = CombatLogGetCurrentEventInfo()
-                local hand = (isOffHand and "oh") or "mh"
+                -- Parry/dodge/miss all consume the swing and reset that hand's timer; we record them like hits.
+                -- SWING has no prefix: suffix starts at 9 (8 base) or 12 (11 base). Support both.
+                local ev = { CombatLogGetCurrentEventInfo() }
+                SwingDebugDumpIndexedArgs("SWING_MISSED", ev)
+                local p9, p10, p12, p13 = ev[9], ev[10], ev[12], ev[13]
+                local missType = (type(p12) == "string") and p12 or (type(p9) == "string") and p9
+                local isOffHand = FirstBoolean(p13, p10)
+                local hand = ResolveHandFromIsOffHandFlag(isOffHand)
+                local nilIsOffHand = false
+                local decision = "cleu:isOffHand"
+                if hand == nil then
+                    nilIsOffHand = true
+                    hand = AttributeSwing(now)
+                    decision = "heuristic:AttributeSwing"
+                    SwingDebugLog("SWING_MISSED isOffHand=nil args (p9=" .. tostring(p9) .. " p10=" .. tostring(p10) .. " p12=" .. tostring(p12) .. " p13=" .. tostring(p13) .. ") decision=" .. string.upper(hand) .. " (boolean-only trust)")
+                end
+                BumpSwingDebugCounters(hand, nilIsOffHand)
+                SwingDebugLogEventTrace("SWING_MISSED", missType, isOffHand, hand, now, decision)
                 local handLabel = (hand == "mh") and "Right (MH)" or "Left (OH)"
                 SwingDebugLog(handLabel .. " " .. (missType and tostring(missType):lower() or "miss"))
+                if hand == "mh" then
+                    swingState.extraAttacksFlag = false
+                end
                 if swingState.pendingFirstSwingTime > 0 then
                     swingState.pendingFirstSwingTime = 0
                     swingState.firstSwing = false
                 end
                 RecordSwing(hand, now)
-            else
-                -- SWING_DAMAGE / SWING_DAMAGE_LANDED: no hand in API
-                if swingState.pendingFirstSwingTime > 0 then
-                    AttributeFirstTwoSwings(now)
-                elseif swingState.firstSwing then
-                    swingState.pendingFirstSwingTime = now
-                    -- Tentatively show left (OH) bar so first swing has a visible bar; AttributeFirstTwoSwings will correct on second swing
-                    swingState.ohLast = now
-                    swingState.ohExpected = now + swingState.ohSpeed
-                    swingState.lastSwing = now
-                    swingState.active = true
-                    ActivateFrame()
+                SwingDebugLogVisualState(now)
+            elseif subevent == "SWING_DAMAGE" then
+                -- Only SWING_DAMAGE (ignore SWING_DAMAGE_LANDED to avoid double processing).
+                -- Try isOffHand from combat log (TBC index 21 or 12/13), else use gap heuristic.
+                local raw21 = select(21, CombatLogGetCurrentEventInfo())
+                local raw13 = select(13, CombatLogGetCurrentEventInfo())
+                local raw12 = select(12, CombatLogGetCurrentEventInfo())
+                local isOffHand = FirstBoolean(raw21, raw13, raw12)
+                local hand = ResolveHandFromIsOffHandFlag(isOffHand)
+
+                if hand ~= nil then
+                    SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, hand, now, "cleu:isOffHand")
+                    if hand == "mh" and swingState.extraAttacksFlag then
+                        swingState.extraAttacksFlag = false
+                        SwingDebugLog("Right (MH) extra attack (skipped)")
+                        SwingDebugLogVisualState(now)
+                    else
+                        BumpSwingDebugCounters(hand, false)
+                        SwingDebugLog((hand == "mh" and "Right (MH)" or "Left (OH)") .. " hit")
+                        RecordSwing(hand, now)
+                        SwingDebugLogVisualState(now)
+                    end
                 else
-                    local hand = AttributeSwing(now)
-                    SwingDebugLog((hand == "mh" and "Right (MH)" or "Left (OH)") .. " hit")
-                    RecordSwing(hand, now)
+                    -- No valid isOffHand from combat log; use heuristic (first-swing / gap / earliest-expected).
+                    local chosenHand = nil
+                    local decision = "heuristic:unknown"
+                    if swingState.pendingFirstSwingTime > 0 then
+                        local gap = now - swingState.pendingFirstSwingTime
+                        local maxWindow = math.max(swingState.mhSpeed, swingState.ohSpeed, 1)
+                        local halfWindow = maxWindow * 0.5
+                        chosenHand = (gap < halfWindow) and "mh" or "oh"
+                        decision = string.format("heuristic:first_two gap=%.2f halfWindow=%.2f", gap, halfWindow)
+                        SwingDebugLog("SWING_DAMAGE isOffHand=nil args (p12=" .. tostring(raw12) .. " p13=" .. tostring(raw13) .. " p21=" .. tostring(raw21) .. ") decision=" .. string.upper(chosenHand) .. " (pending first swing)")
+                        BumpSwingDebugCounters(chosenHand, false)
+                        SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, chosenHand, now, decision)
+                        AttributeFirstTwoSwings(now)
+                        SwingDebugLogVisualState(now)
+                    elseif swingState.firstSwing and (swingState.ohLast > 0 or swingState.mhLast > 0) then
+                        -- One hand already set from SWING_MISSED; this damage is the second swing.
+                        swingState.pendingFirstSwingTime = (swingState.ohLast > 0) and swingState.ohLast or swingState.mhLast
+                        local gap = now - swingState.pendingFirstSwingTime
+                        local maxWindow = math.max(swingState.mhSpeed, swingState.ohSpeed, 1)
+                        local halfWindow = maxWindow * 0.5
+                        chosenHand = (gap < halfWindow) and "mh" or "oh"
+                        decision = string.format("heuristic:second_after_miss gap=%.2f halfWindow=%.2f", gap, halfWindow)
+                        SwingDebugLog("SWING_DAMAGE isOffHand=nil args (p12=" .. tostring(raw12) .. " p13=" .. tostring(raw13) .. " p21=" .. tostring(raw21) .. ") decision=" .. string.upper(chosenHand) .. " (after missed-first)")
+                        BumpSwingDebugCounters(chosenHand, false)
+                        SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, chosenHand, now, decision)
+                        AttributeFirstTwoSwings(now)
+                        SwingDebugLogVisualState(now)
+                    elseif swingState.firstSwing then
+                        chosenHand = "oh"
+                        decision = "heuristic:first_swing_tentative_oh"
+                        SwingDebugLog("SWING_DAMAGE isOffHand=nil args (p12=" .. tostring(raw12) .. " p13=" .. tostring(raw13) .. " p21=" .. tostring(raw21) .. ") decision=OH (tentative first swing)")
+                        BumpSwingDebugCounters(chosenHand, false)
+                        SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, chosenHand, now, decision)
+                        RefreshWeaponSpeeds()
+                        swingState.ohSpeedAtStart = swingState.ohSpeed
+                        swingState.pendingFirstSwingTime = now
+                        -- Tentatively show left (OH) bar so first swing has a visible bar; AttributeFirstTwoSwings will correct on second swing.
+                        swingState.ohLast = now
+                        swingState.ohExpected = now + swingState.ohSpeedAtStart
+                        swingState.lastSwing = now
+                        swingState.active = true
+                        ActivateFrame()
+                        SwingDebugLog("First swing (tentative OH)")
+                        SwingDebugLogVisualState(now)
+                    else
+                        chosenHand = AttributeSwing(now)
+                        decision = "heuristic:AttributeSwing"
+                        SwingDebugLog("SWING_DAMAGE isOffHand=nil args (p12=" .. tostring(raw12) .. " p13=" .. tostring(raw13) .. " p21=" .. tostring(raw21) .. ") decision=" .. string.upper(chosenHand))
+                        SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, chosenHand, now, decision)
+                        if chosenHand == "mh" and swingState.extraAttacksFlag then
+                            swingState.extraAttacksFlag = false
+                            SwingDebugLog("Right (MH) extra attack (skipped)")
+                            SwingDebugLogVisualState(now)
+                        else
+                            BumpSwingDebugCounters(chosenHand, false)
+                            SwingDebugLog((chosenHand == "mh" and "Right (MH)" or "Left (OH)") .. " hit")
+                            RecordSwing(chosenHand, now)
+                            SwingDebugLogVisualState(now)
+                        end
+                    end
                 end
             end
 
         elseif subevent == "SPELL_CAST_SUCCESS" then
-            -- Stormstrike resets MH swing timer
+            -- Stormstrike does not reset white-swing timers in TBC; log only.
             local spellId = select(12, CombatLogGetCurrentEventInfo())
             if spellId == STORMSTRIKE_ID then
                 local now = GetTime()
-                RefreshWeaponSpeeds()
-                swingState.mhLast = now
-                swingState.mhExpected = now + swingState.mhSpeed
-                swingState.lastSwing = now
-                swingState.active = true
-                actionCue.mhSwingAt = now  -- Stormstrike resets MH; safe window opens
-                ActivateFrame()
+                SwingDebugLog("Stormstrike hit (ignored for swing timers)")
+                SwingDebugLogVisualState(now)
             end
         end
 
     elseif event == "UNIT_ATTACK_SPEED" then
         local unit = ...
         if unit == "player" then
+            local oldMh, oldOh = swingState.mhSpeed, swingState.ohSpeed
             RefreshWeaponSpeeds()
+            if IsSwingDebugEnabled() then
+                SwingDebugLog(string.format(
+                    "UNIT_ATTACK_SPEED oldMH=%.2f newMH=%.2f oldOH=%.2f newOH=%.2f (applies next swing only)",
+                    oldMh or 0, swingState.mhSpeed or 0, oldOh or 0, swingState.ohSpeed or 0
+                ))
+            end
+        end
+
+    elseif event == "UNIT_SPELLCAST_START" then
+        local unit, castGUID, spellId = ...
+        if unit == "player" and spellId then
+            castState.lastCastStartSpellId = spellId
+            castState.lastCastStartTime = GetTime()
+        end
+
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        local unit, castGUID, spellId = ...
+        if unit == "player" and spellId and castState.lastCastStartSpellId == spellId then
+            local now = GetTime()
+            if (now - castState.lastCastStartTime) < 30 then
+                -- Non-instant cast just completed; game resets swing timer
+                RefreshWeaponSpeeds()
+                ResetOverdueTracking()
+                swingState.mhSpeedAtStart = swingState.mhSpeed or 0
+                swingState.ohSpeedAtStart = swingState.ohSpeed or 0
+                swingState.mhLast = now
+                swingState.mhExpected = now + swingState.mhSpeedAtStart
+                swingState.ohLast = now
+                swingState.ohExpected = now + swingState.ohSpeedAtStart
+                swingState.lastSwing = now
+                swingState.active = true
+                swingState.pendingFirstSwingTime = 0
+                swingState.firstSwing = false
+                swingState.ohSeeded = false
+                swingState.mhSeeded = false
+                swingState.delta = 0
+                swingState.deltaSign = 1
+                ActivateFrame()
+                SwingDebugLog("Cast complete (full sync)")
+                SwingDebugLogVisualState(now)
+            end
+            castState.lastCastStartSpellId = nil
         end
 
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -896,11 +1367,25 @@ local function OnEvent(self, event, ...)
         -- immediately so the frame shows its default empty state.
         -- Keep active/lastSwing intact so the smart-hide timer can still
         -- fade out the frame naturally after the configured delay.
-        ClearStaggerVisuals()
+        ClearStaggerVisuals("leave_combat")
 
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Entered combat: refresh speeds
         RefreshWeaponSpeeds()
+
+    elseif event == "UNIT_INVENTORY_CHANGED" then
+        local unitId = ...
+        if unitId == "player" then
+            RefreshWeaponSpeeds()
+            if swingState.ohSpeed == 0 or swingState.ohSpeed == nil then
+                swingState.ohLast = 0
+                swingState.ohSpeedAtStart = 0
+                swingState.ohExpected = 0
+                swingState.delta = nil
+                swingState.deltaSign = 0
+                ClearOverdueTrackingForHand("oh")
+            end
+        end
 
     elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
         RefreshWeaponSpeeds()
@@ -910,8 +1395,11 @@ end
 
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 eventFrame:RegisterEvent("UNIT_ATTACK_SPEED")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_START")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:SetScript("OnEvent", OnEvent)
@@ -967,6 +1455,8 @@ function ShammyTime.StartStaggerBarDemo()
     local now = GetTime()
     swingState.mhSpeed = 2.6
     swingState.ohSpeed = 2.6
+    swingState.mhSpeedAtStart = 2.6
+    swingState.ohSpeedAtStart = 2.6
     swingState.mhLast = now
     swingState.ohLast = now + 0.2
     swingState.mhExpected = now + 2.6

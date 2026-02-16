@@ -1361,37 +1361,14 @@ function ShammyTime:SetupOptions()
                             args = {
                                 desc = {
                                     type = "description",
-                                    name = "|cffffd700Sync vs Stagger|r\n\n" ..
-                                           "|cffffffffSync|r = how close your MH and OH swings land. In TBC they are synced when both land within |cffffffff0.5 seconds|r. Flurry has a 0.5s window: two swings that land close together can share one charge instead of burning two.\n\n" ..
-                                           "|cffffffffStagger|r = which hand hits first. You want |cffffffffmain hand first|r, off hand shortly after (still within 0.5s). Windfury has a 3s shared ICD; the first swing to land after it ends has the best chance to proc, so you want that swing to be MH.\n\n" ..
-                                           "Goal: |cffffd700synced|r (within 0.5s) and |cffffd700staggered|r (MH lead). See the guide and the Enhance Shaman Suite WeakAura (wago.io) for a visual swing timer.\n\n" ..
-                                           "|cffffd700Why stagger? (Flurry, explained properly)|r\n\n" ..
-                                           "Flurry is not a timer. It's |cffffffffcharges|r.\n" ..
-                                           "When you crit, Flurry activates and gives you 3 charges (3 faster swings). A \"charge\" is spent when a weapon swing happens.\n\n" ..
-                                           "So during Flurry:\n" ..
-                                           "  - Every MH hit spends 1 charge\n" ..
-                                           "  - Every OH hit spends 1 charge\n" ..
-                                           "  - If they hit at the same time, they can spend 2 charges instantly\n\n" ..
-                                           "That's the problem.\n\n" ..
-                                           "|cffffffffIf your swings line up (no stagger):|r\n" ..
-                                           "You often get moments like this:\n" ..
-                                           "  - Flurry procs -> you have 3 charges\n" ..
-                                           "  - MH and OH swing at the same time -> 2 charges gone immediately\n" ..
-                                           "  - Next swing happens -> last charge is spent\n" ..
-                                           "Result: Flurry feels like it \"disappears\" fast, and you get less time benefiting from the haste.\n\n" ..
-                                           "|cffffffffIf your swings are slightly offset (staggered):|r\n" ..
-                                           "Instead of spending charges in a burst, you spend them like:\n" ..
-                                           "  - MH swing (1 charge)\n" ..
-                                           "  - ~0.2-0.4s later OH swing (1 charge)\n" ..
-                                           "  - Next MH swing (1 charge)\n" ..
-                                           "Now you get more real seconds of Flurry haste before it runs out, because you didn't dump multiple charges in one instant.\n\n" ..
-                                           "|cffffd700The key idea:|r Stagger doesn't give you more than 3 charges - it makes those 3 charges last longer in real time, which usually means more of your swings happen while you're hasted.\n\n" ..
-                                           "|cffffd700--- How to read this bar ---|r\n\n" ..
-                                           "|cffffd700Gold|r - Good stagger. MH hit first, and OH followed within 0.5s (sync window).\n" ..
-                                           "|cffffff00Yellow|r - Too far apart. You're drifting out of sync (> 0.5s).\n" ..
-                                           "|cffff4c4cRed|r - Wrong order. OH hit before MH (reverse stagger).\n\n" ..
-                                           "When both swings land at the same time (0.00s), the bar is not gold; tap once at MH 50% to create a small MH lead (per guide).\n\n" ..
-                                           "The number (e.g. |cffffd7000.30s|r) is the exact time gap between your last MH and OH hits. Try to keep it |cffffd700Gold|r as much as possible, especially during Flurry.\n",
+                                    name = "|cffffd700Sync vs Stagger|r — Goal: MH first, OH within 0.5s. Bar: |cffffd700Gold|r = good | |cffffff00Yellow|r = drifting | |cffff4c4cRed|r = OH first.\n\n" ..
+                                           "|cffffd700When to resync|r\n\n" ..
+                                           "|cffffffffOH hitting first (wrong order)|r\n" ..
+                                           "Wait until OH is between 50%-60% of its swing. Press the macro once. Usually enough to flip priority.\n\n" ..
+                                           "|cffffffffBoth hands hit at same time (synced but not staggered)|r\n" ..
+                                           "Wait until OH is between 50%-60% of its swing, then press once. Creates a small MH lead. Do not press again.\n\n" ..
+                                           "|cffffffffMH first but OH not in window (drifting)|r\n" ..
+                                           "Wait until OH is between 50%-60% of its swing. Press the macro repeatedly while OH is in that window; stop as soon as OH lines up behind MH.\n",
                                     order = 1,
                                     width = "full",
                                 },
@@ -1504,8 +1481,9 @@ function ShammyTime:SetupOptions()
                         helperDesc = {
                             type = "description",
                             name = "A short advice message that appears based on your stagger state:\n" ..
-                                   "  |cffff4c4c\"Resync swings!\"|r - OH hit before MH. Use a resync macro to reset your swing timers.\n" ..
-                                   "  |cffffff00\"Drifting - resync soon\"|r - MH is first but the gap is too wide. Swings are losing sync.\n" ..
+                                   "  |cffff4c4c\"Wait OH 50-60 - click once\"|r - OH hit before MH.\n" ..
+                                   "  |cffffff00\"Wait OH 50-60 - click once\"|r - same-time (0.00), synced but not staggered.\n" ..
+                                   "  |cffffff00\"Wait OH 50-60 - spam to align\"|r - MH first but gap is too wide (drifting).\n" ..
                                    "  When stagger is |cffffd700gold|r (good), no message is shown.\n",
                             order = 5.55,
                             width = "full",
@@ -1556,9 +1534,11 @@ function ShammyTime:SetupOptions()
                         },
                         actionCueDesc = {
                             type = "description",
-                            name = "When |cffff4c4cRed|r (OH first): when the MH bar is in 60%–85%, |cff33ff33Click once!|r. " ..
-                                   "When |cffffff00Yellow|r (drifting): when the OH bar is in 60%–85%, |cff33ff33Spam to align!|r. " ..
-                                   "Only these prompts are shown; no wait or observe text.\n",
+                            name = "Tap timing is fixed: use the macro only when the |cffffff00OH bar is between 50%-60%|r.\n" ..
+                                   "When |cffff4c4cRed|r (OH first): |cff33ff33Click once!|r\n" ..
+                                   "When |cffffff00Same-time|r (0.00): |cff33ff33Click once to stagger!|r\n" ..
+                                   "When |cffffff00Yellow|r (drifting): |cff33ff33Spam to align!|r while OH stays in 50%-60%.\n" ..
+                                   "The helper also shows wait/observe states to prevent mistimed presses.\n",
                             order = 5.83,
                             width = "full",
                         },
@@ -1593,20 +1573,15 @@ function ShammyTime:SetupOptions()
                             set = function(_, v) setFlatDB("staggerActionCueYellow", v) end,
                         },
                         staggerClickZoneWidth = {
-                            type = "range",
-                            name = "Click Zone Width",
-                            desc = "Width of the safe window past 60% (zone starts at 60% to avoid tapping too early). " ..
-                                   "0.25 = zone 60%–85%. Wider = longer window to tap.",
-                            min = 0.05, max = 0.35, step = 0.05,
+                            type = "description",
+                            name = "Tap window is fixed to OH 50%-60% (recommended and enforced).",
                             order = 5.86,
-                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
-                            get = function() return getFlatDB("staggerClickZoneWidth", 0.25) end,
-                            set = function(_, v) setFlatDB("staggerClickZoneWidth", v) end,
+                            width = "full",
                         },
                         staggerCooldownDuration = {
                             type = "range",
                             name = "Observe Duration (seconds)",
-                            desc = "After the safe window, how long to show \"Wait...\" before the next resync prompt. Also ends early after 2 swing events.",
+                            desc = "After the 50%-60% tap window closes, how long to show \"Observe...\" before the next resync prompt. Also ends early after 2 swing events.",
                             min = 0.5, max = 5.0, step = 0.5,
                             order = 5.87,
                             disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,

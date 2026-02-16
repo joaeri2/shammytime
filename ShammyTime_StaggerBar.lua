@@ -1,6 +1,6 @@
 -- ShammyTime_StaggerBar.lua
 -- Dual-wield stagger visual: two swing timer bars (MH on top, OH below) with
--- dynamic color coding (white / yellow / red) based on stagger quality, a delta
+-- dynamic color coding (gold / yellow / red) based on stagger quality, a delta
 -- readout, and activity-based smart hide.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
@@ -20,21 +20,23 @@ local CROP_BOTTOM      = 0.65         -- skip bottom 35 %
 local FRAME_H          = math.floor(FRAME_W * (CROP_BOTTOM - CROP_TOP) + 0.5)
 
 -- Stagger quality thresholds (per enhanceshaman.com: 0.5 s sync window)
-local GOOD_THRESHOLD       = 0.5       -- MH first, delta <= 0.5 s  → white
-local SAME_TIME_THRESHOLD  = 0.01     -- delta < 0.01 = same time (0.00), not white; 0.05 is white
+local GOOD_THRESHOLD       = 0.5       -- MH first, delta <= 0.5 s  → gold (when not same-time)
+local SAME_TIME_THRESHOLD  = 0.01      -- delta < 0.01 = same time (0.00), not gold; 0.05 is gold
 local OVERDUE_GRACE        = 0.45      -- tolerate normal event jitter before overdue/resync
 local OVERDUE_CONFIRM_TIME = 0.08      -- require brief persistence to avoid single-frame false positives
 -- MH first, delta > 0.5 s  → yellow (drifting)
 -- OH first (negative delta)  → red (reversed)
 
 -- Colors: { r, g, b }
+local COLOR_GOLD   = { 1.00, 0.84, 0.00 }
 local COLOR_WHITE   = { 1.00, 1.00, 1.00 }
 local COLOR_YELLOW = { 1.00, 1.00, 0.00 }
 local COLOR_RED    = { 1.00, 0.30, 0.30 }
+local COLOR_DELTA  = { 1.00, 0.82, 0.00 }  -- fixed WoW-like yellow for delta readout
 
 -- Action cue colors
 local COLOR_CUE_CLICK = { 0.20, 1.00, 0.20 }   -- bright green  "CLICK NOW!"
-local COLOR_CUE_READY = { 1.00, 0.60, 0.30 }   -- orange        "Click after MH hit"
+local COLOR_CUE_READY = { 1.00, 0.60, 0.30 }   -- orange        "Wait for OH 50-60"
 local COLOR_CUE_WAIT  = { 0.55, 0.55, 0.55 }   -- gray          "Wait..."
 
 -- Stormstrike spell ID (logging only; does NOT affect swing timers)
@@ -281,6 +283,15 @@ local function GetDB()
 end
 
 --- Return the stagger color based on current delta.
+local function IsPerfectStagger()
+    local d = swingState.delta
+    return d ~= nil
+       and swingState.deltaSign > 0
+       and d >= SAME_TIME_THRESHOLD
+       and d <= GOOD_THRESHOLD
+end
+
+--- Return the stagger color for delta/helper readouts.
 local function GetStaggerColor()
     local d = swingState.delta
     if not d then return COLOR_WHITE end
@@ -290,29 +301,22 @@ local function GetStaggerColor()
         return COLOR_YELLOW  -- same time (0.00), synced but not staggered
     elseif d > GOOD_THRESHOLD then
         return COLOR_YELLOW  -- MH first but drifting
+    elseif IsPerfectStagger() then
+        return COLOR_GOLD    -- MH first, in-window lead (target state)
     else
-        return COLOR_WHITE    -- MH first, small lead (e.g. 0.05–0.5 s)
+        return COLOR_WHITE
     end
+end
+
+--- Return swing bar fill color (gold only for perfect stagger, otherwise white).
+local function GetSwingBarColor()
+    return IsPerfectStagger() and COLOR_GOLD or COLOR_WHITE
 end
 
 --- Return helper text and color based on current stagger state.
 --- Returns (text, {r,g,b}) or ("", nil) when no advice is needed.
 local function GetHelperText()
-    local d = swingState.delta
-    if not d then return "", nil end
-    if swingState.deltaSign < 0 then
-        -- Red: OH hit before MH — player needs to reset swing timers
-        return "Resync swings!", COLOR_RED
-    elseif d < SAME_TIME_THRESHOLD then
-        -- Same time: synced but not staggered — one tap at MH 50%
-        return "Click once to stagger!", COLOR_YELLOW
-    elseif d > GOOD_THRESHOLD then
-        -- Yellow: drifting apart — swings are getting out of sync
-        return "Drifting — resync soon", COLOR_YELLOW
-    else
-        -- Gold: good stagger, no action needed
-        return "", nil
-    end
+    return "", nil
 end
 
 --- Refresh weapon speeds from UnitAttackSpeed.
@@ -546,7 +550,9 @@ local function ResetSwingState()
     swingState.active = false
 end
 
---- Simulate the resync macro: set OH bar to 50% (OH held back to midpoint in-game).
+--- Simulate the resync macro: only applies once OH has passed midpoint.
+--- If OH progress is below 50%, macro does nothing (matches in-game behavior).
+--- If OH progress is >= 50%, pull OH back to 50%.
 --- Real OH swing events from the combat log remain the master and overwrite this on next swing.
 --- Only runs when the player is in combat; out of combat the macro does nothing to the bar.
 local function SimulateResyncMacro()
@@ -554,6 +560,20 @@ local function SimulateResyncMacro()
     RefreshWeaponSpeeds()
     if swingState.ohSpeed <= 0 then return end
     local now = GetTime()
+
+    local ohCycleSpeed = GetHandCycleSpeed("oh")
+    if swingState.ohLast <= 0 or ohCycleSpeed <= 0 then
+        SwingDebugLog("Resync macro ignored (OH progress unknown)")
+        return
+    end
+
+    local ohProgress = math.max(0, math.min(1, (now - swingState.ohLast) / ohCycleSpeed))
+    if ohProgress < 0.5 then
+        SwingDebugLog(string.format("Resync macro ignored (OH %.0f%% < 50%%)", ohProgress * 100))
+        SwingDebugLogVisualState(now)
+        return
+    end
+
     swingState.ohSpeedAtStart = swingState.ohSpeed
     swingState.ohLast = now - 0.5 * swingState.ohSpeedAtStart
     swingState.ohExpected = now + 0.5 * swingState.ohSpeedAtStart
@@ -616,20 +636,20 @@ local function CreateStaggerBarFrame()
         SaveStaggerBarPosition(self)
     end)
 
-    -- Tooltip on hover: sync and stagger resync guide
+    -- Tooltip on hover: when to resync (simplified guide)
     f:SetScript("OnEnter", function(self)
         if GameTooltip then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:AddLine("Sync and Stagger — When to Resync", 1, 0.82, 0, true)
+            GameTooltip:AddLine("When to Resync", 1, 0.82, 0, true)
             GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("1. Main hand is first, but the stagger is wrong", 1, 1, 1, true)
-            GameTooltip:AddLine("If your main hand is already hitting first, but the off hand is not following in the correct window, wait until the off hand passes the halfway point of its swing. Once it has passed halfway, press the macro repeatedly. Each press holds the off hand back while the main hand continues forward. Keep pressing until the off hand snaps into the correct follow position behind the main hand. Stop pressing immediately once it lines up correctly and let your swings continue.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("OH hitting first (wrong order)", 1, 0.82, 0, true)
+            GameTooltip:AddLine("Wait until OH is between 50%-60% of its swing, then press once. Usually enough to flip priority.", 0.9, 0.9, 0.9, true)
             GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("2. Off hand is hitting first", 1, 1, 1, true)
-            GameTooltip:AddLine("If the off hand is landing before the main hand, wait for the main hand to pass the halfway point of its swing. Press the macro once. This single press is usually enough to flip priority. Do not keep pressing unless you are still behind.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Both hands hit at same time (synced but not staggered)", 1, 0.82, 0, true)
+            GameTooltip:AddLine("Wait until OH is between 50%-60%, then press once. Creates a small MH lead. Do not press again.", 0.9, 0.9, 0.9, true)
             GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("3. Both hands hit at the same time", 1, 1, 1, true)
-            GameTooltip:AddLine("If both hands land together, you are synced but not staggered. Watch the main hand swing. When the main hand just passes the halfway point, press the macro one time. This creates a small main hand lead. Do not press again.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("MH first but OH not in window (drifting)", 1, 0.82, 0, true)
+            GameTooltip:AddLine("Wait until OH is between 50%-60%. Press repeatedly while OH stays in that window; stop as soon as OH lines up behind MH.", 0.9, 0.9, 0.9, true)
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine("Source: " .. TOOLTIP_SOURCE, 0.5, 0.7, 1, true)
             GameTooltip:Show()
@@ -989,13 +1009,12 @@ local function OnUpdate(self, elapsed)
     f.mhBar:SetWidth(mhW)
     f.ohBar:SetWidth(ohW)
 
-    -- Bars always white so fill state is easy to read (stagger quality still drives delta/helper text color)
+    -- Bars are gold only for perfect stagger; otherwise white.
     local p = GetDB()
     local barAlpha = (p and p.staggerSwingBarAlpha) or 1
-    f.mhBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], barAlpha)
-    f.ohBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], barAlpha)
-    local c = GetStaggerColor()
-
+    local barColor = GetSwingBarColor()
+    f.mhBar:SetColorTexture(barColor[1], barColor[2], barColor[3], barAlpha)
+    f.ohBar:SetColorTexture(barColor[1], barColor[2], barColor[3], barAlpha)
     -- Zone markers (50%, 60%) and OH cursor (moving line with offhand progress)
     if f.mhZone50 and f.ohCursorTex then
     local showZones = not p or p.staggerShowZoneMarkers ~= false
@@ -1032,7 +1051,7 @@ local function OnUpdate(self, elapsed)
     -- Delta text
     if swingState.delta then
         f.deltaText:SetText(string.format("%.2fs", swingState.delta))
-        f.deltaText:SetTextColor(c[1], c[2], c[3], 1)
+        f.deltaText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
     else
         f.deltaText:SetText("")
     end
@@ -1042,32 +1061,23 @@ local function OnUpdate(self, elapsed)
         local cueEnabled = p and p.staggerActionCueEnabled ~= false
 
         if cueEnabled and swingState.delta then
-            -- Determine whether a resync is recommended
-            local needsResync = false
-            if swingState.deltaSign < 0 then
-                needsResync = true   -- reversed (red)
-            elseif swingState.delta < SAME_TIME_THRESHOLD then
-                needsResync = true   -- same time (0.00), always prompt
-            elseif swingState.delta > GOOD_THRESHOLD then
-                needsResync = true   -- drifting: outside 0.5s window, always prompt per guide
-            end
-
+            local showYellowCue = p.staggerActionCueYellow ~= false
             local isRed      = (swingState.deltaSign < 0)
             local isSameTime = (swingState.deltaSign >= 0) and (swingState.delta < SAME_TIME_THRESHOLD)
-            local isYellow  = (not isRed) and (not isSameTime) and needsResync  -- drifting only
+            local isYellow   = (not isRed) and (not isSameTime) and (swingState.delta > GOOD_THRESHOLD)
+            local needsResync = isRed or isSameTime or (showYellowCue and isYellow)
 
-            -- Zone = 60%–85% so players don't tap too early (guide says past 50%; we use 60% min to reduce early taps).
-            local zoneWidth  = (p.staggerClickZoneWidth) or 0.25   -- width past 60%: 0.25 = zone 60%–85%
-            local zoneLo     = 0.6                    -- minimum 60% (avoid triggering too early)
-            local zoneHi     = math.min(0.95, 0.6 + zoneWidth)   -- e.g. 85% with default 0.25
+            -- Resync tap window: OH must be between 50% and 60%.
+            -- This is where the in-game macro reliably shifts the offhand timer.
+            local zoneLo     = 0.50
+            local zoneHi     = 0.60
             local cdTime     = (p.staggerCooldownDuration) or 2.0
-            -- Red/same-time: wait for MAIN HAND to pass 60% then tap once. Yellow: wait for OFF HAND 60%.
-            local inZoneMh   = mhProgress >= zoneLo and mhProgress <= zoneHi
+            -- All scenarios use OH 50-60 for macro timing.
             local inZoneOh   = ohProgress >= zoneLo and ohProgress <= zoneHi
-            local inZone    = ((isRed or isSameTime) and inZoneMh) or (isYellow and inZoneOh)
+            local inZone     = needsResync and inZoneOh
 
             ----------------------------------------------------------------
-            -- State machine: safe moment = bar in 60%–85% (MH or OH per scenario)
+            -- State machine: safe moment = OH in 50%-60% window.
             ----------------------------------------------------------------
             if actionCue.state == "idle" then
                 if needsResync then
@@ -1092,7 +1102,7 @@ local function OnUpdate(self, elapsed)
                     actionCue.state = "idle"
                     actionCue.stateEnteredAt = now
                 elseif not inZone then
-                    -- Bar left the zone (past 85% or reset to 0 from new swing)
+                    -- Bar left the 50-60% window (or reset to 0 from new swing)
                     actionCue.state = "cooldown"
                     actionCue.cooldownEnd = now + cdTime
                     actionCue.cooldownSwings = 0
@@ -1112,55 +1122,19 @@ local function OnUpdate(self, elapsed)
             end
 
             ----------------------------------------------------------------
-            -- Display: only show "Click once!" when MH is actually in zone (red/same-time)
+            -- Display text by cue state
             ----------------------------------------------------------------
             if actionCue.state == "click_now" then
-                -- Red (OH first): must have MH in 60%-85% — wait for main hand, then tap once
-                if isRed then
-                    if inZoneMh then
-                        f.helperText:SetText("Click once!")
-                    else
-                        f.helperText:SetText("")
-                    end
-                elseif isSameTime then
-                    if inZoneMh then
-                        f.helperText:SetText("Click once to stagger!")
-                    else
-                        f.helperText:SetText("")
-                    end
-                else
-                    -- Yellow (drifting): OH in zone = spam to align
-                    if inZoneOh then
-                        f.helperText:SetText("Spam to align!")
-                    else
-                        f.helperText:SetText("")
-                    end
-                end
-                if f.helperText:GetText() ~= "" then
-                    f.helperText:SetTextColor(
-                        COLOR_CUE_CLICK[1], COLOR_CUE_CLICK[2], COLOR_CUE_CLICK[3], 1)
-                end
-            elseif actionCue.state == "resync_needed" then
-                -- Don't show wait text; only show something when in zone (click_now)
-                f.helperText:SetText("")
-            elseif actionCue.state == "cooldown" then
-                -- Don't show "Observe..."; nothing to do
-                f.helperText:SetText("")
+                f.helperText:SetText("Click!")
+                f.helperText:SetTextColor(
+                    COLOR_CUE_CLICK[1], COLOR_CUE_CLICK[2], COLOR_CUE_CLICK[3], 1)
             else
-                -- idle: show basic helper so drifting (e.g. > 0.5s) still has guidance
-                local helperStr, helperColor = GetHelperText()
-                f.helperText:SetText(helperStr or "")
-                if helperColor then
-                    f.helperText:SetTextColor(helperColor[1], helperColor[2], helperColor[3], 1)
-                end
+                -- Keep helper clear outside the actual click window.
+                f.helperText:SetText("")
             end
         else
-            -- Action cue disabled or no swing data: basic helper text
-            local helperStr, helperColor = GetHelperText()
-            f.helperText:SetText(helperStr)
-            if helperColor then
-                f.helperText:SetTextColor(helperColor[1], helperColor[2], helperColor[3], 1)
-            end
+            -- Action cue disabled or no swing data: keep helper clear.
+            f.helperText:SetText("")
         end
     end
 end

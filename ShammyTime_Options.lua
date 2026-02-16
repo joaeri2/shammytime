@@ -42,6 +42,67 @@ local function getModule(name)
     return p and p.modules and p.modules[name]
 end
 
+-- Normalize user-facing scale values so "current default visual size" = 1.0
+-- for specific circular indicators that historically used different raw scales.
+local MODULE_SCALE_NORMALIZATION = {
+    shieldIndicator = { base = 0.4, minRaw = 0.05, maxRaw = 3 },
+    shamanisticFocus = { base = 1.3, minRaw = 0.1, maxRaw = 3 },
+    windfuryIcd = { base = 1.1, minRaw = 0.1, maxRaw = 3 },
+}
+local MODULE_SCALE_STEP = 0.05
+
+local function round2(v)
+    return math.floor((v * 100) + 0.5) / 100
+end
+
+local function roundUpToStep(v, step)
+    return math.ceil((v / step) - 1e-9) * step
+end
+
+local function roundDownToStep(v, step)
+    return math.floor((v / step) + 1e-9) * step
+end
+
+local function getScaleRule(moduleName)
+    return moduleName and MODULE_SCALE_NORMALIZATION[moduleName] or nil
+end
+
+local function toDisplayScale(moduleName, rawScale)
+    local rule = getScaleRule(moduleName)
+    if not rule then return rawScale end
+    return rawScale / rule.base
+end
+
+local function toRawScale(moduleName, displayScale)
+    local rule = getScaleRule(moduleName)
+    if not rule then return displayScale end
+    return displayScale * rule.base
+end
+
+local function getScaleRawDefault(moduleName)
+    local rule = getScaleRule(moduleName)
+    if rule then return rule.base end
+    return 1
+end
+
+local function getScaleRawBounds(moduleName)
+    local rule = getScaleRule(moduleName)
+    if rule then
+        return rule.minRaw, rule.maxRaw
+    end
+    return 0.1, 3
+end
+
+local function getScaleDisplayBounds(moduleName)
+    local minRaw, maxRaw = getScaleRawBounds(moduleName)
+    local minDisplay = toDisplayScale(moduleName, minRaw)
+    local maxDisplay = toDisplayScale(moduleName, maxRaw)
+    minDisplay = round2(roundUpToStep(minDisplay, MODULE_SCALE_STEP))
+    maxDisplay = round2(roundDownToStep(maxDisplay, MODULE_SCALE_STEP))
+    if maxDisplay < minDisplay then maxDisplay = minDisplay end
+    return minDisplay, maxDisplay
+end
+
 -- Resolve module name from AceConfig info (arg, option.arg, or path when in Modules group)
 local function getModuleKeyFromInfo(info)
     if info.arg and info.arg.module then return info.arg.module end
@@ -57,7 +118,14 @@ local function getModuleOption(info, key)
     local m = getModule(modKey)
     if not m then return nil end
     if key == "enabled" then return m.enabled ~= false end
-    if key == "scale" then return m.scale or 1 end
+    if key == "scale" then
+        local rawScale = (type(m.scale) == "number") and m.scale or getScaleRawDefault(modKey)
+        local displayScale = toDisplayScale(modKey, rawScale)
+        local minDisplay, maxDisplay = getScaleDisplayBounds(modKey)
+        if displayScale < minDisplay then displayScale = minDisplay end
+        if displayScale > maxDisplay then displayScale = maxDisplay end
+        return round2(displayScale)
+    end
     if key == "alpha" then return m.alpha or 1 end
     if key == "fadeEnabled" then return m.fade and m.fade.enabled or false end
     if key == "inactiveAlpha" then return m.fade and m.fade.inactiveAlpha or 0 end
@@ -67,6 +135,7 @@ local function getModuleOption(info, key)
     if key == "noTotemsPlaced" then return m.fade and m.fade.conditions and m.fade.conditions.noTotemsPlaced or false end
     if key == "outOfRange" then return m.fade and m.fade.conditions and m.fade.conditions.outOfRange or false end
     if key == "fadeInOnTarget" then return m.fade and m.fade.conditions and m.fade.conditions.fadeInOnTarget or false end
+    if key == "hideWhenActive" then return m.fade and m.fade.conditions and m.fade.conditions.hideWhenActive or false end
     return nil
 end
 
@@ -75,7 +144,14 @@ local function setModuleOption(info, val, key)
     local m = getModule(modKey)
     if not m then return end
     if key == "enabled" then m.enabled = val end
-    if key == "scale" then m.scale = val end
+    if key == "scale" then
+        local rawMin, rawMax = getScaleRawBounds(modKey)
+        local displayScale = round2(tonumber(val) or 1)
+        local rawScale = toRawScale(modKey, displayScale)
+        if rawScale < rawMin then rawScale = rawMin end
+        if rawScale > rawMax then rawScale = rawMax end
+        m.scale = rawScale
+    end
     if key == "alpha" then m.alpha = val end
     if key == "fadeEnabled" then m.fade = m.fade or {}; m.fade.enabled = val end
     if key == "inactiveAlpha" then m.fade = m.fade or {}; m.fade.inactiveAlpha = val end
@@ -85,11 +161,12 @@ local function setModuleOption(info, val, key)
     if key == "noTotemsPlaced" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.noTotemsPlaced = val end
     if key == "outOfRange" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.outOfRange = val end
     if key == "fadeInOnTarget" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.fadeInOnTarget = val end
+    if key == "hideWhenActive" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.hideWhenActive = val end
     -- When any condition is enabled, turn on fade so the condition takes effect without requiring "Enable Fade" separately.
     -- When all conditions are off, turn off fade so the "Enable Fade" checkbox stays in sync.
-    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" then
+    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" or key == "hideWhenActive" then
         local c = m.fade and m.fade.conditions
-        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget) then
+        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget or c.hideWhenActive) then
             m.fade.enabled = true
         else
             if m.fade then m.fade.enabled = false end
@@ -255,7 +332,7 @@ local function BuildFullExportLines(useColorCodes)
     line("")
     sec("Totem bar")
     line("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
-    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 13))
+    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 10))
     line("")
     sec("Shamanistic Focus (position and scale)")
     if p.focusFrame then
@@ -269,18 +346,18 @@ local function BuildFullExportLines(useColorCodes)
     end
     line("")
     sec("Imbue bar (scale, layout, offsets, font)")
-    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.35))
+    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.85))
     line("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
     line("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
     line("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
     line("imbueBarIconSize = " .. tostring(p.imbueBarIconSize or "nil"))
-    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 28))
+    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 16))
     line("")
     sec("Shield indicator")
-    line("shieldScale = " .. tostring(p.shieldScale or 0.2))
+    line("shieldScale = " .. tostring(p.shieldScale or 0.4))
     line("fontShieldCount = " .. tostring(p.fontShieldCount or 86))
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
-    line("shieldCountY = " .. tostring(p.shieldCountY or 101))
+    line("shieldCountY = " .. tostring(p.shieldCountY or 127))
     line("")
     sec("Modules (per-element: enabled, scale, alpha, fade)")
     if p.modules then
@@ -307,6 +384,7 @@ local function BuildFullExportLines(useColorCodes)
                         line("modules." .. modName .. ".fade.conditions.noTotemsPlaced = " .. tostring(c.noTotemsPlaced or false))
                         line("modules." .. modName .. ".fade.conditions.outOfRange = " .. tostring(c.outOfRange or false))
                         line("modules." .. modName .. ".fade.conditions.fadeInOnTarget = " .. tostring(c.fadeInOnTarget or false))
+                        line("modules." .. modName .. ".fade.conditions.hideWhenActive = " .. tostring(c.hideWhenActive or false))
                     end
                 end
             end
@@ -394,6 +472,22 @@ local function ShowCopyPopup(title, text)
     copyFrame.editBox:HighlightText()
 end
 
+local STAGGER_GUIDE_URL = "https://www.enhanceshaman.com/pages/guide/sync_stagger"
+local STAGGER_RESYNC_MACRO = table.concat({
+    "/cleartarget",
+    "/targetlasttarget",
+    "/startattack",
+    "/st resync",
+}, "\n")
+
+local function CopyStaggerGuideLink()
+    ShowCopyPopup("ShammyTime - Sync/Stagger Guide Link", STAGGER_GUIDE_URL)
+end
+
+local function CopyStaggerMacro()
+    ShowCopyPopup("ShammyTime - ShammyTime Custom Resync Macro", STAGGER_RESYNC_MACRO)
+end
+
 local function ExportAllToClipboard()
     local header = { "ShammyTime - All Settings (100% coverage)", "Copy everything below; paste to developer or backup.", "" }
     local body = BuildFullExportLines(false)
@@ -409,6 +503,7 @@ _G.ShammyTime.CopyTextSettings = ExportAllToClipboard
 -- Module Options Builder (simplified)
 --------------------------------------------------------------------------------
 local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
+    local scaleMin, scaleMax = getScaleDisplayBounds(moduleName)
     local opts = {
         type = "group",
         name = displayName,
@@ -427,7 +522,9 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
             scale = {
                 type = "range",
                 name = "Scale",
-                min = 0.1, max = 3, step = 0.05,
+                min = scaleMin,
+                max = scaleMax,
+                step = 0.05,
                 order = 2,
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "scale") end,
@@ -691,7 +788,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             metricsDesc = {
                                 type = "description",
-                                name = "|cffccccccMIN|r — Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r — Highest total damage from one proc.\n|cffccccccAVG|r — Total Windfury damage ÷ number of procs.\n|cffccccccPROCS|r — How many Windfury procs so far this session.\n|cffccccccPROC%|r — Procs ÷ white swings (how often Windfury procced).\n|cffccccccCRIT%|r — Windfury hits that were crits ÷ all Windfury hits.\n",
+                                name = "|cffccccccMIN|r - Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r - Highest total damage from one proc.\n|cffccccccAVG|r - Total Windfury damage / number of procs.\n|cffccccccPROCS|r - How many Windfury procs so far this session.\n|cffccccccPROC%|r - Procs / white swings (how often Windfury procced).\n|cffccccccCRIT%|r - Windfury hits that were crits / all Windfury hits.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -719,7 +816,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             fadeDesc = {
                                 type = "description",
-                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n• |cffccccccOut of Combat|r — fade when you're not in combat.\n• |cffccccccNo Target|r — fade when you have no target.\n• |cffccccccNo Active Buff/Proc|r — e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n• |cffccccccNo Totems Placed|r — totem bar fades when you have no totems down.\n• |cffccccccFade In When Targeting Enemy|r — (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
+                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n- |cffccccccOut of Combat|r - fade when you're not in combat.\n- |cffccccccNo Target|r - fade when you have no target.\n- |cffccccccNo Active Buff/Proc|r - e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n- |cffccccccNo Totems Placed|r - totem bar fades when you have no totems down.\n- |cffccccccFade In When Targeting Enemy|r - (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -795,7 +892,7 @@ function ShammyTime:SetupOptions()
                     },
                     presetsDesc = {
                         type = "description",
-                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings — scale, position, and other options stay the same.\n",
+                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings - scale, position, and other options stay the same.\n",
                         order = 4.1,
                     },
                     presetAlwaysVisible = {
@@ -1014,19 +1111,65 @@ function ShammyTime:SetupOptions()
                         },
                         textHeader = {
                             type = "header",
-                            name = "Text Sizes",
+                            name = "Text",
                             order = 4.1,
                         },
                         fontTotemTimer = {
                             type = "range",
-                            name = "Timer Font",
+                            name = "Text Size",
                             min = 4, max = 20, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontTotemTimer", 13) end,
+                            get = function() return getFlatDB("fontTotemTimer", 10) end,
                             set = function(_, v)
                                 setFlatDB("fontTotemTimer", v)
                                 local st = _G.ShammyTime
                                 if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
+                            end,
+                        },
+                        totemModTextX = {
+                            type = "range",
+                            name = "Text X",
+                            desc = "Horizontal offset for totem timer text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.3,
+                            get = function()
+                                local p = getDB()
+                                if p and p.totemLayout and p.totemLayout.timerOffsetX ~= nil then
+                                    return p.totemLayout.timerOffsetX
+                                end
+                                return 0
+                            end,
+                            set = function(_, v)
+                                local p = getDB()
+                                if p then
+                                    p.totemLayout = p.totemLayout or {}
+                                    p.totemLayout.timerOffsetX = v
+                                end
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                            end,
+                        },
+                        totemModTextY = {
+                            type = "range",
+                            name = "Text Y",
+                            desc = "Vertical offset for totem timer text (negative = down).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.4,
+                            get = function()
+                                local p = getDB()
+                                if p and p.totemLayout and p.totemLayout.timerOffsetY ~= nil then
+                                    return p.totemLayout.timerOffsetY
+                                end
+                                return -2
+                            end,
+                            set = function(_, v)
+                                local p = getDB()
+                                if p then
+                                    p.totemLayout = p.totemLayout or {}
+                                    p.totemLayout.timerOffsetY = v
+                                end
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
                             end,
                         },
                         noTotemsFadeDelay = {
@@ -1072,19 +1215,45 @@ function ShammyTime:SetupOptions()
                         },
                         textHeader = {
                             type = "header",
-                            name = "Text Sizes",
+                            name = "Text",
                             order = 4.1,
                         },
                         fontImbueTimer = {
                             type = "range",
-                            name = "Timer Font",
+                            name = "Text Size",
                             min = 6, max = 64, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontImbueTimer", 28) end,
+                            get = function() return getFlatDB("fontImbueTimer", 16) end,
                             set = function(_, v)
                                 setFlatDB("fontImbueTimer", v)
                                 local st = _G.ShammyTime
                                 if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                            end,
+                        },
+                        imbueModTextX = {
+                            type = "range",
+                            name = "Text X",
+                            desc = "Horizontal offset for imbue timer text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("imbueTextX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("imbueTextX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                            end,
+                        },
+                        imbueModTextY = {
+                            type = "range",
+                            name = "Text Y",
+                            desc = "Vertical offset for imbue timer text (negative = down).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.4,
+                            get = function() return getFlatDB("imbueTextY", -20) end,
+                            set = function(_, v)
+                                setFlatDB("imbueTextY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                             end,
                         },
                         imbueFadeThreshold = {
@@ -1111,6 +1280,15 @@ function ShammyTime:SetupOptions()
                                     width = "full",
                                 },
                             },
+                        },
+                        hideWhenActive = {
+                            type = "toggle",
+                            name = "Hide When Active",
+                            desc = "Hide the shield indicator when Lightning Shield or Water Shield is active with at least 1 charge. The indicator will appear when the shield drops or expires, serving as a reminder to recast.",
+                            order = 16,
+                            arg = { module = "shieldIndicator" },
+                            get = function(info) return getModuleOption(info, "hideWhenActive") end,
+                            set = function(info, v) setModuleOption(info, v, "hideWhenActive") end,
                         },
                         textHeader = {
                             type = "header",
@@ -1142,7 +1320,7 @@ function ShammyTime:SetupOptions()
                                     type = "description",
                                     name = "Ever wondered how much your Windfury Totem actually contributes to your party's damage? " ..
                                            "This shows a live scrolling damage feed whenever you or your party members land bonus hits from " ..
-                                           "your totem — right above it, so you can feel the impact in real time.\n\n" ..
+                                           "your totem - right above it, so you can feel the impact in real time.\n\n" ..
                                            "When combat ends, a total is shown so you can see how much extra damage your totem brought to the fight.\n\n" ..
                                            "|cffaaaaaa" .. "Damage values are estimated based on combat log events." .. "|r\n",
                                     order = 1,
@@ -1268,6 +1446,299 @@ function ShammyTime:SetupOptions()
                             end,
                         },
                     }, true),  -- noFade: fade settings don't apply to the damage feed
+                    staggerBar = CreateModuleOptions("staggerBar", "Stagger Bar", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Quick Guide",
+                            order = 0,
+                            args = {
+                                infoTitle = {
+                                    type = "description",
+                                    name = "|cffffd700Sync and Stagger - Simple Setup|r\n" ..
+                                           "Good staggering increases DPS because Flurry charges are more often spent on two white hits instead of one, and your stronger main-hand gets more valuable Windfury proc opportunities than off-hand.",
+                                    order = 1,
+                                    width = "full",
+                                },
+                                infoHowItWorks = {
+                                    type = "description",
+                                    name = "Goal:\n" ..
+                                           "Gold = perfect stagger (MH first, OH lands within 0.5s).\n" ..
+                                           "White = not perfect (OH-first, same-time, or drifting).\n\n" ..
+                                           "When to press your macro:\n" ..
+                                           "Only press while OH is in |cffffff0050%-60%|r.\n" ..
+                                           "OH-first: press once.\n" ..
+                                           "Same-time (0.00): press once.\n" ..
+                                           "Drifting (MH first, gap too wide): press while OH stays in 50%-60%, then stop when it turns gold.\n\n" ..
+                                           "If OH is below 50%, pressing does nothing.",
+                                    order = 2,
+                                    width = "full",
+                                },
+                                infoMacro = {
+                                    type = "description",
+                                    name = "|cffffd700Custom ShammyTime Macro (bind this):|r\n" ..
+                                           "|cffffcc00/cleartarget|r\n" ..
+                                           "|cffffcc00/targetlasttarget|r\n" ..
+                                           "|cffffcc00/startattack|r\n" ..
+                                           "|cff33ff33/st resync|r\n\n" ..
+                                           "This macro is custom for this addon and makes stagger timing easier to learn with the bar.",
+                                    order = 3,
+                                    width = "full",
+                                },
+                                infoReference = {
+                                    type = "description",
+                                    name = "External guide (not my website):\n" ..
+                                           STAGGER_GUIDE_URL .. "\n" ..
+                                           "There are also useful YouTube videos covering sync/stagger.",
+                                    order = 4,
+                                    width = "full",
+                                },
+                                staggerGuideCopy = {
+                                    type = "execute",
+                                    name = "Copy Guide Link",
+                                    desc = "Open a copy box with the guide URL.",
+                                    order = 5,
+                                    width = "full",
+                                    func = CopyStaggerGuideLink,
+                                },
+                                staggerCopyMacro = {
+                                    type = "execute",
+                                    name = "Copy Custom ShammyTime Macro",
+                                    desc = "Open a copy box with the custom ShammyTime resync macro.",
+                                    order = 6,
+                                    width = "full",
+                                    func = CopyStaggerMacro,
+                                },
+                            },
+                        },
+                        settingsHeader = {
+                            type = "header",
+                            name = "Settings",
+                            order = 0.9,
+                        },
+                        barHeader = {
+                            type = "header",
+                            name = "Bar Dimensions",
+                            order = 4.0,
+                        },
+                        staggerBarWidth = {
+                            type = "range",
+                            name = "Bar Width",
+                            desc = "Length of each swing bar in pixels.",
+                            min = 50, max = 400, step = 5,
+                            order = 4.1,
+                            get = function() return getFlatDB("staggerBarWidth", 335) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarWidth", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerBarHeight = {
+                            type = "range",
+                            name = "Bar Height",
+                            desc = "Thickness of each swing bar in pixels.",
+                            min = 2, max = 20, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("staggerBarHeight", 15) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarHeight", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerBarGap = {
+                            type = "range",
+                            name = "Bar Gap",
+                            desc = "Vertical space between MH and OH bars.",
+                            min = 0, max = 20, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("staggerBarGap", 5) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarGap", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerSwingBarAlpha = {
+                            type = "range",
+                            name = "Bar Alpha",
+                            desc = "Transparency of the MH/OH swing bars. Lower values let the background texture show through.",
+                            min = 0, max = 1, step = 0.05,
+                            order = 4.4,
+                            get = function() return getFlatDB("staggerSwingBarAlpha", 0.8) end,
+                            set = function(_, v)
+                                setFlatDB("staggerSwingBarAlpha", v)
+                            end,
+                        },
+                        deltaHeader = {
+                            type = "header",
+                            name = "Delta Text",
+                            order = 5.0,
+                        },
+                        staggerDeltaFontSize = {
+                            type = "range",
+                            name = "Font Size",
+                            desc = "Size of the stagger delta readout.",
+                            min = 6, max = 48, step = 1,
+                            order = 5.1,
+                            get = function() return getFlatDB("staggerDeltaFontSize", 27) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaFontSize", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerDeltaX = {
+                            type = "range",
+                            name = "Text X Offset",
+                            desc = "Horizontal offset for the delta text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.2,
+                            get = function() return getFlatDB("staggerDeltaX", 46) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerDeltaY = {
+                            type = "range",
+                            name = "Text Y Offset",
+                            desc = "Vertical offset for the delta text (positive = up).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.3,
+                            get = function() return getFlatDB("staggerDeltaY", 12) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        helperHeader = {
+                            type = "header",
+                            name = "Helper Text",
+                            order = 5.5,
+                        },
+                        staggerHelperFontSize = {
+                            type = "range",
+                            name = "Font Size",
+                            desc = "Size of the helper advice text.",
+                            min = 6, max = 48, step = 1,
+                            order = 5.6,
+                            get = function() return getFlatDB("staggerHelperFontSize", 24) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperFontSize", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerHelperX = {
+                            type = "range",
+                            name = "Helper X Offset",
+                            desc = "Horizontal offset for the helper text (positive = right).",
+                            min = -200, max = 200, step = 1,
+                            order = 5.7,
+                            get = function() return getFlatDB("staggerHelperX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerHelperY = {
+                            type = "range",
+                            name = "Helper Y Offset",
+                            desc = "Vertical offset for the helper text (positive = up).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.8,
+                            get = function() return getFlatDB("staggerHelperY", -10) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        actionCueHeader = {
+                            type = "header",
+                            name = "Resync Action Cue Settings",
+                            order = 5.82,
+                        },
+                        staggerActionCueEnabled = {
+                            type = "toggle",
+                            name = "Enable Action Cue",
+                            desc = "Show timing-aware resync prompts instead of the basic helper text.",
+                            width = "full",
+                            order = 5.84,
+                            get = function() return getFlatDB("staggerActionCueEnabled", true) end,
+                            set = function(_, v) setFlatDB("staggerActionCueEnabled", v) end,
+                        },
+                        staggerActionCueYellow = {
+                            type = "toggle",
+                            name = "Also Show for Drifting",
+                            desc = "Show the resync action cue when MH is still first but the gap is too wide (>0.5s), not only when OH-first/same-time.",
+                            width = "full",
+                            order = 5.85,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerActionCueYellow", true) end,
+                            set = function(_, v) setFlatDB("staggerActionCueYellow", v) end,
+                        },
+                        staggerCooldownDuration = {
+                            type = "range",
+                            name = "Observe Duration (seconds)",
+                            desc = "After the 50%-60% tap window closes, how long to show \"Observe...\" before the next resync prompt. Also ends early after 2 swing events.",
+                            min = 0.5, max = 5.0, step = 0.5,
+                            order = 5.87,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerCooldownDuration", 2.0) end,
+                            set = function(_, v) setFlatDB("staggerCooldownDuration", v) end,
+                        },
+                        hideHeader = {
+                            type = "header",
+                            name = "Visibility",
+                            order = 6.0,
+                        },
+                        staggerBarAlwaysShow = {
+                            type = "toggle",
+                            name = "Always Show",
+                            desc = "Keep the stagger bar visible at all times (disables smart hide). When off, the bar only appears while swinging.",
+                            width = "full",
+                            order = 6.05,
+                            get = function() return getFlatDB("staggerBarAlwaysShow", false) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarAlwaysShow", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyElementVisibility then st.ApplyElementVisibility() end
+                                if st and st.UpdateAllElementsFadeState then st:UpdateAllElementsFadeState() end
+                            end,
+                        },
+                        staggerHideDelay = {
+                            type = "range",
+                            name = "Hide After (seconds)",
+                            desc = "Hide the stagger bars after this many seconds of no swings. Only used when 'Always Show' is off.",
+                            min = 3, max = 60, step = 1,
+                            order = 6.1,
+                            disabled = function() return getFlatDB("staggerBarAlwaysShow", false) end,
+                            get = function() return getFlatDB("staggerHideDelay", 15) end,
+                            set = function(_, v) setFlatDB("staggerHideDelay", v) end,
+                        },
+                    }),
+                    windfuryIcd = CreateModuleOptions("windfuryIcd", "Windfury ICD", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Windfury has a 3-second internal cooldown after each proc. This indicator lamp shows whether Windfury can proc (bright) or is on cooldown (dark, with a countdown). Works with both the personal Windfury Weapon imbue and the Windfury Totem buff.\n\nThe indicator automatically hides when you have no Windfury on any weapon and no Windfury Totem is active.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                    }),
                 },
             },
             -----------------------------------------------------------------
@@ -1535,28 +2006,110 @@ function ShammyTime:SetupOptions()
                         name = "Other",
                         order = 60,
                     },
+                    totemTextHeader = {
+                        type = "header",
+                        name = "Totem Bar Text",
+                        order = 60.5,
+                    },
                     fontTotemTimer = {
                         type = "range",
-                        name = "Totem Timer Font",
+                        name = "Totem Text Size",
                         min = 4, max = 20, step = 1,
                         order = 61,
-                        get = function() return getFlatDB("fontTotemTimer", 13) end,
+                        get = function() return getFlatDB("fontTotemTimer", 10) end,
                         set = function(_, v)
                             setFlatDB("fontTotemTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
                         end,
                     },
+                    totemTextX = {
+                        type = "range",
+                        name = "Totem Text X",
+                        desc = "Horizontal offset for totem timer text (positive = right).",
+                        min = -100, max = 100, step = 1,
+                        order = 61.1,
+                        get = function()
+                            local p = getDB()
+                            if p and p.totemLayout and p.totemLayout.timerOffsetX ~= nil then
+                                return p.totemLayout.timerOffsetX
+                            end
+                            return 0
+                        end,
+                        set = function(_, v)
+                            local p = getDB()
+                            if p then
+                                p.totemLayout = p.totemLayout or {}
+                                p.totemLayout.timerOffsetX = v
+                            end
+                            local st = _G.ShammyTime
+                            if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                        end,
+                    },
+                    totemTextY = {
+                        type = "range",
+                        name = "Totem Text Y",
+                        desc = "Vertical offset for totem timer text (negative = down).",
+                        min = -100, max = 100, step = 1,
+                        order = 61.2,
+                        get = function()
+                            local p = getDB()
+                            if p and p.totemLayout and p.totemLayout.timerOffsetY ~= nil then
+                                return p.totemLayout.timerOffsetY
+                            end
+                            return -33
+                        end,
+                        set = function(_, v)
+                            local p = getDB()
+                            if p then
+                                p.totemLayout = p.totemLayout or {}
+                                p.totemLayout.timerOffsetY = v
+                            end
+                            local st = _G.ShammyTime
+                            if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                        end,
+                    },
+                    imbueTextHeader = {
+                        type = "header",
+                        name = "Imbue Bar Text",
+                        order = 61.9,
+                    },
                     fontImbueTimer = {
                         type = "range",
-                        name = "Imbue Timer Font",
+                        name = "Imbue Text Size",
                         min = 6, max = 64, step = 1,
                         order = 62,
-                        get = function() return getFlatDB("fontImbueTimer", 28) end,
+                        get = function() return getFlatDB("fontImbueTimer", 16) end,
                         set = function(_, v)
                             setFlatDB("fontImbueTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                        end,
+                    },
+                    imbueTextX = {
+                        type = "range",
+                        name = "Imbue Text X",
+                        desc = "Horizontal offset for imbue timer text (positive = right).",
+                        min = -100, max = 100, step = 1,
+                        order = 62.1,
+                        get = function() return getFlatDB("imbueTextX", 0) end,
+                        set = function(_, v)
+                            setFlatDB("imbueTextX", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                        end,
+                    },
+                    imbueTextY = {
+                        type = "range",
+                        name = "Imbue Text Y",
+                        desc = "Vertical offset for imbue timer text (negative = down).",
+                        min = -100, max = 100, step = 1,
+                        order = 62.2,
+                        get = function() return getFlatDB("imbueTextY", -20) end,
+                        set = function(_, v)
+                            setFlatDB("imbueTextY", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                         end,
                     },
                     shieldTextHeader = {
@@ -1583,7 +2136,7 @@ function ShammyTime:SetupOptions()
                         desc = "Vertical offset for the shield count text (positive = up).",
                         min = -200, max = 300, step = 1,
                         order = 62.7,
-                        get = function() return getFlatDB("shieldCountY", 101) end,
+                        get = function() return getFlatDB("shieldCountY", 127) end,
                         set = function(_, v)
                             setFlatDB("shieldCountY", v)
                             local st = _G.ShammyTime
@@ -1624,6 +2177,40 @@ function ShammyTime:SetupOptions()
                             setFlatDB("imbueBarOffsetY", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                        end,
+                    },
+                    ---------------------------------------------------------
+                    -- Stagger Bar
+                    ---------------------------------------------------------
+                    staggerHeader = {
+                        type = "header",
+                        name = "Stagger Bar Positions",
+                        order = 70,
+                    },
+                    staggerBarsX = {
+                        type = "range",
+                        name = "Bars X",
+                        desc = "Horizontal offset for the MH/OH swing bars (positive = right).",
+                        min = -250, max = 250, step = 1,
+                        order = 71,
+                        get = function() return getFlatDB("staggerBarsX", 0) end,
+                        set = function(_, v)
+                            setFlatDB("staggerBarsX", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                        end,
+                    },
+                    staggerBarsY = {
+                        type = "range",
+                        name = "Bars Y",
+                        desc = "Vertical offset for the MH/OH swing bars (positive = up).",
+                        min = -100, max = 100, step = 1,
+                        order = 72,
+                        get = function() return getFlatDB("staggerBarsY", 0) end,
+                        set = function(_, v)
+                            setFlatDB("staggerBarsY", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
                         end,
                     },
                 },

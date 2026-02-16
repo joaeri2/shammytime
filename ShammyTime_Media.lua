@@ -15,10 +15,12 @@ M.TEX = {
     CENTER_RUNES  = M.MEDIA .. "wf_center_runes.tga",
     CENTER_ENERGY = M.MEDIA .. "wf_center_energy.tga",
     CENTER_SHADOW = M.MEDIA .. "wf_center_shadow.tga",
-    -- Totem bar (bottom of center ring, 4 elemental slots)
-    TOTEM_BAR = M.MEDIA .. "totem_bar.tga",
-    -- Weapon imbue bar (512×261; left = main hand, right = off hand)
-    IMBUE_BAR = M.MEDIA .. "imbue_bar_512_261_nohalo.tga",
+    -- Totem bar (layered: back, icons, front, text) 512×512
+    TOTEM_BAR_BACK  = M.MEDIA .. "v2_totem_bar_back_512x512.tga",
+    TOTEM_BAR_FRONT = M.MEDIA .. "v2_totem_bar_front_512x512.tga",
+    -- Weapon imbue bar (layered: back, icons, front, text) 512×512
+    IMBUE_BAR_BACK  = M.MEDIA .. "v2_imbue_bar_back_512x512.tga",
+    IMBUE_BAR_FRONT = M.MEDIA .. "v2_imbue_bar_front_512x512.tga",
     -- Crit satellite ring (layered, aligned)
     CRIT_BG     = M.MEDIA .. "wf_crit_bg_aligned.tga",
     CRIT_BORDER = M.MEDIA .. "wf_crit_border_aligned.tga",
@@ -59,13 +61,18 @@ M.TEX = {
     GLOW       = M.MEDIA .. "glow_soft.tga",
     RING_RUNES = M.MEDIA .. "ring_runes.tga",
     ASSET_TEST = M.MEDIA .. "wf_asset_test.tga",
-    -- Shamanistic Focus proc indicator (light on / light off)
-    FOCUS_ON  = M.MEDIA .. "shamanistic_focus_on.tga",
-    FOCUS_OFF = M.MEDIA .. "shamanistic_focus_off.tga",
-    -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha)
-    -- Note: assets are 256×213; code crops to a square (1:1) when rendering.
-    LIGHTNING_SHIELD_OFF = M.MEDIA .. "lightning_shield_off_256_213.tga",
-    LIGHTNING_SHIELD_ON  = M.MEDIA .. "lightning_shield_on_256_213.tga",
+    -- Shamanistic Focus proc indicator (light on / light off, 512×512)
+    FOCUS_ON  = M.MEDIA .. "v2_shamanistic_focus_on_256x256.tga",
+    FOCUS_OFF = M.MEDIA .. "v2_shamanistic_focus_off_256x256.tga",
+    -- Elemental shield (Lightning Shield / Water Shield): off = no shield, on = active (overlay with alpha), 256×256
+    LIGHTNING_SHIELD_OFF = M.MEDIA .. "v2_lightning_shield_off_256x256.tga",
+    LIGHTNING_SHIELD_ON  = M.MEDIA .. "v2_lightning_shield_on_256x256.tga",
+    -- Windfury ICD indicator (on = WF ready, off = ICD active / WF on cooldown), 256×256
+    WF_ICD_ON  = M.MEDIA .. "v2_windfury_icd_on_256x256.tga",
+    WF_ICD_OFF = M.MEDIA .. "v2_windfury_icd_off_256x256.tga",
+    -- Stagger bar (layered: back, bars, front, delta text) 512×512
+    STAGGER_BACK  = M.MEDIA .. "v2_stagger_back_512x512.tga",
+    STAGGER_FRONT = M.MEDIA .. "v2_stagger_front_512x512.tga",
 }
 
 -- Optional font (use GameFontNormal etc. if not set)

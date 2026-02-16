@@ -41,7 +41,7 @@ local DEFAULTS = {
     relativePoint = "CENTER",
     x = 0,
     y = -150,
-    scale = 0.8,
+    scale = 1.3,
     locked = false,
 }
 
@@ -130,7 +130,7 @@ local function CreateFocusFrame()
     if focusFrame then return focusFrame end
 
     local db = GetDB()
-    -- Images are 256x256; display at 80 so they look sharp and aren't cut off
+    -- Images are 512×512; display at 80 so they look sharp and aren't cut off
     local iconSize = 80
     local padW, padH = 16, 24
     local f = CreateFrame("Frame", "ShammyTimeShamanisticFocus", UIParent)
@@ -176,21 +176,7 @@ local function CreateFocusFrame()
         end
     end)
 
-    -- Shadow behind icon: same file as totems (wf_center_shadow.tga), custom size/offset/tint for this frame
-    local FOCUS_SHADOW_SIZE = 90       -- slightly larger than 80px icon so soft edge shows
-    local FOCUS_SHADOW_OFFSET_X = 2     -- drop shadow offset right
-    local FOCUS_SHADOW_OFFSET_Y = -6    -- drop shadow offset down
-    local FOCUS_SHADOW_TINT = { 0.1, 0.08, 0.1, 0.42 }  -- r, g, b, a (custom for Shamanistic Focus)
-    local focusShadow = f:CreateTexture(nil, "BACKGROUND", nil, -1)
-    focusShadow:SetSize(FOCUS_SHADOW_SIZE, FOCUS_SHADOW_SIZE)
-    focusShadow:SetPoint("CENTER", FOCUS_SHADOW_OFFSET_X, FOCUS_SHADOW_OFFSET_Y)
-    focusShadow:SetTexture(TEX.CENTER_SHADOW)
-    focusShadow:SetTexCoord(0, 1, 0, 1)
-    focusShadow:SetVertexColor(FOCUS_SHADOW_TINT[1], FOCUS_SHADOW_TINT[2], FOCUS_SHADOW_TINT[3], FOCUS_SHADOW_TINT[4])
-    focusShadow:Show()
-    f.focusShadow = focusShadow
     f.baseIconSize = iconSize
-    f.baseShadowSize = FOCUS_SHADOW_SIZE
 
     -- Base: "off" image always visible
     local focusOff = f:CreateTexture(nil, "ARTWORK")
@@ -230,15 +216,12 @@ local function CreateFocusFrame()
             f.focusPulseTicker = nil
         end
         local sz = f.baseIconSize
-        local ss = f.baseShadowSize
         f.focusOff:SetSize(sz, sz)
         f.focusOn:SetSize(sz, sz)
-        f.focusShadow:SetSize(ss, ss)
     end
     local function startPulse()
         stopPulseTicker()
         local baseIcon = f.baseIconSize
-        local baseShadow = f.baseShadowSize
         f.focusPulseTicker = C_Timer.NewTicker(1/60, function()
             local t = GetTime() % FOCUS_PULSE_PERIOD
             local phase = t / FOCUS_PULSE_PERIOD
@@ -246,10 +229,8 @@ local function CreateFocusFrame()
             local pulseScale = (phase <= 0.5) and (FOCUS_PULSE_MAX - (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * phase)
                 or (FOCUS_PULSE_MIN + (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * (phase - 0.5))
             local iconSz = baseIcon * pulseScale
-            local shadowSz = baseShadow * pulseScale
             f.focusOff:SetSize(iconSz, iconSz)
             f.focusOn:SetSize(iconSz, iconSz)
-            f.focusShadow:SetSize(shadowSz, shadowSz)
         end)
     end
     local function fadeInOn()

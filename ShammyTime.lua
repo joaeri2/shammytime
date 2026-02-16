@@ -389,7 +389,7 @@ function ShammyTime.GetRadialPositionDB()
     db.wfRadialPos = db.wfRadialPos or {}
     local key = GetRadialPositionKey()
     if not db.wfRadialPos[key] then
-        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil }
+        db.wfRadialPos[key] = { center = nil, totemBar = nil, imbueBar = nil, shieldFrame = nil, staggerBar = nil }
     end
     return db.wfRadialPos[key]
 end
@@ -818,6 +818,14 @@ local function ApplyElementMouseState()
         local shieldFrame = ShammyTime.EnsureShieldFrame()
         if shieldFrame then shieldFrame:EnableMouse(visible(shieldFrame) and useMouse or false) end
     end
+    if ShammyTime.GetWindfuryICDFrame then
+        local icdFrame = ShammyTime.GetWindfuryICDFrame()
+        if icdFrame then icdFrame:EnableMouse(visible(icdFrame) and useMouse or false) end
+    end
+    if ShammyTime.GetStaggerBarFrame then
+        local staggerBar = ShammyTime.GetStaggerBarFrame()
+        if staggerBar then staggerBar:EnableMouse(visible(staggerBar) and useMouse or false) end
+    end
     if ShammyTime.SetSatellitesEnableMouse then
         ShammyTime.SetSatellitesEnableMouse(visible(center) and useMouse or false)
     end
@@ -863,6 +871,37 @@ local function ApplyElementVisibility()
         local shieldFrame = ShammyTime.EnsureShieldFrame()
         if shieldFrame then
             if enabled("wfShieldEnabled") then shieldFrame:Show() else shieldFrame:Hide() end
+        end
+    end
+    -- Windfury ICD indicator
+    if ShammyTime.EnsureWindfuryICDFrame then
+        local icdFrame = ShammyTime.EnsureWindfuryICDFrame()
+        if icdFrame then
+            if enabled("wfIcdEnabled") then
+                -- Only show when windfury is available (imbue or totem)
+                if ShammyTime.HasWindfuryAvailable and ShammyTime.HasWindfuryAvailable() then
+                    icdFrame:Show()
+                else
+                    icdFrame:Hide()
+                end
+            else
+                icdFrame:Hide()
+            end
+        end
+    end
+    -- Stagger bar: force-hide when disabled; force-show when always-show is on
+    if ShammyTime.EnsureStaggerBarFrame then
+        local staggerBar = ShammyTime.GetStaggerBarFrame and ShammyTime.GetStaggerBarFrame()
+        if staggerBar then
+            if not enabled("staggerBarEnabled") then
+                staggerBar:Hide()
+                staggerBar:SetAlpha(0)
+            elseif db.staggerBarAlwaysShow then
+                staggerBar:Show()
+                local effAlpha = (ShammyTime.GetModuleEffectiveAlpha
+                                  and ShammyTime.GetModuleEffectiveAlpha("staggerBar")) or 1
+                staggerBar:SetAlpha(effAlpha)
+            end
         end
     end
     ApplyElementMouseState()
@@ -1034,6 +1073,14 @@ function UpdateAllElementsFadeState()
             local shield = ShammyTime.EnsureShieldFrame()
             if shield then shield:Show(); shield:SetAlpha(1) end
         end
+        if ShammyTime.GetWindfuryICDFrame then
+            local icdFrame = ShammyTime.GetWindfuryICDFrame()
+            if icdFrame then icdFrame:Show(); icdFrame:SetAlpha(1) end
+        end
+        if ShammyTime.GetStaggerBarFrame then
+            local staggerBar = ShammyTime.GetStaggerBarFrame()
+            if staggerBar then staggerBar:Show(); staggerBar:SetAlpha(1) end
+        end
         ApplyElementMouseState()
         return
     end
@@ -1067,7 +1114,13 @@ function UpdateAllElementsFadeState()
     local imbueProcced = ShammyTime.HasAnyWeaponImbue and ShammyTime.HasAnyWeaponImbue()
     local imbueShortTime = AnyImbueRemainingUnder(db.wfImbueFadeThresholdSec or 120)
     local imbueMissingDW = IsDualWieldMissingImbue()  -- dual-wielding with at least one weapon unimbued
-    local hasShield = (ShammyTime.GetElementalShieldAura and ShammyTime.GetElementalShieldAura()) and true or false
+    local hasShield = false
+    local shieldCharges = 0
+    if ShammyTime.GetElementalShieldAura then
+        local icon, count = ShammyTime.GetElementalShieldAura()
+        hasShield = icon and true or false
+        shieldCharges = hasShield and (type(count) == "number" and count or 0) or 0
+    end
     local anyTotemOutOfRange = false
     if ShammyTime.GetTotemSlotData then
         for slot = 1, 4 do
@@ -1075,6 +1128,7 @@ function UpdateAllElementsFadeState()
             if data and data.rangeState == "out" then anyTotemOutOfRange = true; break end
         end
     end
+    local hasWindfury = ShammyTime.HasWindfuryAvailable and ShammyTime.HasWindfuryAvailable() or false
     local fadeContext = {
         inCombat = inCombat,
         hasTarget = hasTarget,
@@ -1089,6 +1143,8 @@ function UpdateAllElementsFadeState()
         procAnimPlaying = procAnimPlaying,
         outOfRange = anyTotemOutOfRange,
         hasShield = hasShield,
+        shieldCharges = shieldCharges,
+        hasWindfury = hasWindfury,
     }
 
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
@@ -1320,8 +1376,10 @@ function UpdateAllElementsFadeState()
             shieldFrame:Show()
             local effAlphaShield = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("shieldIndicator")) or 1
             local mod = useModuleFade and ShammyTime.db.profile.modules.shieldIndicator
+            -- When "Hide When Active" is on, apply fade even if "Enable Fade" wasn't checked (so one checkbox is enough)
+            local shieldFadeActive = mod and mod.fade and (mod.fade.enabled or (mod.fade.conditions and mod.fade.conditions.hideWhenActive))
             if mod and ShammyTime.EvaluateFade then
-                if mod.fade and mod.fade.enabled then
+                if shieldFadeActive then
                     local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("shieldIndicator", fadeContext)
                     SetOrAnimateFade(shieldFrame, effAlphaShield * (shouldFade and targetAlpha or 1), useSlowMod, shouldFade)
                 else
@@ -1329,6 +1387,29 @@ function UpdateAllElementsFadeState()
                 end
             else
                 SetOrAnimateFade(shieldFrame, effAlphaShield, false, false)
+            end
+        end
+    end
+    -- Windfury ICD indicator: auto-hide when no WF available; per-module fade when enabled
+    if ShammyTime.GetWindfuryICDFrame and db.wfIcdEnabled then
+        local icdFrame = ShammyTime.GetWindfuryICDFrame()
+        if icdFrame then
+            if not hasWindfury then
+                icdFrame:Hide()
+            else
+                icdFrame:Show()
+                local effAlphaIcd = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("windfuryIcd")) or 1
+                local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryIcd
+                if mod and ShammyTime.EvaluateFade then
+                    if mod.fade and mod.fade.enabled then
+                        local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("windfuryIcd", fadeContext)
+                        SetOrAnimateFade(icdFrame, effAlphaIcd * (shouldFade and targetAlpha or 1), useSlowMod, shouldFade)
+                    else
+                        SetOrAnimateFade(icdFrame, effAlphaIcd, false, false)
+                    end
+                else
+                    SetOrAnimateFade(icdFrame, effAlphaIcd, false, false)
+                end
             end
         end
     end
@@ -1977,6 +2058,8 @@ local function PrintMainHelp()
     print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings to defaults" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — Export settings to chat" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st dev on|off" .. C.r .. C.gray .. "  — Toggle Developer tab in options" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st resync" .. C.r .. C.gray .. "  — Tell stagger bar you pressed the resync macro (add to macro so OH bar resets to 50%)" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st staggerdebug [on|off]" .. C.r .. C.gray .. "  — Toggle stagger swing log (Left/Right hits and misses to chat; default off)" .. C.r)
     print("")
     print(C.gray .. "  For all settings, use " .. C.gold .. "/st options" .. C.r .. C.gray .. " to open the settings panel." .. C.r)
     print(C.gold .. "═══════════════════════════════════════" .. C.r)
@@ -2084,8 +2167,15 @@ local function PrintAllSettings()
     print("  shieldCount = " .. tostring(db.shieldCount) .. "  -- override charge count (nil = auto; 1–9 = fixed); /st adv shield count X")
     print("  shieldCountX = " .. tostring(db.shieldCountX) .. "  -- number X offset; /st adv shield numx X")
     print("  shieldCountY = " .. tostring(db.shieldCountY) .. "  -- number Y offset; /st adv shield numy Y")
+    print(C.gray .. "Totem bar layout:" .. C.r)
+    local tl = db.totemLayout or {}
+    print("  iconsX = " .. tostring(tl.iconsX or -1) .. "  -- /st totem x N")
+    print("  iconsY = " .. tostring(tl.iconsY or 2) .. "  -- /st totem y N")
+    print("  iconsSpread = " .. tostring(tl.iconsSpread or 0.95) .. "  -- /st totem spread N")
+    print("  iconSize = " .. tostring(tl.iconSize or 40) .. "  -- /st totem iconsize N")
+    print("  timerOffsetY = " .. tostring(tl.timerOffsetY or -2) .. "  -- /st totem texty N")
     print(C.gray .. "Shamanistic Focus:" .. C.r)
-    local focusScale = (focusDb and focusDb.scale) or 0.8
+    local focusScale = (focusDb and focusDb.scale) or 1.3
     print("  scale = " .. tostring(focusScale) .. "  -- /st adv focus scale X")
     print(C.gold .. "——— Copy above to share or use as new defaults ———" .. C.r)
     print("")
@@ -2154,7 +2244,7 @@ local function PrintAdvHelp()
     print(C.green .. "ShammyTime — Advanced (" .. C.gold .. "/st adv" .. C.r .. C.green .. ")" .. C.r)
     print(C.gray .. "  Fine‑tune sizes, positions, and layout per element. Use " .. C.gold .. "/st test" .. C.r .. C.gray .. " to see effects." .. C.r)
     print("")
-    print(C.gray .. "  " .. C.gold .. "totembar" .. C.r .. C.gray .. "  — Windfury totem bar: scale, timer font." .. C.r)
+    print(C.gray .. "  " .. C.gold .. "totembar" .. C.r .. C.gray .. "  — Totem bar: scale, icon x/y/spread/size, text y." .. C.r)
     print(C.gray .. "  " .. C.gold .. "bubbles" .. C.r .. C.gray .. "   — Windfury circles: " .. C.gold .. "center" .. C.r .. C.gray .. " (size, text, font) or " .. C.gold .. "outer" .. C.r .. C.gray .. " (gap, font, position)." .. C.r)
     print(C.gray .. "  " .. C.gold .. "shield" .. C.r .. C.gray .. "    — Lightning/Water Shield: scale, count override, number X/Y position." .. C.r)
     print(C.gray .. "  " .. C.gold .. "focus" .. C.r .. C.gray .. "     — Shamanistic Focus: scale." .. C.r)
@@ -2221,6 +2311,23 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             InterfaceOptionsFrame_OpenToCategory("ShammyTime")  -- call twice for Blizzard bug
         end
         print(C.green .. "ShammyTime: Options panel opened." .. C.r)
+    -- Stagger bar: user pressed resync macro — OH bar resets to 50% (add /st resync to your macro)
+    elseif cmd == "resync" then
+        if ShammyTime.SimulateResyncMacro then ShammyTime.SimulateResyncMacro() end
+    -- Stagger bar: swing debug log (MH/OH hits and misses to chat)
+    elseif cmd == "staggerdebug" then
+        local sub = arg:lower()
+        if sub == "on" or sub == "enable" or sub == "1" then
+            db.staggerSwingDebugLog = true
+            print(C.green .. "ShammyTime: Stagger swing debug ON — Left/Right hits and misses will print to chat." .. C.r)
+        elseif sub == "off" or sub == "disable" or sub == "0" then
+            db.staggerSwingDebugLog = false
+            print(C.green .. "ShammyTime: Stagger swing debug OFF." .. C.r)
+        else
+            db.staggerSwingDebugLog = not db.staggerSwingDebugLog
+            local s = db.staggerSwingDebugLog and (C.gold .. "ON" .. C.r) or (C.gray .. "OFF" .. C.r)
+            print(C.gray .. "ShammyTime: Stagger swing debug " .. s .. C.gray .. ". Use " .. C.gold .. "/st staggerdebug on" .. C.r .. C.gray .. " or " .. C.gold .. "/st staggerdebug off" .. C.r .. C.gray .. "." .. C.r)
+        end
     -- Developer mode toggle
     elseif cmd == "dev" or cmd == "developer" then
         local sub = arg:lower()
@@ -2254,6 +2361,18 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         end
     elseif cmd == "debug" then
         DebugWeaponImbue()
+    -- ICD debug: /st icd [debug|status]
+    elseif cmd == "icd" then
+        local sub = arg:lower():gsub("^%s+", ""):gsub("%s+$", "")
+        if sub == "debug" then
+            if ShammyTime.ToggleICDDebug then ShammyTime.ToggleICDDebug() end
+        elseif sub == "status" then
+            if ShammyTime.PrintICDStatus then ShammyTime.PrintICDStatus() end
+        else
+            print(C.gray .. "ShammyTime ICD commands:" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st icd debug" .. C.r .. C.gray .. "  — Toggle verbose combat log debug output" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st icd status" .. C.r .. C.gray .. " — Print current ICD state (frame, imbues, totems)" .. C.r)
+        end
     -- Show/hide elements: /st show [circle|totem|focus|imbue] [on|off]
     elseif cmd == "show" then
         local sub, subarg = arg:match("^(%S+)%s*(.*)$")
@@ -2281,13 +2400,18 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             if on then db.wfShieldEnabled = true; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Lightning/Water Shield indicator shown." .. C.r)
             elseif off then db.wfShieldEnabled = false; UpdateAllElementsFadeState(); print(C.green .. "ShammyTime: Lightning/Water Shield indicator hidden." .. C.r)
             else print(C.gray .. "ShammyTime: Shield " .. (db.wfShieldEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st show shield on|off" .. C.r) end
+        elseif sub == "icd" then
+            if on then db.wfIcdEnabled = true; UpdateAllElementsFadeState(); ApplyElementVisibility(); print(C.green .. "ShammyTime: Windfury ICD indicator shown." .. C.r)
+            elseif off then db.wfIcdEnabled = false; UpdateAllElementsFadeState(); ApplyElementVisibility(); print(C.green .. "ShammyTime: Windfury ICD indicator hidden." .. C.r)
+            else print(C.gray .. "ShammyTime: ICD " .. (db.wfIcdEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)) .. C.gray .. ". " .. C.gold .. "/st show icd on|off" .. C.r) end
         elseif sub == "" or sub == "list" then
             local c = db.wfRadialEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local t = db.wfTotemBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local f = db.wfFocusEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local i = db.wfImbueBarEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
             local sh = db.wfShieldEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
-            print(C.gray .. "ShammyTime: Show — circle " .. c .. C.gray .. ", totem " .. t .. C.gray .. ", focus " .. f .. C.gray .. ", imbue " .. i .. C.gray .. ", shield " .. sh .. C.gray .. ". " .. C.gold .. "/st show <element> on|off" .. C.r)
+            local icd = db.wfIcdEnabled and (C.green .. "on" .. C.r) or (C.red .. "off" .. C.r)
+            print(C.gray .. "ShammyTime: Show — circle " .. c .. C.gray .. ", totem " .. t .. C.gray .. ", focus " .. f .. C.gray .. ", imbue " .. i .. C.gray .. ", shield " .. sh .. C.gray .. ", icd " .. icd .. C.gray .. ". " .. C.gold .. "/st show <element> on|off" .. C.r)
             PrintShowHelp()
         else
             print(C.red .. "ShammyTime: Unknown element " .. (C.gold .. "'" .. sub .. "'" .. C.r) .. C.red .. ". Use circle, totem, focus, imbue, shield. " .. C.gold .. "/st show" .. C.r .. C.red .. " for list." .. C.r)
@@ -2548,10 +2672,21 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         else
             PrintCircleHelp()
         end
-    -- Totem bar: /st totem [scale X] (via /st adv totembar)
+    -- Totem bar: /st totem [scale|x|y|spread|iconsize|texty] (via /st adv totembar)
     elseif cmd == "totem" then
         local a = arg:lower()
         local scaleArg = a:match("^scale%s+(%S+)$")
+        local xArg = a:match("^x%s+([%-%d%.]+)$")
+        local yArg = a:match("^y%s+([%-%d%.]+)$")
+        local spreadArg = a:match("^spread%s+([%d%.]+)$")
+        local iconsizeArg = a:match("^iconsize%s+([%d%.]+)$")
+        local textxArg = a:match("^textx%s+([%-%d%.]+)$")
+        local textyArg = a:match("^texty%s+([%-%d%.]+)$")
+        -- Helper to ensure db.totemLayout exists
+        local function ensureLayout()
+            db.totemLayout = db.totemLayout or {}
+            return db.totemLayout
+        end
         if scaleArg then
             local num = tonumber(scaleArg)
             if num and num >= 0.5 and num <= 2 then
@@ -2563,19 +2698,79 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 end
                 print(C.green .. "ShammyTime: Totem bar scale " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st adv totembar scale 1" .. C.r)
+                print(C.red .. "ShammyTime: Totem bar scale 0.5–2. " .. C.gold .. "/st totem scale 1" .. C.r)
+            end
+        elseif xArg then
+            local num = tonumber(xArg)
+            if num and num >= -200 and num <= 200 then
+                ensureLayout().iconsX = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem icons X = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem x -200 to 200. " .. C.gold .. "/st totem x -1" .. C.r)
+            end
+        elseif yArg then
+            local num = tonumber(yArg)
+            if num and num >= -200 and num <= 200 then
+                ensureLayout().iconsY = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem icons Y = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem y -200 to 200. " .. C.gold .. "/st totem y 2" .. C.r)
+            end
+        elseif spreadArg then
+            local num = tonumber(spreadArg)
+            if num and num >= 0.2 and num <= 3 then
+                ensureLayout().iconsSpread = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem spread = " .. ("%.2f"):format(num) .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem spread 0.2–3. " .. C.gold .. "/st totem spread 1" .. C.r)
+            end
+        elseif iconsizeArg then
+            local num = tonumber(iconsizeArg)
+            if num and num >= 8 and num <= 80 then
+                ensureLayout().iconSize = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem icon size = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem iconsize 8–80. " .. C.gold .. "/st totem iconsize 40" .. C.r)
+            end
+        elseif textxArg then
+            local num = tonumber(textxArg)
+            if num and num >= -100 and num <= 100 then
+                ensureLayout().timerOffsetX = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem text X = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem textx -100 to 100. " .. C.gold .. "/st totem textx 0" .. C.r)
+            end
+        elseif textyArg then
+            local num = tonumber(textyArg)
+            if num and num >= -100 and num <= 100 then
+                ensureLayout().timerOffsetY = num
+                if ShammyTime.ApplyTotemBarLayout then ShammyTime.ApplyTotemBarLayout() end
+                print(C.green .. "ShammyTime: Totem text Y = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Totem texty -100 to 100. " .. C.gold .. "/st totem texty -2" .. C.r)
             end
         elseif a == "pos" then
             if ShammyTime.PrintTotemBarPos then ShammyTime.PrintTotemBarPos() end
         elseif a == "" then
-            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "):" .. C.r)
+            local tl = db.totemLayout or {}
+            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(db.wfTotemBarScale or 1) .. C.r .. C.gray .. " (0.5–2)" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "/st adv totembar scale 1" .. C.r .. C.gray .. " — Change size." .. C.r)
-            print(C.gray .. "  " .. C.gold .. "/st show totem on|off" .. C.r .. C.gray .. " — Show/hide." .. C.r)
+            print(C.gray .. "  x " .. C.gold .. (tl.iconsX or -1) .. C.r .. C.gray .. "  y " .. C.gold .. (tl.iconsY or 2) .. C.r .. C.gray .. "  spread " .. C.gold .. ("%.2f"):format(tl.iconsSpread or 0.95) .. C.r)
+            print(C.gray .. "  iconsize " .. C.gold .. (tl.iconSize or 40) .. C.r .. C.gray .. "  textx " .. C.gold .. (tl.timerOffsetX or 0) .. C.r .. C.gray .. "  texty " .. C.gold .. (tl.timerOffsetY or -2) .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem scale 1" .. C.r .. C.gray .. " — Frame scale." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem x -1" .. C.r .. C.gray .. " — Icons horizontal offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem y 2" .. C.r .. C.gray .. " — Icons vertical offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem spread 0.95" .. C.r .. C.gray .. " — Icons spread (0.2–3)." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem iconsize 40" .. C.r .. C.gray .. " — Icon size (8–80)." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem textx 0" .. C.r .. C.gray .. " — Timer text X offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st totem texty -2" .. C.r .. C.gray .. " — Timer text Y offset." .. C.r)
         else
-            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st adv totembar" .. C.r .. C.gray .. "):" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "scale 1" .. C.r .. C.gray .. " — size (0.5–2)" .. C.r)
-            print(C.gray .. "  Position frame by dragging when " .. C.gold .. "/st unlock" .. C.r .. C.gray .. "." .. C.r)
+            print(C.gray .. "ShammyTime: Totem bar (" .. C.gold .. "/st totem" .. C.r .. C.gray .. "). Type " .. C.gold .. "/st totem" .. C.r .. C.gray .. " for all options." .. C.r)
         end
     -- Shamanistic Focus: /st focus [scale X] (via /st adv focus)
     elseif cmd == "focus" then
@@ -2613,6 +2808,8 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         local gapArg = a:match("^gap%s+(%S+)$")
         local offsetyArg = a:match("^offsety%s+([-%d%.]+)$")
         local iconsizeArg = a:match("^iconsize%s+(%S+)$")
+        local textxArg2 = a:match("^textx%s+([%-%d%.]+)$")
+        local textyArg2 = a:match("^texty%s+([%-%d%.]+)$")
         if scaleArg then
             local num = tonumber(scaleArg)
             if num and num >= 0.1 and num <= 2 then
@@ -2658,6 +2855,24 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             else
                 print(C.red .. "ShammyTime: Imbue bar iconsize 12–64. " .. C.gold .. "/st adv imbue iconsize 22" .. C.r)
             end
+        elseif textxArg2 then
+            local num = tonumber(textxArg2)
+            if num and num >= -100 and num <= 100 then
+                db.imbueTextX = num
+                if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
+                print(C.green .. "ShammyTime: Imbue text X = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue textx -100 to 100. " .. C.gold .. "/st adv imbue textx 0" .. C.r)
+            end
+        elseif textyArg2 then
+            local num = tonumber(textyArg2)
+            if num and num >= -100 and num <= 100 then
+                db.imbueTextY = num
+                if ShammyTime.ApplyImbueBarLayout then ShammyTime.ApplyImbueBarLayout() end
+                print(C.green .. "ShammyTime: Imbue text Y = " .. num .. "." .. C.r)
+            else
+                print(C.red .. "ShammyTime: Imbue texty -100 to 100. " .. C.gold .. "/st adv imbue texty -20" .. C.r)
+            end
         elseif a == "layout" then
             local m = db.imbueBarMargin or 169
             local g = db.imbueBarGap or 48
@@ -2665,15 +2880,21 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local isz = db.imbueBarIconSize or 22
             print(C.gray .. "ShammyTime: Imbue bar layout:" .. C.r)
             print(C.gray .. "  margin " .. C.gold .. m .. C.r .. C.gray .. ", gap " .. C.gold .. g .. C.r .. C.gray .. ", offsety " .. C.gold .. oy .. C.r .. C.gray .. ", iconsize " .. C.gold .. isz .. C.r)
+            print(C.gray .. "  textx " .. C.gold .. (db.imbueTextX or 0) .. C.r .. C.gray .. ", texty " .. C.gold .. (db.imbueTextY or -20) .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue margin 180" .. C.r .. C.gray .. " — Icon left margin." .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue gap 50" .. C.r .. C.gray .. " — Gap between icons." .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue offsety -60" .. C.r .. C.gray .. " — Vertical offset." .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue iconsize 24" .. C.r .. C.gray .. " — Icon size." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue textx 0" .. C.r .. C.gray .. " — Timer text X offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue texty -20" .. C.r .. C.gray .. " — Timer text Y offset." .. C.r)
         elseif a == "" then
-            local s = db.imbueBarScale or 0.35
+            local s = db.imbueBarScale or 0.85
             print(C.gray .. "ShammyTime: Imbue bar (" .. C.gold .. "/st adv imbue" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  scale " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.1–2)" .. C.r)
+            print(C.gray .. "  textx " .. C.gold .. (db.imbueTextX or 0) .. C.r .. C.gray .. "  texty " .. C.gold .. (db.imbueTextY or -20) .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue scale 0.5" .. C.r .. C.gray .. " — Change size." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue textx 0" .. C.r .. C.gray .. " — Timer text X offset." .. C.r)
+            print(C.gray .. "  " .. C.gold .. "/st adv imbue texty -20" .. C.r .. C.gray .. " — Timer text Y offset." .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st adv imbue layout" .. C.r .. C.gray .. " — Icon positions/sizes." .. C.r)
             print(C.gray .. "  " .. C.gold .. "/st show imbue on|off" .. C.r .. C.gray .. " — Show/hide." .. C.r)
         else
@@ -2696,7 +2917,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 if ShammyTime.ApplyShieldScale then ShammyTime.ApplyShieldScale() end
                 print(C.green .. "ShammyTime: Shield indicator size " .. ("%.2f"):format(num) .. "." .. C.r)
             else
-                print(C.red .. "ShammyTime: Shield size 0.05–2. " .. C.gold .. "/st shield size 0.2" .. C.r .. C.gray .. " or " .. C.gold .. "/st shield scale 0.2" .. C.r)
+                print(C.red .. "ShammyTime: Shield size 0.05–2. " .. C.gold .. "/st shield size 0.4" .. C.r .. C.gray .. " or " .. C.gold .. "/st shield scale 0.4" .. C.r)
             end
         elseif countArg then
             if countArg == "auto" or countArg == "nil" or countArg == "off" then
@@ -2732,10 +2953,10 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 print(C.red .. "ShammyTime: Shield numy -200 to 200. " .. C.gold .. "/st shield numy -50" .. C.r)
             end
         elseif a == "" then
-            local s = db.shieldScale or 0.2
+            local s = db.shieldScale or 0.4
             local cnt = db.shieldCount
             local nx = db.shieldCountX or 0
-            local ny = db.shieldCountY or 101
+            local ny = db.shieldCountY or 127
             print(C.gray .. "ShammyTime: Lightning/Water Shield (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
             print(C.gray .. "  size " .. C.gold .. ("%.2f"):format(s) .. C.r .. C.gray .. " (0.05–2). Drag to move when unlocked." .. C.r)
             print(C.gray .. "  count " .. C.gold .. (cnt and tostring(cnt) or "auto") .. C.r .. C.gray .. " (1–9 = fixed, auto = from buff)" .. C.r)
@@ -2747,7 +2968,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.gray .. "  " .. C.gold .. "/st show shield on|off" .. C.r .. C.gray .. "  — Show/hide. " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — All settings." .. C.r)
         else
             print(C.gray .. "ShammyTime: Shield options (" .. C.gold .. "/st adv shield" .. C.r .. C.gray .. "):" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "size 0.2" .. C.r .. C.gray .. " — scale (0.05–2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "size 0.4" .. C.r .. C.gray .. " — scale (0.05–2)" .. C.r)
             print(C.gray .. "  " .. C.gold .. "count 3" .. C.r .. C.gray .. " or " .. C.gold .. "auto" .. C.r .. C.gray .. " — override charge display" .. C.r)
             print(C.gray .. "  " .. C.gold .. "numx 10" .. C.r .. C.gray .. " — number X position (-200 to 200)" .. C.r)
             print(C.gray .. "  " .. C.gold .. "numy -50" .. C.r .. C.gray .. " — number Y position (-200 to 200)" .. C.r)
@@ -2815,8 +3036,8 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             local cc = db.fontCircleCritical or 20
             local sl = db.fontSatelliteLabel or 8
             local sv = db.fontSatelliteValue or 13
-            local tt = db.fontTotemTimer or 13
-            local ib = db.fontImbueTimer or 28
+            local tt = db.fontTotemTimer or 10
+            local ib = db.fontImbueTimer or 16
             print(C.gray .. "ShammyTime: Font — circle title " .. C.gold .. ct .. C.r .. C.gray .. ", total " .. C.gold .. ctot .. C.r .. C.gray .. ", critical " .. C.gold .. cc .. C.r)
             print(C.gray .. "  satellite label " .. C.gold .. sl .. C.r .. C.gray .. ", value " .. C.gold .. sv .. C.r .. C.gray .. ", totem " .. C.gold .. tt .. C.r .. C.gray .. ", imbue " .. C.gold .. ib .. C.r .. C.gray .. ". " .. C.gold .. "/st font" .. C.r .. C.gray .. " for list." .. C.r)
             PrintFontHelp()

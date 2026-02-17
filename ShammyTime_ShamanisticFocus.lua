@@ -14,9 +14,6 @@ local FOCUSED_BUFF_SPELL_ID = 43339  -- "Focused" (Shamanistic Focus proc), TBC
 local FOCUS_FADE_IN_DURATION = 0.3   -- off→on transition (~300ms so change is visible but quick)
 local FOCUS_FADE_OUT_DURATION = 0.6
 local FOCUS_HOLD_AFTER_OFF = 3.0  -- seconds to hold "on" art after proc ends before fading to off
-local FOCUS_PULSE_MIN = 0.90   -- scale 90%
-local FOCUS_PULSE_MAX = 1.0   -- scale 100%
-local FOCUS_PULSE_PERIOD = 1.0 -- seconds per full cycle (100% -> 80% -> 100%)
 
 local focusFrame
 local lastFocusedActive = false
@@ -208,7 +205,7 @@ local function CreateFocusFrame()
             f.focusAlphaTicker = nil
         end
     end
-    -- Pulse ticker: texture size 100% <-> 80% while proc is active (no frame movement)
+    -- Pulse effect intentionally disabled; keep helpers for cleanup compatibility.
     f.focusPulseTicker = nil
     local function stopPulseTicker()
         if f.focusPulseTicker then
@@ -221,17 +218,6 @@ local function CreateFocusFrame()
     end
     local function startPulse()
         stopPulseTicker()
-        local baseIcon = f.baseIconSize
-        f.focusPulseTicker = C_Timer.NewTicker(1/60, function()
-            local t = GetTime() % FOCUS_PULSE_PERIOD
-            local phase = t / FOCUS_PULSE_PERIOD
-            -- Triangle wave: 1.0 -> 0.8 -> 1.0 over one period
-            local pulseScale = (phase <= 0.5) and (FOCUS_PULSE_MAX - (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * phase)
-                or (FOCUS_PULSE_MIN + (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * (phase - 0.5))
-            local iconSz = baseIcon * pulseScale
-            f.focusOff:SetSize(iconSz, iconSz)
-            f.focusOn:SetSize(iconSz, iconSz)
-        end)
     end
     local function fadeInOn()
         stopAlphaTicker()
@@ -246,7 +232,6 @@ local function CreateFocusFrame()
                 focusOn:SetAlpha(1)
                 stopAlphaTicker()
                 focusOverlayFadingOn = false
-                startPulse()
                 return
             end
             focusOn:SetAlpha(startAlpha + (1 - startAlpha) * t)
@@ -322,13 +307,7 @@ UpdateFocus = function(hasBuffOverride)
             return
         end
         
-        -- If already at full alpha and pulsing, do nothing
-        if currentAlpha >= 0.99 and f.focusPulseTicker then
-            -- Already showing "on" and pulsing, nothing to do
-        elseif currentAlpha >= 0.99 then
-            -- At full alpha but not pulsing, start pulse
-            f.startPulse()
-        else
+        if currentAlpha < 0.99 then
             -- Need to show "on" - fade in from current alpha
             f.fadeInOn()
         end

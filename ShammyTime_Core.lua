@@ -47,15 +47,15 @@ local DEFAULTS = {
         },
         -- Per-module (spec)
         modules = {
-            windfuryBubbles = moduleDefaults(true, 0.65, 1.0),
-            shieldIndicator = moduleDefaults(true, 0.4, 1.0),
-            shamanisticFocus = moduleDefaults(true, 1.3, 1.0),
+            windfuryBubbles = moduleDefaults(false, 0.65, 1.0),
+            shieldIndicator = moduleDefaults(true, 0.36, 1.0),
+            shamanisticFocus = moduleDefaults(true, 1.17, 1.0),
             totemBar = moduleDefaults(true, 1.2, 1.0),
-            weaponImbueBar = moduleDefaults(true, 0.85, 1.0),
+            weaponImbueBar = moduleDefaults(true, 0.75, 1.0),
             wfImpact = moduleDefaults(true, 1.3, 1.0),
-            windfuryIcd = moduleDefaults(true, 1.1, 1.0),
-            staggerBar = moduleDefaults(true, 0.6, 1.0),
-            pressureVisual = moduleDefaults(true, 1.0, 1.0),
+            windfuryIcd = moduleDefaults(true, 1.045, 1.0),
+            staggerBar = moduleDefaults(true, 0.5, 1.0),
+            pressureVisual = moduleDefaults(true, 0.8, 1.0),
         },
         -- Flat keys (existing code)
         point = "CENTER",
@@ -73,13 +73,14 @@ local DEFAULTS = {
         wfScale = 1.0,
         wfLocked = false,
         windfuryTrackerEnabled = true,
-        wfRadialEnabled = true,
+        wfRadialEnabled = false,
         wfTotemBarEnabled = true,
         wfFocusEnabled = true,
         wfImbueBarEnabled = true,
         wfShieldEnabled = true,
         wfIcdEnabled = true,
-        shieldScale = 0.4,
+        uiErrorTextEnabled = false,
+        shieldScale = 0.36,
         shieldCount = nil,
         shieldCountX = 1,
         shieldCountY = 127,
@@ -125,7 +126,7 @@ local DEFAULTS = {
         wfImpactFontTotal = 16,
         wfImpactScrollDuration = 2.0,
         wfImpactScrollDistance = 115,
-        pressureScale = 1.0,
+        pressureScale = 0.8,
         -- Stagger bar
         staggerBarEnabled = true,
         staggerBarAlwaysShow = true,
@@ -157,12 +158,12 @@ local DEFAULTS = {
         pressureSlot3TextY = -18,
         pressurePopupIconSize = 74,
         pressurePopupTextSize = 49,
-        pressurePopupHoldSec = 2.20,
+        pressurePopupHoldSec = 5.20,
         pressurePopupFadeSec = 1.20,
-        pressurePopupSustainSec = 3.00,
+        pressurePopupSustainSec = 6.00,
         pressurePopupCritBounceScale = 2.00,
         pressurePopupCritBounceSec = 0.20,
-        imbueBarScale = 0.85,
+        imbueBarScale = 0.75,
         imbueBarMargin = nil,
         imbueBarGap = nil,
         imbueBarOffsetY = nil,
@@ -171,7 +172,7 @@ local DEFAULTS = {
         wfRadialPos = {},
         focusFrame = {
             point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
-            x = -381.49990844727, y = 0.51829099655151, scale = 1.3, locked = false,
+            x = -381.49990844727, y = 0.51829099655151, scale = 1.17, locked = false,
         },
         windfuryIcdFrame = {
             point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
@@ -193,7 +194,7 @@ function ShammyTime:OnInitialize()
     if p then
         p.modules = p.modules or {}
         if not p.modules.pressureVisual then
-            p.modules.pressureVisual = moduleDefaults(true, 1.0, 1.0)
+            p.modules.pressureVisual = moduleDefaults(true, 0.8, 1.0)
         end
     end
     self:MigrateOldDB()
@@ -226,9 +227,43 @@ function ShammyTime:OnEnable()
         hasShield = false,
         hasImbue = false,
     }
+    if self.ApplyErrorTextSetting then
+        self:ApplyErrorTextSetting()
+    end
+    if self.ScheduleErrorTextSettingApply then
+        self:ScheduleErrorTextSettingApply(2)
+    end
     if self.ApplyAllConfigs then
         self:ApplyAllConfigs()
     end
+end
+
+--- Show/hide Blizzard red error text based on profile setting.
+function ShammyTime:ApplyErrorTextSetting()
+    if not UIErrorsFrame then return end
+    local p = self.db and self.db.profile
+    local shouldShow = (p and p.uiErrorTextEnabled == true)
+    if shouldShow then
+        UIErrorsFrame:Show()
+        self._uiErrorTextDisableNotified = false
+    else
+        UIErrorsFrame:Hide()
+        if not self._uiErrorTextDisableNotified then
+            print("|cff00ff00ShammyTime:|r Blizzard error text disabled by ShammyTime. Enable it in General -> Show Blizzard Error Text.")
+            self._uiErrorTextDisableNotified = true
+        end
+    end
+end
+
+--- Re-apply error text visibility shortly after login/reload.
+function ShammyTime:ScheduleErrorTextSettingApply(delaySec)
+    local delay = (type(delaySec) == "number" and delaySec >= 0) and delaySec or 2
+    C_Timer.After(delay, function()
+        local addon = _G.ShammyTime
+        if addon and addon.ApplyErrorTextSetting then
+            addon:ApplyErrorTextSetting()
+        end
+    end)
 end
 
 --- One-time migration from flat ShammyTimeDB to AceDB profile
@@ -290,7 +325,7 @@ function ShammyTime:MigrateOldDB()
                 p.modules.shamanisticFocus.pos = p.modules.shamanisticFocus.pos or {}
                 p.modules.shamanisticFocus.pos.x = v.x or 0
                 p.modules.shamanisticFocus.pos.y = v.y or -150
-                p.modules.shamanisticFocus.scale = v.scale or 1.3
+                p.modules.shamanisticFocus.scale = v.scale or 1.17
             end
         elseif type(v) ~= "table" or k == "wfSession" or k == "wfLastPull" or k == "wfRadialPos" then
             p[k] = v
@@ -377,7 +412,7 @@ function ShammyTime:SyncFlatToModules(opts)
     local includeFade = (opts.includeFade ~= false)
     p.modules = p.modules or {}
     if not p.modules.pressureVisual then
-        p.modules.pressureVisual = moduleDefaults(true, 1.0, 1.0)
+        p.modules.pressureVisual = moduleDefaults(true, 0.8, 1.0)
     end
     p.global = p.global or {}
 
@@ -503,10 +538,10 @@ function ShammyTime:ApplyAllConfigs()
     p.global = p.global or { locked = false, demoMode = false, masterScale = 1, masterAlpha = 1, devMode = false }
     p.modules = p.modules or {}
     if not p.modules.pressureVisual then
-        p.modules.pressureVisual = moduleDefaults(true, 1.0, 1.0)
+        p.modules.pressureVisual = moduleDefaults(true, 0.8, 1.0)
     end
     -- Ensure flat enabled keys exist so Shamanistic Focus etc. show for old profiles that never had them
-    if p.wfRadialEnabled == nil then p.wfRadialEnabled = true end
+    if p.wfRadialEnabled == nil then p.wfRadialEnabled = false end
     if p.wfTotemBarEnabled == nil then p.wfTotemBarEnabled = true end
     if p.wfFocusEnabled == nil then p.wfFocusEnabled = true end
     if p.wfImbueBarEnabled == nil then p.wfImbueBarEnabled = true end
@@ -614,6 +649,7 @@ function ShammyTime:ApplyAllConfigs()
     end
 
     if self.ApplyElementVisibility then self:ApplyElementVisibility() end
+    if self.ApplyErrorTextSetting then self:ApplyErrorTextSetting() end
     if self.ApplyLockStateToAllFrames then self:ApplyLockStateToAllFrames() end
     if self.ApplyElementMouseState then self:ApplyElementMouseState() end
     -- Scale/position for imbue, shield, focus are applied by each module's ApplyConfig (with master scale). Do not re-apply here or master scale would be overwritten.

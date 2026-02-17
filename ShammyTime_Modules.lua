@@ -220,7 +220,7 @@ function shamanisticFocus:ApplyConfig()
             f:SetPoint(ff.point or "CENTER", relTo, ff.relativePoint or "CENTER", ff.x or 0, ff.y or -150)
         end
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1.17
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -281,7 +281,7 @@ function weaponImbueBar:ApplyConfig()
     if st and st.ApplyImbueBarPosition then
         st.ApplyImbueBarPosition()
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.85
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.75
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -334,7 +334,7 @@ function shieldIndicator:ApplyConfig()
     if st and st.ApplyShieldPosition then
         st.ApplyShieldPosition()
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.05 and cfg.scale <= 3) and cfg.scale or 0.2
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.05 and cfg.scale <= 3) and cfg.scale or 0.36
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -459,7 +459,7 @@ function windfuryIcd:ApplyConfig()
             f:SetPoint(ff.point or "CENTER", relTo, ff.relativePoint or "CENTER", ff.x or 0, ff.y or -250)
         end
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1.045
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -518,7 +518,7 @@ function staggerBar:ApplyConfig()
     if not f then return end
     -- Position first, then scale, then re-apply position so the frame doesn't drift
     if st and st.ApplyStaggerBarPosition then st.ApplyStaggerBarPosition() end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.5
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -571,7 +571,7 @@ function pressureVisual:ApplyConfig()
     local st = _G.ShammyTime
     local f = self.frame or (st and st.GetPressureFrame and st.GetPressureFrame())
     if not f then return end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     local baseScale = (st and st.GetPressureBaseScale and st.GetPressureBaseScale()) or 0.5
     f:SetScale(baseScale * effScale)

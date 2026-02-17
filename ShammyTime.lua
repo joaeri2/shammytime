@@ -2223,7 +2223,7 @@ local function PrintAllSettings()
     print("  iconSize = " .. tostring(tl.iconSize or 40) .. "  -- /st totem iconsize N")
     print("  timerOffsetY = " .. tostring(tl.timerOffsetY or -2) .. "  -- /st totem texty N")
     print(C.gray .. "Shamanistic Focus:" .. C.r)
-    local focusScale = (focusDb and focusDb.scale) or 1.3
+    local focusScale = (focusDb and focusDb.scale) or 1.17
     print("  scale = " .. tostring(focusScale) .. "  -- /st adv focus scale X")
     print(C.gold .. "——— Copy above to share or use as new defaults ———" .. C.r)
     print("")
@@ -3008,7 +3008,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
                 print(C.red .. "ShammyTime: Shield numy -200 to 200. " .. C.gold .. "/st shield numy -50" .. C.r)
             end
         elseif a == "" then
-            local s = db.shieldScale or 0.4
+            local s = db.shieldScale or 0.36
             local cnt = db.shieldCount
             local nx = db.shieldCountX or 0
             local ny = db.shieldCountY or 127

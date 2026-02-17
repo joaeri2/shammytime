@@ -181,7 +181,8 @@ local function getFlatDB(key, default)
     local p = getDB()
     if not p then return default end
     local val = p[key]
-    return val ~= nil and val or default
+    if val == nil then return default end
+    return val
 end
 
 local function setFlatDB(key, val)
@@ -253,6 +254,7 @@ local function BuildFullExportLines(useColorCodes)
 
     sec("Global")
     line("locked = " .. tostring(p.locked))
+    line("uiErrorTextEnabled = " .. tostring(p.uiErrorTextEnabled == true))
     if p.global then
         line("masterScale = " .. tostring(p.global.masterScale or 1))
         line("masterAlpha = " .. tostring(p.global.masterAlpha or 1))
@@ -341,12 +343,12 @@ local function BuildFullExportLines(useColorCodes)
         line("focusFrame.relativePoint = " .. tostring(p.focusFrame.relativePoint or "CENTER"))
         line("focusFrame.x = " .. tostring(p.focusFrame.x or 0))
         line("focusFrame.y = " .. tostring(p.focusFrame.y or -150))
-        line("focusFrame.scale = " .. tostring(p.focusFrame.scale or 0.8))
+        line("focusFrame.scale = " .. tostring(p.focusFrame.scale or 1.17))
         line("focusFrame.locked = " .. tostring(p.focusFrame.locked or false))
     end
     line("")
     sec("Imbue bar (scale, layout, offsets, font)")
-    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.85))
+    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.75))
     line("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
     line("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
     line("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
@@ -354,7 +356,7 @@ local function BuildFullExportLines(useColorCodes)
     line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 16))
     line("")
     sec("Shield indicator")
-    line("shieldScale = " .. tostring(p.shieldScale or 0.4))
+    line("shieldScale = " .. tostring(p.shieldScale or 0.36))
     line("fontShieldCount = " .. tostring(p.fontShieldCount or 86))
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
     line("shieldCountY = " .. tostring(p.shieldCountY or 127))
@@ -362,9 +364,9 @@ local function BuildFullExportLines(useColorCodes)
     sec("Pressure popup slots")
     line("pressurePopupIconSize = " .. tostring(p.pressurePopupIconSize or 74))
     line("pressurePopupTextSize = " .. tostring(p.pressurePopupTextSize or 49))
-    line("pressurePopupHoldSec = " .. tostring(p.pressurePopupHoldSec or 2.20))
+    line("pressurePopupHoldSec = " .. tostring(p.pressurePopupHoldSec or 5.20))
     line("pressurePopupFadeSec = " .. tostring(p.pressurePopupFadeSec or 1.20))
-    line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 3.00))
+    line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 6.00))
     line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 2.00))
     line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
     line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
@@ -908,6 +910,19 @@ function ShammyTime:SetupOptions()
                             if g then g.masterAlpha = v end
                             local addon = LibStub("AceAddon-3.0"):GetAddon("ShammyTime", true)
                             if addon and addon.ApplyAllConfigs then addon:ApplyAllConfigs() end
+                        end,
+                    },
+                    uiErrorTextEnabled = {
+                        type = "toggle",
+                        name = "Show Blizzard Error Text",
+                        desc = "Show/hide red UI error text (for example: Not enough mana).",
+                        order = 3.1,
+                        width = "full",
+                        get = function()
+                            return getFlatDB("uiErrorTextEnabled", false)
+                        end,
+                        set = function(_, v)
+                            setFlatDB("uiErrorTextEnabled", v)
                         end,
                     },
                     presetsHeader = {
@@ -2305,7 +2320,7 @@ function ShammyTime:SetupOptions()
                         desc = "How long non-sustained spell popups stay fully visible before fading.",
                         min = 0.10, max = 10.0, step = 0.05,
                         order = 82.1,
-                        get = function() return getFlatDB("pressurePopupHoldSec", 2.20) end,
+                        get = function() return getFlatDB("pressurePopupHoldSec", 5.20) end,
                         set = function(_, v) setFlatDB("pressurePopupHoldSec", v) end,
                     },
                     pressurePopupFadeSec = {
@@ -2323,7 +2338,7 @@ function ShammyTime:SetupOptions()
                         desc = "How long CL/Flame Shock/Magma stay visible since their last damage event.",
                         min = 0.20, max = 15.0, step = 0.05,
                         order = 82.3,
-                        get = function() return getFlatDB("pressurePopupSustainSec", 3.00) end,
+                        get = function() return getFlatDB("pressurePopupSustainSec", 6.00) end,
                         set = function(_, v) setFlatDB("pressurePopupSustainSec", v) end,
                     },
                     pressurePopupCritBounceScale = {

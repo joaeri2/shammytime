@@ -111,37 +111,45 @@ local MAGMA_TOTEM_SPELL_IDS = {
 local WINDFURY_ATTACK_SPELL_ID = 25584
 local WINDFURY_TOTEM_EXTRA_ATTACKS_SPELL_ID = 8516
 
-local SLOT_ICON_SIZE_DEFAULT = 74
-local SLOT_ICON_SIZE = SLOT_ICON_SIZE_DEFAULT
-local SLOT_ICON_INSET = 0.08
-local SLOT_POPUP_HOLD_SEC_DEFAULT = 5.20
-local SLOT_POPUP_HOLD_SEC = SLOT_POPUP_HOLD_SEC_DEFAULT
-local SLOT_POPUP_FADE_SEC_DEFAULT = 1.20
-local SLOT_POPUP_FADE_SEC = SLOT_POPUP_FADE_SEC_DEFAULT
-local SLOT_POPUP_SUSTAIN_SEC_DEFAULT = 6.00
-local SLOT_POPUP_SUSTAIN_SEC = SLOT_POPUP_SUSTAIN_SEC_DEFAULT
-local SLOT_BASE_FONT_SIZE_DEFAULT = 49
-local SLOT_BASE_FONT_SIZE = SLOT_BASE_FONT_SIZE_DEFAULT
-local SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT = 2.00
-local SLOT_TEXT_CRIT_PULSE_SCALE = SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT
-local SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT = 0.20
-local SLOT_TEXT_CRIT_PULSE_SEC = SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT
-local SLOT_POPUP_FAST_END_FADE_FRACTION = 0.50
-local SLOT_JACKPOT_BANG_THRESHOLD = 6000
-local SLOT_ICON_SIZE_MIN = 24
-local SLOT_ICON_SIZE_MAX = 192
-local SLOT_TEXT_SIZE_MIN = 8
-local SLOT_TEXT_SIZE_MAX = 72
-local SLOT_POPUP_HOLD_SEC_MIN = 0.10
-local SLOT_POPUP_HOLD_SEC_MAX = 10.0
-local SLOT_POPUP_FADE_SEC_MIN = 0.10
-local SLOT_POPUP_FADE_SEC_MAX = 10.0
-local SLOT_POPUP_SUSTAIN_SEC_MIN = 0.20
-local SLOT_POPUP_SUSTAIN_SEC_MAX = 15.0
-local SLOT_TEXT_CRIT_PULSE_SCALE_MIN = 1.00
-local SLOT_TEXT_CRIT_PULSE_SCALE_MAX = 2.50
-local SLOT_TEXT_CRIT_PULSE_SEC_MIN = 0.05
-local SLOT_TEXT_CRIT_PULSE_SEC_MAX = 1.50
+local SLOT_POPUP_CFG = {
+    iconSizeDefault = 74,
+    iconSize = 74,
+    iconInset = 0.08,
+    popupHoldSecDefault = 5.20,
+    popupHoldSec = 5.20,
+    popupFadeSecDefault = 1.20,
+    popupFadeSec = 1.20,
+    popupSustainSecDefault = 6.00,
+    popupSustainSec = 6.00,
+    baseFontSizeDefault = 49,
+    baseFontSize = 49,
+    textCritPulseScaleDefault = 2.00,
+    textCritPulseScale = 2.00,
+    textCritPulseSecDefault = 0.20,
+    textCritPulseSec = 0.20,
+    popupFastEndFadeFraction = 0.50,
+    jackpotBangThreshold = 6000,
+    iconSizeMin = 24,
+    iconSizeMax = 192,
+    textSizeMin = 8,
+    textSizeMax = 72,
+    popupHoldSecMin = 0.10,
+    popupHoldSecMax = 10.0,
+    popupFadeSecMin = 0.10,
+    popupFadeSecMax = 10.0,
+    popupSustainSecMin = 0.20,
+    popupSustainSecMax = 15.0,
+    textCritPulseScaleMin = 1.00,
+    textCritPulseScaleMax = 2.50,
+    textCritPulseSecMin = 0.05,
+    textCritPulseSecMax = 1.50,
+}
+
+local PRESSURE_VISUAL_CFG = {
+    idleDamageGraceSec = 0.80,
+    visualActivityEps = 0.015,
+    visualOverlayEps = 0.004,
+}
 
 local STORMSTRIKE_SWING_WINDOW_SEC = 0.60
 local STORMSTRIKE_SWING_MAX_HITS = 2
@@ -285,7 +293,7 @@ end
 local function BuildPopupText(amount, hadCrit)
     local a = tonumber(amount) or 0
     local text = FormatCompactDamage(a)
-    if a >= SLOT_JACKPOT_BANG_THRESHOLD or (hadCrit and a >= 3500) then
+    if a >= SLOT_POPUP_CFG.jackpotBangThreshold or (hadCrit and a >= 3500) then
         text = text .. "!"
     end
     return text
@@ -333,14 +341,19 @@ for _, slotId in ipairs(SLOT_ORDER) do
     local cfg = SLOT_VISUAL[slotId]
     local icon = frame:CreateTexture(nil, "ARTWORK")
     icon:SetDrawLayer("ARTWORK", 1)
-    icon:SetSize(SLOT_ICON_SIZE, SLOT_ICON_SIZE)
+    icon:SetSize(SLOT_POPUP_CFG.iconSize, SLOT_POPUP_CFG.iconSize)
     icon:SetPoint("CENTER", frame, "CENTER", cfg.offsetX, cfg.offsetY)
     icon:SetTexture(GetSpellTexture(cfg.defaultSpellId) or cfg.fallbackTexture or "Interface\\Icons\\INV_Misc_QuestionMark")
-    icon:SetTexCoord(SLOT_ICON_INSET, 1 - SLOT_ICON_INSET, SLOT_ICON_INSET, 1 - SLOT_ICON_INSET)
+    icon:SetTexCoord(
+        SLOT_POPUP_CFG.iconInset,
+        1 - SLOT_POPUP_CFG.iconInset,
+        SLOT_POPUP_CFG.iconInset,
+        1 - SLOT_POPUP_CFG.iconInset
+    )
     icon:SetRotation(math.rad(cfg.rotationDeg or 0))
 
     local text = frame:CreateFontString(nil, "OVERLAY")
-    text:SetFont(FONT_PATH, SLOT_BASE_FONT_SIZE, "OUTLINE")
+    text:SetFont(FONT_PATH, SLOT_POPUP_CFG.baseFontSize, "OUTLINE")
     text:SetPoint("TOP", icon, "TOP", cfg.textOffsetX or 0, cfg.textOffsetY or -3)
     text:SetTextColor(SLOT_TEXT_NORMAL[1], SLOT_TEXT_NORMAL[2], SLOT_TEXT_NORMAL[3])
     text:SetShadowColor(0, 0, 0, 1)
@@ -372,7 +385,7 @@ end
 local function TriggerTextCritPulse(state, hadCritEvent, now)
     if not state or not hadCritEvent then return end
     state.critPulseStartAt = now
-    state.critPulseUntil = now + SLOT_TEXT_CRIT_PULSE_SEC
+    state.critPulseUntil = now + SLOT_POPUP_CFG.textCritPulseSec
 end
 
 local function GetTextCritPulseScale(state, now)
@@ -385,9 +398,9 @@ local function GetTextCritPulseScale(state, now)
     local dur = math_max(e - s, 0.001)
     local t = math_min(math_max((now - s) / dur, 0), 1)
     if t <= 0.5 then
-        return 1 + (SLOT_TEXT_CRIT_PULSE_SCALE - 1) * (t / 0.5)
+        return 1 + (SLOT_POPUP_CFG.textCritPulseScale - 1) * (t / 0.5)
     end
-    return SLOT_TEXT_CRIT_PULSE_SCALE - (SLOT_TEXT_CRIT_PULSE_SCALE - 1) * ((t - 0.5) / 0.5)
+    return SLOT_POPUP_CFG.textCritPulseScale - (SLOT_POPUP_CFG.textCritPulseScale - 1) * ((t - 0.5) / 0.5)
 end
 
 local function ConfigurePopupStateFromEvent(state, spellId, amount, hadCritTotal, hadCritEvent, isSustain, now)
@@ -398,14 +411,14 @@ local function ConfigurePopupStateFromEvent(state, spellId, amount, hadCritTotal
     state.hadCrit = hadCritTotal and true or false
     if isSustain then
         state.sustain = true
-        state.sustainUntil = now + SLOT_POPUP_SUSTAIN_SEC
+        state.sustainUntil = now + SLOT_POPUP_CFG.popupSustainSec
         state.holdUntil = state.sustainUntil
     else
         state.sustain = false
         state.sustainUntil = 0
-        state.holdUntil = now + SLOT_POPUP_HOLD_SEC
+        state.holdUntil = now + SLOT_POPUP_CFG.popupHoldSec
     end
-    state.fadeUntil = state.holdUntil + SLOT_POPUP_FADE_SEC
+    state.fadeUntil = state.holdUntil + SLOT_POPUP_CFG.popupFadeSec
     TriggerTextCritPulse(state, hadCritEvent, now)
 end
 
@@ -417,7 +430,7 @@ local function AdvancePopupState(state, now)
         state.sustain = false
         state.sustainUntil = 0
         state.holdUntil = now
-        state.fadeUntil = now + SLOT_POPUP_FADE_SEC
+        state.fadeUntil = now + SLOT_POPUP_CFG.popupFadeSec
     end
     if now >= state.fadeUntil then
         ResetPopupState(state)
@@ -439,8 +452,8 @@ local function GetPopupStateAlpha(state, now)
     if now < state.fadeUntil then
         -- Keep total lifetime unchanged, but do the visual fade in the last
         -- portion of the fade window so the end drop feels snappier.
-        local fadeWindow = math_max(SLOT_POPUP_FADE_SEC, 0.01)
-        local fastFadeWindow = math_max(fadeWindow * SLOT_POPUP_FAST_END_FADE_FRACTION, 0.01)
+        local fadeWindow = math_max(SLOT_POPUP_CFG.popupFadeSec, 0.01)
+        local fastFadeWindow = math_max(fadeWindow * SLOT_POPUP_CFG.popupFastEndFadeFraction, 0.01)
         local fadeStart = state.fadeUntil - fastFadeWindow
         if now <= fadeStart then
             return 1
@@ -459,13 +472,13 @@ local function ApplyPopupStateToSlot(slot, state, alpha, now)
     local spellId = state.spellId or cfg.defaultSpellId
 
     slot.icon:SetTexture(GetSpellTexture(spellId) or cfg.fallbackTexture or "Interface\\Icons\\INV_Misc_QuestionMark")
-    slot.icon:SetSize(SLOT_ICON_SIZE, SLOT_ICON_SIZE)
+    slot.icon:SetSize(SLOT_POPUP_CFG.iconSize, SLOT_POPUP_CFG.iconSize)
     slot.icon:ClearAllPoints()
     slot.icon:SetPoint("CENTER", frame, "CENTER", cfg.offsetX, cfg.offsetY)
     slot.icon:SetRotation(math.rad(cfg.rotationDeg or 0))
     slot.icon:SetScale(1)
 
-    slot.text:SetFont(FONT_PATH, SLOT_BASE_FONT_SIZE, "OUTLINE")
+    slot.text:SetFont(FONT_PATH, SLOT_POPUP_CFG.baseFontSize, "OUTLINE")
     slot.text:SetText(BuildPopupText(amount, hadCrit))
     if hadCrit then
         slot.text:SetTextColor(SLOT_TEXT_CRIT[1], SLOT_TEXT_CRIT[2], SLOT_TEXT_CRIT[3])
@@ -617,47 +630,47 @@ local function ShowOrUpdateSustainedSlot(_preferredSlotId, spellId, totalAmount,
 end
 
 local function ApplyPressurePopupDevSettings()
-    SLOT_ICON_SIZE = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.iconSize = GetPressurePopupDBNumber(
         "pressurePopupIconSize",
-        SLOT_ICON_SIZE_DEFAULT,
-        SLOT_ICON_SIZE_MIN,
-        SLOT_ICON_SIZE_MAX
+        SLOT_POPUP_CFG.iconSizeDefault,
+        SLOT_POPUP_CFG.iconSizeMin,
+        SLOT_POPUP_CFG.iconSizeMax
     )
-    SLOT_BASE_FONT_SIZE = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.baseFontSize = GetPressurePopupDBNumber(
         "pressurePopupTextSize",
-        SLOT_BASE_FONT_SIZE_DEFAULT,
-        SLOT_TEXT_SIZE_MIN,
-        SLOT_TEXT_SIZE_MAX
+        SLOT_POPUP_CFG.baseFontSizeDefault,
+        SLOT_POPUP_CFG.textSizeMin,
+        SLOT_POPUP_CFG.textSizeMax
     )
-    SLOT_POPUP_HOLD_SEC = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.popupHoldSec = GetPressurePopupDBNumber(
         "pressurePopupHoldSec",
-        SLOT_POPUP_HOLD_SEC_DEFAULT,
-        SLOT_POPUP_HOLD_SEC_MIN,
-        SLOT_POPUP_HOLD_SEC_MAX
+        SLOT_POPUP_CFG.popupHoldSecDefault,
+        SLOT_POPUP_CFG.popupHoldSecMin,
+        SLOT_POPUP_CFG.popupHoldSecMax
     )
-    SLOT_POPUP_FADE_SEC = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.popupFadeSec = GetPressurePopupDBNumber(
         "pressurePopupFadeSec",
-        SLOT_POPUP_FADE_SEC_DEFAULT,
-        SLOT_POPUP_FADE_SEC_MIN,
-        SLOT_POPUP_FADE_SEC_MAX
+        SLOT_POPUP_CFG.popupFadeSecDefault,
+        SLOT_POPUP_CFG.popupFadeSecMin,
+        SLOT_POPUP_CFG.popupFadeSecMax
     )
-    SLOT_POPUP_SUSTAIN_SEC = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.popupSustainSec = GetPressurePopupDBNumber(
         "pressurePopupSustainSec",
-        SLOT_POPUP_SUSTAIN_SEC_DEFAULT,
-        SLOT_POPUP_SUSTAIN_SEC_MIN,
-        SLOT_POPUP_SUSTAIN_SEC_MAX
+        SLOT_POPUP_CFG.popupSustainSecDefault,
+        SLOT_POPUP_CFG.popupSustainSecMin,
+        SLOT_POPUP_CFG.popupSustainSecMax
     )
-    SLOT_TEXT_CRIT_PULSE_SCALE = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.textCritPulseScale = GetPressurePopupDBNumber(
         "pressurePopupCritBounceScale",
-        SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT,
-        SLOT_TEXT_CRIT_PULSE_SCALE_MIN,
-        SLOT_TEXT_CRIT_PULSE_SCALE_MAX
+        SLOT_POPUP_CFG.textCritPulseScaleDefault,
+        SLOT_POPUP_CFG.textCritPulseScaleMin,
+        SLOT_POPUP_CFG.textCritPulseScaleMax
     )
-    SLOT_TEXT_CRIT_PULSE_SEC = GetPressurePopupDBNumber(
+    SLOT_POPUP_CFG.textCritPulseSec = GetPressurePopupDBNumber(
         "pressurePopupCritBounceSec",
-        SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT,
-        SLOT_TEXT_CRIT_PULSE_SEC_MIN,
-        SLOT_TEXT_CRIT_PULSE_SEC_MAX
+        SLOT_POPUP_CFG.textCritPulseSecDefault,
+        SLOT_POPUP_CFG.textCritPulseSecMin,
+        SLOT_POPUP_CFG.textCritPulseSecMax
     )
 
     local now = GetTime()
@@ -1341,6 +1354,7 @@ local PS = {
     tierEdgeResistMax = 0.52,
     tierEdgeSlipStartFrac = 0.72,
     tierEdgeSlipMax = 0.16,
+    tierConcavityDepth = 0.0,
     tierMomentumBoost = 0,
     tierMomentumOnPromote = 0.08,
     tierMomentumMax = 0.22,
@@ -1360,7 +1374,11 @@ local PS = {
     pressureElapsed = 0,
     lastDamageTime = 0,
     pressureSamples = {},
+    pressureSampleValues = {},
     pressureSampleHead = 1,
+    pressureSampleTail = 0,
+    pressureSampleCount = 0,
+    pressureSampleMaxCount = 7000,
     pressureSampleRetention = 300,
     bucketStatsElapsed = 0,
     bucketStatsInterval = 0.5,
@@ -1368,6 +1386,14 @@ local PS = {
     pressureBucketMax = { 0, 0, 0, 0, 0 },
     tierThresholds = { 1.50, 1.85, 2.32, 3.05, 3.90 },
 }
+
+local function ClearPressureSamples()
+    PS.pressureSamples = {}
+    PS.pressureSampleValues = {}
+    PS.pressureSampleHead = 1
+    PS.pressureSampleTail = 0
+    PS.pressureSampleCount = 0
+end
 
 local function ExportPressureState()
     ShammyTime.PressureState = PS
@@ -1440,8 +1466,10 @@ local function GetTierResistanceAndSlip(score, now)
     local resistance = 0
     if segFrac > edgeStart then
         local q = (segFrac - edgeStart) / math_max(1 - edgeStart, 0.001)
-        local power = math_max(PS.tierEdgePower or 1.0, 1.0)
-        resistance = (q ^ power) * math_max(PS.tierEdgeResistMax or 0, 0)
+        local concavityDepth = math_max(PS.tierConcavityDepth or 0, 0)
+        local power = math_max((PS.tierEdgePower or 1.0) + concavityDepth, 1.0)
+        local resistMax = math_max(PS.tierEdgeResistMax or 0, 0) * (1 + (concavityDepth * 0.75))
+        resistance = (q ^ power) * resistMax
     end
 
     local slip = 0
@@ -1504,6 +1532,58 @@ local function GetGateCappedTier(candidateTier, squeeze, activeSec)
     end
     return capped, reason
 end
+
+local function BuildPressureTierThresholdsFromDB()
+    local thresholds = {
+        GetPressurePopupDBNumber("pressureTierDamageReq1", 1.50, 0.20, 10.0),
+        GetPressurePopupDBNumber("pressureTierDamageReq2", 1.85, 0.20, 10.0),
+        GetPressurePopupDBNumber("pressureTierDamageReq3", 2.32, 0.20, 10.0),
+        GetPressurePopupDBNumber("pressureTierDamageReq4", 3.05, 0.20, 10.0),
+        GetPressurePopupDBNumber("pressureTierDamageReq5", 3.90, 0.20, 10.0),
+    }
+    for i = 2, #thresholds do
+        local minNext = thresholds[i - 1] + 0.01
+        if thresholds[i] < minNext then
+            thresholds[i] = minNext
+        end
+    end
+    return thresholds
+end
+
+local function BuildPressureTierForceReqFromDB()
+    local req = {
+        GetPressurePopupDBNumber("pressureTierForceReq1", 0.00, 0.00, 1.00),
+        GetPressurePopupDBNumber("pressureTierForceReq2", 0.18, 0.00, 1.00),
+        GetPressurePopupDBNumber("pressureTierForceReq3", 0.35, 0.00, 1.00),
+        GetPressurePopupDBNumber("pressureTierForceReq4", 0.70, 0.00, 1.00),
+        GetPressurePopupDBNumber("pressureTierForceReq5", 0.92, 0.00, 1.00),
+    }
+    for i = 2, #req do
+        if req[i] < req[i - 1] then
+            req[i] = req[i - 1]
+        end
+    end
+    return req
+end
+
+local function ApplyPressureTuningSettings()
+    local thresholds = BuildPressureTierThresholdsFromDB()
+    PS.tierThresholds = thresholds
+
+    local forceReq = BuildPressureTierForceReqFromDB()
+    PS.tierMinSqueeze = { 0.00, forceReq[1], forceReq[2], forceReq[3], forceReq[4], forceReq[5] }
+
+    PS.tierMomentumOnPromote = GetPressurePopupDBNumber("pressureTierMomentumOnPromote", 0.08, 0.00, 1.00)
+    PS.tierMomentumTierScalar = GetPressurePopupDBNumber("pressureTierMomentumPerTier", 0.04, 0.00, 0.25)
+    PS.tierMomentumMax = GetPressurePopupDBNumber("pressureTierMomentumMax", 0.22, 0.00, 1.50)
+    PS.tierMomentumDecayTau = GetPressurePopupDBNumber("pressureTierMomentumDecayTau", 3.20, 0.20, 12.0)
+    PS.tierMomentumIdleDecayTau = GetPressurePopupDBNumber("pressureTierMomentumIdleDecayTau", 1.15, 0.10, 8.0)
+    PS.tierConcavityDepth = GetPressurePopupDBNumber("pressureTierConcavityDepth", 0.00, 0.00, 3.00)
+end
+
+ShammyTime.ApplyPressureTuningSettings = ApplyPressureTuningSettings
+ApplyPressureTuningSettings()
+
 local SUBEVENT_MAP = {
     SWING_DAMAGE = { amountIdx = 12, critIdx = 18 },
     SWING_DAMAGE_LANDED = { amountIdx = 12, critIdx = 18 },
@@ -1521,15 +1601,13 @@ local function OnCombatLogPressure()
     if not CombatLogGetCurrentEventInfo then return end
     if not bit_band then return end
 
-    local p = { CombatLogGetCurrentEventInfo() }
-    local subevent = p[2]
+    local _, subevent, _, sourceGUID, _, sourceFlags, _, _, _, _, _, arg12, arg13, _, arg15, _, _, arg18, _, _, arg21 =
+        CombatLogGetCurrentEventInfo()
     local info = SUBEVENT_MAP[subevent]
-    local sourceFlags = p[6]
     if not sourceFlags or bit_band(sourceFlags, AFFILIATION_MINE) == 0 then return end
-    local sourceGUID = p[4]
     local isPlayerSource = IsPlayerSource(sourceGUID)
-    local spellId = p[12]
-    local spellName = p[13]
+    local spellId = arg12
+    local spellName = arg13
     local now = GetTime()
 
     if subevent == "SPELL_CAST_SUCCESS" then
@@ -1549,7 +1627,7 @@ local function OnCombatLogPressure()
             or IsWindfuryAttackSpell(spellId, spellName)
             or SpellNameContains(spellName, "Windfury")
         ) then
-            local extraCount = p[15]
+            local extraCount = arg15
             local pendingTotemSwings = 0
             if spellId == WINDFURY_TOTEM_EXTRA_ATTACKS_SPELL_ID then
                 pendingTotemSwings = (extraCount and extraCount > 0) and extraCount or 1
@@ -1561,10 +1639,20 @@ local function OnCombatLogPressure()
 
     if not info then return end
 
-    local amount = p[info.amountIdx]
+    local amount
+    if info.amountIdx == 12 then
+        amount = arg12
+    else
+        amount = arg15
+    end
     if not amount or amount <= 0 then return end
 
-    local critFlag = p[info.critIdx]
+    local critFlag
+    if info.critIdx == 18 then
+        critFlag = arg18
+    else
+        critFlag = arg21
+    end
     local isCrit = (critFlag == true or critFlag == 1)
 
     if not PS.firstPressureAt then
@@ -1581,8 +1669,8 @@ local function OnCombatLogPressure()
     PS.recentHitImpulse = PS.recentHitImpulse + feedAmount
     PS.lastDamageTime = now
 
-    spellId = info.spellIdIdx and p[info.spellIdIdx]
-    spellName = info.spellIdIdx and p[13]
+    spellId = info.spellIdIdx and arg12
+    spellName = info.spellIdIdx and arg13
 
     if isPlayerSource then
         if IsChainLightningSpell(spellId, spellName) then
@@ -1783,8 +1871,7 @@ local function ResetPressureState()
     PS.firstPressureAt = nil
     PS.lastDamageTime = 0
     PS.pressureElapsed = 0
-    PS.pressureSamples = {}
-    PS.pressureSampleHead = 1
+    ClearPressureSamples()
     PS.bucketStatsElapsed = 0
     for wi = 1, NUM_WINDOWS do
         PS.pressureBucketAvg[wi] = 0
@@ -1810,8 +1897,84 @@ end
 
 ShammyTime.ResetPressureState = ResetPressureState
 
+local function HasDriverPopupActivity()
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        if slot and ((slot.base and slot.base.active) or (slot.overlay and slot.overlay.active)) then
+            return true
+        end
+    end
+    return false
+end
+
+local function HasResidualPressureVisual()
+    if (PS.currentTier or 0) > 0 then return true end
+    if (PS.pressureDisplaySmoothed or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
+    if (PS.squeezeCharge or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
+    if (PS.pressureComposite or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
+    if colorOverlayFillVisible and (colorOverlayFillFrac or 0) > PRESSURE_VISUAL_CFG.visualOverlayEps then return true end
+    for i = 2, #gaugeCurrentAlpha do
+        if (gaugeCurrentAlpha[i] or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then
+            return true
+        end
+    end
+    return false
+end
+
+local function EnterPressureIdleState()
+    PS.pressureElapsed = 0
+    PS.fastCharge = 0
+    PS.slowCharge = 0
+    PS.pressureRatio = 0
+    PS.pressureDisplaySmoothed = 0
+    PS.pressureComposite = 0
+    PS.instantScore = 0
+    PS.squeezeScore = 0
+    PS.tierScore = 0
+    PS.tierEvalScore = 0
+    PS.tierEdgeResistance = 0
+    PS.tierEdgeSlip = 0
+    PS.tierMomentumBoost = 0
+    PS.squeezeCharge = 0
+    PS.recentHitImpulse = 0
+    PS.tierCapReason = "ok"
+    PS.firstPressureAt = nil
+    ClearPressureSamples()
+    PS.bucketStatsElapsed = 0
+    for wi = 1, NUM_WINDOWS do
+        PS.pressureBucketAvg[wi] = 0
+        PS.pressureBucketMax[wi] = 0
+    end
+end
+
+local pressureMathIdle = false
+local pressureTickFrame = nil
+local pressureTickRunning = false
+
 local function OnPressureTick(_, dt)
     local now = GetTime()
+    local hadPopupActivity = HasDriverPopupActivity()
+
+    local recentDamage = false
+    if PS.lastDamageTime and PS.lastDamageTime > 0 then
+        recentDamage = (now - PS.lastDamageTime) <= PRESSURE_VISUAL_CFG.idleDamageGraceSec
+    end
+
+    local residualVisual = HasResidualPressureVisual()
+    if (not recentDamage) and (not hadPopupActivity) and (not residualVisual) then
+        if not pressureMathIdle then
+            EnterPressureIdleState()
+            pressureMathIdle = true
+        end
+        if pressureTickFrame and pressureTickRunning then
+            pressureTickFrame:SetScript("OnUpdate", nil)
+            pressureTickRunning = false
+        end
+        return
+    end
+    pressureMathIdle = false
+
+    -- Only update popup state when there's potential activity.
     UpdateDriverPopupState(now)
 
     PS.pressureElapsed = PS.pressureElapsed + dt
@@ -1830,34 +1993,47 @@ local function OnPressureTick(_, dt)
     dampedDen = math_max(dampedDen, PS.denominatorFloor)
     PS.pressureRatio = PS.fastCharge / math_max(dampedDen, PS.epsilon)
 
-    local ns = #PS.pressureSamples + 1
-    PS.pressureSamples[ns] = { t = now, p = PS.pressureRatio }
+    local sampleMaxCount = math_max(PS.pressureSampleMaxCount or 7000, 64)
+    local nextTail = (PS.pressureSampleTail or 0) + 1
+    if nextTail > sampleMaxCount then
+        nextTail = 1
+    end
+    PS.pressureSampleTail = nextTail
+    PS.pressureSamples[nextTail] = now
+    PS.pressureSampleValues[nextTail] = PS.pressureRatio
+    if (PS.pressureSampleCount or 0) >= sampleMaxCount then
+        local newHead = (PS.pressureSampleHead or 1) + 1
+        if newHead > sampleMaxCount then
+            newHead = 1
+        end
+        PS.pressureSampleHead = newHead
+    else
+        PS.pressureSampleCount = (PS.pressureSampleCount or 0) + 1
+        if PS.pressureSampleCount == 1 then
+            PS.pressureSampleHead = nextTail
+        end
+    end
 
     local sampleCutoff = now - PS.pressureSampleRetention
-    while PS.pressureSampleHead <= ns do
-        local headSample = PS.pressureSamples[PS.pressureSampleHead]
-        if not headSample then
-            PS.pressureSampleHead = PS.pressureSampleHead + 1
-        elseif headSample.t < sampleCutoff then
-            PS.pressureSamples[PS.pressureSampleHead] = nil
-            PS.pressureSampleHead = PS.pressureSampleHead + 1
+    while (PS.pressureSampleCount or 0) > 0 do
+        local headIdx = PS.pressureSampleHead or 1
+        local headTime = PS.pressureSamples[headIdx]
+        if not headTime or headTime < sampleCutoff then
+            PS.pressureSamples[headIdx] = nil
+            PS.pressureSampleValues[headIdx] = nil
+            local newHead = headIdx + 1
+            if newHead > sampleMaxCount then
+                newHead = 1
+            end
+            PS.pressureSampleHead = newHead
+            PS.pressureSampleCount = (PS.pressureSampleCount or 0) - 1
         else
             break
         end
     end
-
-    if PS.pressureSampleHead > 1 and PS.pressureSampleHead > (ns / 2) then
-        local newArr = {}
-        local j = 0
-        for i = PS.pressureSampleHead, ns do
-            local sample = PS.pressureSamples[i]
-            if sample then
-                j = j + 1
-                newArr[j] = sample
-            end
-        end
-        PS.pressureSamples = newArr
+    if (PS.pressureSampleCount or 0) <= 0 then
         PS.pressureSampleHead = 1
+        PS.pressureSampleTail = 0
     end
 
     PS.bucketStatsElapsed = PS.bucketStatsElapsed + elapsed
@@ -1868,19 +2044,26 @@ local function OnPressureTick(_, dt)
             PS.pressureBucketMax[wi] = 0
         end
         local bucketCount = { 0, 0, 0, 0, 0 }
-        for i = PS.pressureSampleHead, #PS.pressureSamples do
-            local sample = PS.pressureSamples[i]
-            if sample then
-                local age = now - sample.t
+        local sampleCount = PS.pressureSampleCount or 0
+        local sampleIdx = PS.pressureSampleHead or 1
+        for _ = 1, sampleCount do
+            local sampleTime = PS.pressureSamples[sampleIdx]
+            local samplePressure = PS.pressureSampleValues[sampleIdx]
+            if sampleTime and samplePressure then
+                local age = now - sampleTime
                 for wi = 1, NUM_WINDOWS do
                     if age <= WINDOWS[wi] then
-                        PS.pressureBucketAvg[wi] = PS.pressureBucketAvg[wi] + sample.p
+                        PS.pressureBucketAvg[wi] = PS.pressureBucketAvg[wi] + samplePressure
                         bucketCount[wi] = bucketCount[wi] + 1
-                        if sample.p > PS.pressureBucketMax[wi] then
-                            PS.pressureBucketMax[wi] = sample.p
+                        if samplePressure > PS.pressureBucketMax[wi] then
+                            PS.pressureBucketMax[wi] = samplePressure
                         end
                     end
                 end
+            end
+            sampleIdx = sampleIdx + 1
+            if sampleIdx > sampleMaxCount then
+                sampleIdx = 1
             end
         end
         for wi = 1, NUM_WINDOWS do
@@ -1962,8 +2145,9 @@ local function OnPressureTick(_, dt)
     ExportPressureState()
 end
 
-local pressureTickFrame = CreateFrame("Frame")
+pressureTickFrame = CreateFrame("Frame")
 pressureTickFrame:SetScript("OnUpdate", OnPressureTick)
+pressureTickRunning = true
 
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -1980,7 +2164,15 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
         return
     end
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        local beforeLastDamage = PS.lastDamageTime or 0
         OnCombatLogPressure()
+        local now = GetTime()
+        local recentRelevantDamage = (PS.lastDamageTime or 0) > beforeLastDamage
+            and ((now - (PS.lastDamageTime or 0)) <= PRESSURE_VISUAL_CFG.idleDamageGraceSec)
+        if pressureTickFrame and not pressureTickRunning and (recentRelevantDamage or HasDriverPopupActivity()) then
+            pressureTickFrame:SetScript("OnUpdate", OnPressureTick)
+            pressureTickRunning = true
+        end
     end
 end)
 
@@ -1999,6 +2191,12 @@ end
 ShammyTime.IsPressureActive = function(windowSec)
     local sec = tonumber(windowSec) or 3.0
     if sec < 0.1 then sec = 0.1 end
+    if HasDriverPopupActivity() then
+        return true
+    end
+    if HasResidualPressureVisual() then
+        return true
+    end
     if PS.currentTier and PS.currentTier > 0 then
         return true
     end

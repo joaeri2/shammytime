@@ -101,6 +101,7 @@ Quickly set the fade behaviour for every module at once. **Always Visible** keep
 | **/st reset** | Reset all settings to defaults. |
 | **/st print** | Export current settings to chat. |
 | **/st dev on\|off** | Show or hide the Developer tab in options. |
+| **/st dev performance** | Toggle simple ShammyTime memory/CPU monitor. For CPU numbers, run **/console scriptProfile 1** and then **/reload** first. |
 | **/st resync** | Tell stagger bar you pressed the resync macro (add to macro so OH bar resets to 50%). |
 
 You can use **/shammytime** instead of **/st**.

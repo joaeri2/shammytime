@@ -2105,6 +2105,9 @@ local function PrintMainHelp()
     print(C.gray .. "    • " .. C.gold .. "/st reset" .. C.r .. C.gray .. "  — Reset all settings to defaults" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st print" .. C.r .. C.gray .. "  — Export settings to chat" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st dev on|off" .. C.r .. C.gray .. "  — Toggle Developer tab in options" .. C.r)
+    print(C.gray .. "    • " .. C.gold .. "/st dev performance" .. C.r .. C.gray .. "  — Toggle simple ShammyTime CPU/memory monitor" .. C.r)
+    print(C.gray .. "        " .. C.gold .. "Perf cmds:" .. C.r .. C.gray .. " /st dev performance [on|off|status|refresh|gc]" .. C.r)
+    print(C.gray .. "        " .. C.gold .. "CPU note:" .. C.r .. C.gray .. " run " .. C.gold .. "/console scriptProfile 1" .. C.r .. C.gray .. " then " .. C.gold .. "/reload" .. C.r .. C.gray .. " to enable CPU numbers" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st resync" .. C.r .. C.gray .. "  — Tell stagger bar you pressed the resync macro (add to macro so OH bar resets to 50%)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st staggerdebug [on|off]" .. C.r .. C.gray .. "  — Toggle stagger swing log (Left/Right hits and misses to chat; default off)" .. C.r)
     print(C.gray .. "    • " .. C.gold .. "/st pressure" .. C.r .. C.gray .. "  — Toggle pressure debug panel (bar + bucket stats for tuning)" .. C.r)
@@ -2378,7 +2381,9 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         end
     -- Developer mode toggle
     elseif cmd == "dev" or cmd == "developer" then
-        local sub = arg:lower()
+        local sub, rest = arg:match("^(%S+)%s*(.*)$")
+        sub = sub and sub:lower() or ""
+        rest = rest and rest:gsub("^%s+", ""):gsub("%s+$", ""):lower() or ""
         local g = db.global or {}
         if sub == "on" or sub == "enable" or sub == "1" then
             db.global = db.global or {}
@@ -2388,9 +2393,49 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             db.global = db.global or {}
             db.global.devMode = false
             print(C.green .. "ShammyTime: Developer mode OFF." .. C.r)
+        elseif sub == "performance" or sub == "perf" then
+            local addon = _G.ShammyTime
+            if not addon or not addon.TogglePerformanceMonitor then
+                print(C.red .. "ShammyTime: Performance monitor is not available." .. C.r)
+                return
+            end
+            if rest == "on" or rest == "enable" or rest == "1" then
+                addon:ShowPerformanceMonitor()
+                print(C.green .. "ShammyTime: Performance monitor ON." .. C.r .. C.gray .. " " .. addon:GetPerformanceStatsText(true) .. C.r)
+            elseif rest == "off" or rest == "disable" or rest == "0" then
+                addon:HidePerformanceMonitor()
+                print(C.green .. "ShammyTime: Performance monitor OFF." .. C.r)
+            elseif rest == "status" then
+                print(C.gray .. "ShammyTime: " .. addon:GetPerformanceStatsText(true) .. C.r)
+            elseif rest == "refresh" or rest == "sample" then
+                if addon.UpdatePerformanceMonitorText then addon:UpdatePerformanceMonitorText(true) end
+                print(C.gray .. "ShammyTime: " .. addon:GetPerformanceStatsText(true) .. C.r)
+            elseif rest == "gc" or rest == "collect" then
+                local before = addon:GetPerformanceStatsText(true)
+                if collectgarbage then
+                    collectgarbage("collect")
+                end
+                if addon.UpdatePerformanceMonitorText then addon:UpdatePerformanceMonitorText(true) end
+                local after = addon:GetPerformanceStatsText(true)
+                print(C.gray .. "ShammyTime: Forced Lua GC." .. C.r)
+                print(C.gray .. "  Before: " .. before .. C.r)
+                print(C.gray .. "  After:  " .. after .. C.r)
+            elseif rest == "" then
+                local enabled = addon:TogglePerformanceMonitor()
+                if enabled then
+                    print(C.green .. "ShammyTime: Performance monitor ON." .. C.r .. C.gray .. " " .. addon:GetPerformanceStatsText(true) .. C.r)
+                else
+                    print(C.green .. "ShammyTime: Performance monitor OFF." .. C.r)
+                end
+            else
+                print(C.gray .. "ShammyTime: Use " .. C.gold .. "/st dev performance" .. C.r .. C.gray .. " [on|off|status|refresh|gc]." .. C.r)
+            end
         else
             local current = (db.global and db.global.devMode) and "ON" or "OFF"
             print(C.gray .. "ShammyTime: Developer mode is " .. C.gold .. current .. C.r .. C.gray .. ". Use " .. C.gold .. "/st dev on" .. C.r .. C.gray .. " or " .. C.gold .. "/st dev off" .. C.r)
+            if _G.ShammyTime and _G.ShammyTime.GetPerformanceStatsText then
+                print(C.gray .. "ShammyTime: " .. C.gold .. "/st dev performance" .. C.r .. C.gray .. " toggles the performance monitor." .. C.r)
+            end
         end
     -- Global test: Windfury proc + Shamanistic Focus (one proc immediately, then every 10s). Run /st test again to stop.
     elseif cmd == "test" then

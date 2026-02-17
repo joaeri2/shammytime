@@ -369,6 +369,22 @@ local function BuildFullExportLines(useColorCodes)
     line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 6.00))
     line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 2.00))
     line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
+    line("pressureTierConcavityDepth = " .. tostring(p.pressureTierConcavityDepth or 0.00))
+    line("pressureTierMomentumOnPromote = " .. tostring(p.pressureTierMomentumOnPromote or 0.08))
+    line("pressureTierMomentumPerTier = " .. tostring(p.pressureTierMomentumPerTier or 0.04))
+    line("pressureTierMomentumMax = " .. tostring(p.pressureTierMomentumMax or 0.22))
+    line("pressureTierMomentumDecayTau = " .. tostring(p.pressureTierMomentumDecayTau or 3.20))
+    line("pressureTierMomentumIdleDecayTau = " .. tostring(p.pressureTierMomentumIdleDecayTau or 1.15))
+    line("pressureTierDamageReq1 = " .. tostring(p.pressureTierDamageReq1 or 1.50))
+    line("pressureTierDamageReq2 = " .. tostring(p.pressureTierDamageReq2 or 1.85))
+    line("pressureTierDamageReq3 = " .. tostring(p.pressureTierDamageReq3 or 2.32))
+    line("pressureTierDamageReq4 = " .. tostring(p.pressureTierDamageReq4 or 3.05))
+    line("pressureTierDamageReq5 = " .. tostring(p.pressureTierDamageReq5 or 3.90))
+    line("pressureTierForceReq1 = " .. tostring(p.pressureTierForceReq1 or 0.00))
+    line("pressureTierForceReq2 = " .. tostring(p.pressureTierForceReq2 or 0.18))
+    line("pressureTierForceReq3 = " .. tostring(p.pressureTierForceReq3 or 0.35))
+    line("pressureTierForceReq4 = " .. tostring(p.pressureTierForceReq4 or 0.70))
+    line("pressureTierForceReq5 = " .. tostring(p.pressureTierForceReq5 or 0.92))
     line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
     line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -104))
     line("pressureSlot1TextX = " .. tostring(p.pressureSlot1TextX or 0))
@@ -1847,6 +1863,57 @@ function ShammyTime:SetupOptions()
                         order = 2,
                         func = ExportAllToClipboard,
                     },
+                    performanceHeader = {
+                        type = "header",
+                        name = "Performance Monitor",
+                        order = 3,
+                    },
+                    performanceDesc = {
+                        type = "description",
+                        name = "Simple ShammyTime memory/CPU monitor.\nUse |cffffd700/st dev performance|r to toggle from chat.\nCPU numbers require: |cffffd700/console scriptProfile 1|r then |cffffd700/reload|r.",
+                        order = 3.05,
+                        width = "full",
+                    },
+                    performanceStatus = {
+                        type = "description",
+                        name = function()
+                            local st = _G.ShammyTime
+                            if st and st.GetPerformanceStatsText then
+                                return "Current: " .. st:GetPerformanceStatsText(true)
+                            end
+                            return "Current: unavailable"
+                        end,
+                        order = 3.1,
+                        width = "full",
+                    },
+                    performanceToggle = {
+                        type = "execute",
+                        name = "Toggle Monitor",
+                        order = 3.2,
+                        width = "half",
+                        func = function()
+                            local st = _G.ShammyTime
+                            if not st or not st.TogglePerformanceMonitor then return end
+                            local enabled = st:TogglePerformanceMonitor()
+                            if enabled then
+                                print("|cff00ff00ShammyTime:|r Performance monitor ON.")
+                            else
+                                print("|cff00ff00ShammyTime:|r Performance monitor OFF.")
+                            end
+                        end,
+                    },
+                    performanceRefresh = {
+                        type = "execute",
+                        name = "Refresh Sample",
+                        order = 3.3,
+                        width = "half",
+                        func = function()
+                            local st = _G.ShammyTime
+                            if not st or not st.GetPerformanceStatsText then return end
+                            if st.UpdatePerformanceMonitorText then st:UpdatePerformanceMonitorText(true) end
+                            print("|cff00ff00ShammyTime:|r " .. st:GetPerformanceStatsText(true))
+                        end,
+                    },
                     ---------------------------------------------------------
                     -- Center Ring
                     ---------------------------------------------------------
@@ -2454,6 +2521,161 @@ function ShammyTime:SetupOptions()
                         order = 88.2,
                         get = function() return getFlatDB("pressureSlot3TextY", -18) end,
                         set = function(_, v) setFlatDB("pressureSlot3TextY", v) end,
+                    },
+                    pressureEngineTuneHeader = {
+                        type = "header",
+                        name = "Pressure Engine Tuning",
+                        order = 89,
+                    },
+                    pressureEngineTuneDesc = {
+                        type = "description",
+                        name = "Developer-only pressure tuning. Adjust momentum, per-tier damage breakpoints, per-tier force gates, and concavity depth (easier early climb, tougher high-end push).",
+                        order = 89.05,
+                        width = "full",
+                    },
+                    pressureTierConcavityDepth = {
+                        type = "range",
+                        name = "Concavity Depth",
+                        desc = "Adds gravity near the top of each tier segment (higher = easier around mid-fill, harder near 70%-100%).",
+                        min = 0.00, max = 3.00, step = 0.01,
+                        order = 89.1,
+                        get = function() return getFlatDB("pressureTierConcavityDepth", 0.00) end,
+                        set = function(_, v) setFlatDB("pressureTierConcavityDepth", v) end,
+                    },
+                    pressureTierMomentumOnPromote = {
+                        type = "range",
+                        name = "Momentum Gain On Promote",
+                        desc = "Extra momentum injected on each successful tier promotion.",
+                        min = 0.00, max = 1.00, step = 0.01,
+                        order = 89.2,
+                        get = function() return getFlatDB("pressureTierMomentumOnPromote", 0.08) end,
+                        set = function(_, v) setFlatDB("pressureTierMomentumOnPromote", v) end,
+                    },
+                    pressureTierMomentumPerTier = {
+                        type = "range",
+                        name = "Momentum Per Tier",
+                        desc = "Passive momentum bonus per current tier (higher tiers carry more momentum).",
+                        min = 0.00, max = 0.25, step = 0.005,
+                        order = 89.3,
+                        get = function() return getFlatDB("pressureTierMomentumPerTier", 0.04) end,
+                        set = function(_, v) setFlatDB("pressureTierMomentumPerTier", v) end,
+                    },
+                    pressureTierMomentumMax = {
+                        type = "range",
+                        name = "Momentum Max",
+                        desc = "Maximum momentum bonus cap.",
+                        min = 0.00, max = 1.50, step = 0.01,
+                        order = 89.4,
+                        get = function() return getFlatDB("pressureTierMomentumMax", 0.22) end,
+                        set = function(_, v) setFlatDB("pressureTierMomentumMax", v) end,
+                    },
+                    pressureTierMomentumDecayTau = {
+                        type = "range",
+                        name = "Momentum Decay Tau",
+                        desc = "How quickly momentum decays during normal pressure activity.",
+                        min = 0.20, max = 12.0, step = 0.05,
+                        order = 89.5,
+                        get = function() return getFlatDB("pressureTierMomentumDecayTau", 3.20) end,
+                        set = function(_, v) setFlatDB("pressureTierMomentumDecayTau", v) end,
+                    },
+                    pressureTierMomentumIdleDecayTau = {
+                        type = "range",
+                        name = "Momentum Idle Decay Tau",
+                        desc = "How quickly momentum decays while idle.",
+                        min = 0.10, max = 8.0, step = 0.05,
+                        order = 89.6,
+                        get = function() return getFlatDB("pressureTierMomentumIdleDecayTau", 1.15) end,
+                        set = function(_, v) setFlatDB("pressureTierMomentumIdleDecayTau", v) end,
+                    },
+                    pressureTierDamageReq1 = {
+                        type = "range",
+                        name = "Damage Req T1",
+                        desc = "Damage pressure needed to break into tier 1.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 89.7,
+                        get = function() return getFlatDB("pressureTierDamageReq1", 1.50) end,
+                        set = function(_, v) setFlatDB("pressureTierDamageReq1", v) end,
+                    },
+                    pressureTierDamageReq2 = {
+                        type = "range",
+                        name = "Damage Req T2",
+                        desc = "Damage pressure needed to break into tier 2.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 89.8,
+                        get = function() return getFlatDB("pressureTierDamageReq2", 1.85) end,
+                        set = function(_, v) setFlatDB("pressureTierDamageReq2", v) end,
+                    },
+                    pressureTierDamageReq3 = {
+                        type = "range",
+                        name = "Damage Req T3",
+                        desc = "Damage pressure needed to break into tier 3.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 89.9,
+                        get = function() return getFlatDB("pressureTierDamageReq3", 2.32) end,
+                        set = function(_, v) setFlatDB("pressureTierDamageReq3", v) end,
+                    },
+                    pressureTierDamageReq4 = {
+                        type = "range",
+                        name = "Damage Req T4",
+                        desc = "Damage pressure needed to break into tier 4.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 90.0,
+                        get = function() return getFlatDB("pressureTierDamageReq4", 3.05) end,
+                        set = function(_, v) setFlatDB("pressureTierDamageReq4", v) end,
+                    },
+                    pressureTierDamageReq5 = {
+                        type = "range",
+                        name = "Damage Req T5",
+                        desc = "Damage pressure needed to break into tier 5.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 90.1,
+                        get = function() return getFlatDB("pressureTierDamageReq5", 3.90) end,
+                        set = function(_, v) setFlatDB("pressureTierDamageReq5", v) end,
+                    },
+                    pressureTierForceReq1 = {
+                        type = "range",
+                        name = "Force Req T1",
+                        desc = "Minimum force gate (squeeze) required to enter tier 1.",
+                        min = 0.00, max = 1.00, step = 0.01,
+                        order = 90.2,
+                        get = function() return getFlatDB("pressureTierForceReq1", 0.00) end,
+                        set = function(_, v) setFlatDB("pressureTierForceReq1", v) end,
+                    },
+                    pressureTierForceReq2 = {
+                        type = "range",
+                        name = "Force Req T2",
+                        desc = "Minimum force gate (squeeze) required to enter tier 2.",
+                        min = 0.00, max = 1.00, step = 0.01,
+                        order = 90.3,
+                        get = function() return getFlatDB("pressureTierForceReq2", 0.18) end,
+                        set = function(_, v) setFlatDB("pressureTierForceReq2", v) end,
+                    },
+                    pressureTierForceReq3 = {
+                        type = "range",
+                        name = "Force Req T3",
+                        desc = "Minimum force gate (squeeze) required to enter tier 3.",
+                        min = 0.00, max = 1.00, step = 0.01,
+                        order = 90.4,
+                        get = function() return getFlatDB("pressureTierForceReq3", 0.35) end,
+                        set = function(_, v) setFlatDB("pressureTierForceReq3", v) end,
+                    },
+                    pressureTierForceReq4 = {
+                        type = "range",
+                        name = "Force Req T4",
+                        desc = "Minimum force gate (squeeze) required to enter tier 4.",
+                        min = 0.00, max = 1.00, step = 0.01,
+                        order = 90.5,
+                        get = function() return getFlatDB("pressureTierForceReq4", 0.70) end,
+                        set = function(_, v) setFlatDB("pressureTierForceReq4", v) end,
+                    },
+                    pressureTierForceReq5 = {
+                        type = "range",
+                        name = "Force Req T5",
+                        desc = "Minimum force gate (squeeze) required to enter tier 5.",
+                        min = 0.00, max = 1.00, step = 0.01,
+                        order = 90.6,
+                        get = function() return getFlatDB("pressureTierForceReq5", 0.92) end,
+                        set = function(_, v) setFlatDB("pressureTierForceReq5", v) end,
                     },
                 },
             },

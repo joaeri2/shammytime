@@ -10,6 +10,101 @@ local AceEvent = LibStub("AceEvent-3.0")
 local ShammyTime = AceAddon:NewAddon("ShammyTime", "AceEvent-3.0")
 _G.ShammyTime = ShammyTime
 
+local PERF_MONITOR_TICK_SEC = 2.0
+local PERF_SAMPLE_CACHE_SEC = 0.20
+
+local CAddOns = C_AddOns
+local CVarAPI = C_CVar
+
+local AddOnsGetNum = (CAddOns and CAddOns.GetNumAddOns) or GetNumAddOns
+local AddOnsGetInfo = (CAddOns and CAddOns.GetAddOnInfo) or GetAddOnInfo
+local AddOnsUpdateMemory = (CAddOns and CAddOns.UpdateAddOnMemoryUsage) or UpdateAddOnMemoryUsage
+local AddOnsGetMemory = (CAddOns and CAddOns.GetAddOnMemoryUsage) or GetAddOnMemoryUsage
+local AddOnsUpdateCPU = (CAddOns and CAddOns.UpdateAddOnCPUUsage) or UpdateAddOnCPUUsage
+local AddOnsGetCPU = (CAddOns and CAddOns.GetAddOnCPUUsage) or GetAddOnCPUUsage
+
+local function GetScriptProfileState()
+    local getBool = GetCVarBool or (CVarAPI and CVarAPI.GetCVarBool)
+    if getBool then
+        local ok, enabled = pcall(getBool, "scriptProfile")
+        if ok then
+            return enabled and true or false, true
+        end
+    end
+
+    local getValue = GetCVar or (CVarAPI and CVarAPI.GetCVar)
+    if getValue then
+        local ok, raw = pcall(getValue, "scriptProfile")
+        if ok then
+            local txt = tostring(raw or ""):lower()
+            if txt == "1" or txt == "true" then return true, true end
+            if txt == "0" or txt == "false" then return false, true end
+        end
+    end
+
+    return nil, false
+end
+
+local function GetAddOnInfoPair(idOrName)
+    if not AddOnsGetInfo then return nil, nil end
+    local ok, a, b = pcall(AddOnsGetInfo, idOrName)
+    if not ok then return nil, nil end
+    if type(a) == "table" then
+        local name = a.name or a.Name or a.addonName
+        local title = a.title or a.Title
+        return name, title
+    end
+    return a, b
+end
+
+local function GetShammyTimeAddonIdentity()
+    if ShammyTime._perfAddonIndex and ShammyTime._perfAddonIndex > 0 then
+        return ShammyTime._perfAddonIndex, ShammyTime._perfAddonName or "ShammyTime"
+    end
+
+    local directName = select(1, GetAddOnInfoPair("ShammyTime"))
+    if type(directName) == "string" and directName ~= "" then
+        ShammyTime._perfAddonName = directName
+    end
+
+    if not AddOnsGetNum or not AddOnsGetInfo then
+        return nil, ShammyTime._perfAddonName or "ShammyTime"
+    end
+    local okCount, count = pcall(AddOnsGetNum)
+    if not okCount or type(count) ~= "number" or count <= 0 then
+        return nil, ShammyTime._perfAddonName or "ShammyTime"
+    end
+    local target = (ShammyTime._perfAddonName or "ShammyTime"):lower()
+    for i = 1, count do
+        local name, title = GetAddOnInfoPair(i)
+        local nameLower = type(name) == "string" and name:lower() or nil
+        local titleLower = type(title) == "string" and title:lower() or nil
+        if nameLower == target or nameLower == "shammytime" or (titleLower and titleLower:find("shammytime", 1, true)) then
+            ShammyTime._perfAddonIndex = i
+            ShammyTime._perfAddonName = type(name) == "string" and name or "ShammyTime"
+            return i, ShammyTime._perfAddonName
+        end
+    end
+    return nil, ShammyTime._perfAddonName or "ShammyTime"
+end
+
+local function GetAddOnMetricValue(getFn, addonIndex, addonName)
+    if not getFn then return nil end
+    if addonIndex and addonIndex > 0 then
+        local okIndex, valueByIndex = pcall(getFn, addonIndex)
+        if okIndex and type(valueByIndex) == "number" then
+            return valueByIndex
+        end
+    end
+    if addonName and addonName ~= "" then
+        local okName, valueByName = pcall(getFn, addonName)
+        if okName and type(valueByName) == "number" then
+            return valueByName
+        end
+    end
+    return nil
+end
+
 -- Per-module default structure (spec)
 local function moduleDefaults(enabled, scale, alpha)
     return {
@@ -163,6 +258,22 @@ local DEFAULTS = {
         pressurePopupSustainSec = 6.00,
         pressurePopupCritBounceScale = 2.00,
         pressurePopupCritBounceSec = 0.20,
+        pressureTierConcavityDepth = 0.00,
+        pressureTierMomentumOnPromote = 0.08,
+        pressureTierMomentumPerTier = 0.04,
+        pressureTierMomentumMax = 0.22,
+        pressureTierMomentumDecayTau = 3.20,
+        pressureTierMomentumIdleDecayTau = 1.15,
+        pressureTierDamageReq1 = 1.50,
+        pressureTierDamageReq2 = 1.85,
+        pressureTierDamageReq3 = 2.32,
+        pressureTierDamageReq4 = 3.05,
+        pressureTierDamageReq5 = 3.90,
+        pressureTierForceReq1 = 0.00,
+        pressureTierForceReq2 = 0.18,
+        pressureTierForceReq3 = 0.35,
+        pressureTierForceReq4 = 0.70,
+        pressureTierForceReq5 = 0.92,
         imbueBarScale = 0.75,
         imbueBarMargin = nil,
         imbueBarGap = nil,
@@ -266,6 +377,242 @@ function ShammyTime:ScheduleErrorTextSettingApply(delaySec)
     end)
 end
 
+--- Capture one performance sample (memory always; CPU when script profiling is available/enabled).
+function ShammyTime:GetPerformanceSample(force)
+    local now = (GetTime and GetTime()) or 0
+    local sample = self._perfSample
+    if sample and not force and sample.at and (now - sample.at) <= PERF_SAMPLE_CACHE_SEC then
+        return sample
+    end
+    sample = sample or {}
+
+    local addonIndex, addonName = GetShammyTimeAddonIdentity()
+    local memKB = nil
+    if AddOnsUpdateMemory and AddOnsGetMemory and (addonIndex or addonName) then
+        pcall(AddOnsUpdateMemory)
+        local mem = GetAddOnMetricValue(AddOnsGetMemory, addonIndex, addonName)
+        if type(mem) == "number" then
+            memKB = mem
+        end
+    end
+    if type(memKB) == "number" then
+        sample.memKB = memKB
+        sample.memMB = memKB / 1024
+        sample.memUnavailableReason = nil
+    else
+        sample.memKB = 0
+        sample.memMB = 0
+        if not (AddOnsUpdateMemory and AddOnsGetMemory) then
+            sample.memUnavailableReason = "API unavailable"
+        elseif not (addonIndex or addonName) then
+            sample.memUnavailableReason = "addon not found"
+        else
+            sample.memUnavailableReason = "unavailable"
+        end
+    end
+
+    local cpuApiAvailable = AddOnsUpdateCPU and AddOnsGetCPU and (addonIndex or addonName)
+    local cpuProfilingEnabled, cpuProfilingKnown = GetScriptProfileState()
+    local canSampleCPU = cpuApiAvailable and (cpuProfilingEnabled ~= false)
+
+    if canSampleCPU then
+        local okUpdate = pcall(AddOnsUpdateCPU)
+        local cpuMsTotal = GetAddOnMetricValue(AddOnsGetCPU, addonIndex, addonName)
+        if okUpdate and type(cpuMsTotal) == "number" then
+            local cpuMsPerSec = 0
+            if sample.lastCpuMs ~= nil and sample.lastCpuAt and now > sample.lastCpuAt then
+                cpuMsPerSec = (cpuMsTotal - sample.lastCpuMs) / math.max(now - sample.lastCpuAt, 0.001)
+                if cpuMsPerSec < 0 then cpuMsPerSec = 0 end
+            end
+            local cpuPct = cpuMsPerSec / 10 -- 1000 ms/s == 100%
+            sample.cpuMsTotal = cpuMsTotal
+            sample.cpuMsPerSec = cpuMsPerSec
+            sample.cpuPct = cpuPct
+            sample.cpuUnavailableReason = nil
+            sample.lastCpuMs = cpuMsTotal
+            sample.lastCpuAt = now
+        else
+            sample.cpuMsTotal = nil
+            sample.cpuMsPerSec = nil
+            sample.cpuPct = nil
+            sample.cpuUnavailableReason = "unavailable"
+            sample.lastCpuMs = nil
+            sample.lastCpuAt = nil
+        end
+    else
+        sample.cpuMsTotal = nil
+        sample.cpuMsPerSec = nil
+        sample.cpuPct = nil
+        if not cpuApiAvailable then
+            sample.cpuUnavailableReason = "API unavailable"
+        elseif cpuProfilingEnabled == false then
+            sample.cpuUnavailableReason = "off (run /console scriptProfile 1 then /reload)"
+        elseif not cpuProfilingKnown then
+            sample.cpuUnavailableReason = "unavailable (scriptProfile unknown)"
+        else
+            sample.cpuUnavailableReason = "unavailable"
+        end
+        sample.lastCpuMs = nil
+        sample.lastCpuAt = nil
+    end
+
+    sample.at = now
+    self._perfSample = sample
+    return sample
+end
+
+function ShammyTime:GetPerformanceStatsText(force)
+    local sample = self:GetPerformanceSample(force)
+    local memPart
+    if sample.memUnavailableReason then
+        memPart = "Memory " .. sample.memUnavailableReason
+    else
+        local memKB = sample.memKB or 0
+        if memKB < 1024 then
+            memPart = ("Memory %.0f KB"):format(memKB)
+        else
+            memPart = ("Memory %.2f MB"):format((sample.memMB or 0))
+        end
+    end
+    local cpuPart
+    if sample.cpuUnavailableReason then
+        cpuPart = "CPU " .. sample.cpuUnavailableReason
+    else
+        cpuPart = ("CPU %.2f ms/s (%.2f%%) (total %.1f ms)"):format(
+            sample.cpuMsPerSec or 0,
+            sample.cpuPct or 0,
+            sample.cpuMsTotal or 0
+        )
+    end
+    local shown = self:IsPerformanceMonitorShown() and "ON" or "OFF"
+    return memPart .. " | " .. cpuPart .. " | monitor " .. shown
+end
+
+function ShammyTime:EnsurePerformanceMonitorFrame()
+    if self.performanceMonitorFrame then return self.performanceMonitorFrame end
+    local f = CreateFrame("Frame", "ShammyTimePerformanceMonitorFrame", UIParent)
+    f:SetFrameStrata("DIALOG")
+    f:SetClampedToScreen(true)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetSize(290, 62)
+    f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 24, -260)
+
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(true)
+    bg:SetColorTexture(0, 0, 0, 0.72)
+
+    local border = f:CreateTexture(nil, "BORDER")
+    border:SetPoint("TOPLEFT", -1, 1)
+    border:SetPoint("BOTTOMRIGHT", 1, -1)
+    border:SetColorTexture(1, 1, 1, 0.18)
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    title:SetPoint("TOPLEFT", 8, -6)
+    title:SetJustifyH("LEFT")
+    title:SetText("ShammyTime Performance")
+
+    local text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    text:SetPoint("TOPLEFT", 8, -22)
+    text:SetJustifyH("LEFT")
+    text:SetText("")
+    f.statsText = text
+    f:Hide()
+
+    self.performanceMonitorFrame = f
+    return f
+end
+
+function ShammyTime:IsPerformanceMonitorShown()
+    return self.performanceMonitorFrame and self.performanceMonitorFrame:IsShown() or false
+end
+
+function ShammyTime:UpdatePerformanceMonitorText(force)
+    local f = self:EnsurePerformanceMonitorFrame()
+    local sample = self:GetPerformanceSample(force == true)
+
+    -- Minimize UI/string churn in the dev monitor unless values changed enough.
+    if force ~= true then
+        local memReasonSame = (sample.memUnavailableReason == f._lastMemReason)
+        local cpuReasonSame = (sample.cpuUnavailableReason == f._lastCpuReason)
+        local memChanged = (math.abs((sample.memKB or 0) - (f._lastMemKB or 0)) >= 16)
+        local cpuRateChanged = (math.abs((sample.cpuMsPerSec or 0) - (f._lastCpuMsPerSec or 0)) >= 0.05)
+        local cpuTotalChanged = (math.abs((sample.cpuMsTotal or 0) - (f._lastCpuMsTotal or 0)) >= 0.5)
+        local cpuPctChanged = (math.abs((sample.cpuPct or 0) - (f._lastCpuPct or 0)) >= 0.01)
+        if memReasonSame and cpuReasonSame and (not memChanged) and (not cpuRateChanged) and (not cpuTotalChanged) and (not cpuPctChanged) then
+            return
+        end
+    end
+
+    local memLine
+    if sample.memUnavailableReason then
+        memLine = "Memory: " .. sample.memUnavailableReason
+    else
+        local memKB = sample.memKB or 0
+        if memKB < 1024 then
+            memLine = ("Memory: %.0f KB"):format(memKB)
+        else
+            memLine = ("Memory: %.2f MB"):format(sample.memMB or 0)
+        end
+    end
+    local cpuLine
+    if sample.cpuUnavailableReason then
+        cpuLine = "CPU: " .. sample.cpuUnavailableReason
+    else
+        cpuLine = ("CPU: %.2f ms/s (%.2f%%) | total %.1f ms"):format(
+            sample.cpuMsPerSec or 0,
+            sample.cpuPct or 0,
+            sample.cpuMsTotal or 0
+        )
+    end
+    if f.statsText then
+        f.statsText:SetText(memLine .. "\n" .. cpuLine)
+    end
+    f._lastMemKB = sample.memKB or 0
+    f._lastMemReason = sample.memUnavailableReason
+    f._lastCpuMsPerSec = sample.cpuMsPerSec or 0
+    f._lastCpuMsTotal = sample.cpuMsTotal or 0
+    f._lastCpuPct = sample.cpuPct or 0
+    f._lastCpuReason = sample.cpuUnavailableReason
+end
+
+function ShammyTime:ShowPerformanceMonitor()
+    local f = self:EnsurePerformanceMonitorFrame()
+    f:Show()
+    self:UpdatePerformanceMonitorText(true)
+    if self.performanceMonitorTicker then
+        self.performanceMonitorTicker:Cancel()
+        self.performanceMonitorTicker = nil
+    end
+    self.performanceMonitorTicker = C_Timer.NewTicker(PERF_MONITOR_TICK_SEC, function()
+        local addon = _G.ShammyTime
+        if not addon or not addon.IsPerformanceMonitorShown or not addon:IsPerformanceMonitorShown() then return end
+        if addon.UpdatePerformanceMonitorText then addon:UpdatePerformanceMonitorText(false) end
+    end)
+end
+
+function ShammyTime:HidePerformanceMonitor()
+    if self.performanceMonitorTicker then
+        self.performanceMonitorTicker:Cancel()
+        self.performanceMonitorTicker = nil
+    end
+    if self.performanceMonitorFrame then
+        self.performanceMonitorFrame:Hide()
+    end
+end
+
+function ShammyTime:TogglePerformanceMonitor()
+    if self:IsPerformanceMonitorShown() then
+        self:HidePerformanceMonitor()
+        return false
+    end
+    self:ShowPerformanceMonitor()
+    return true
+end
+
 --- One-time migration from flat ShammyTimeDB to AceDB profile
 function ShammyTime:MigrateOldDB()
     local old = _G.ShammyTimeDB
@@ -355,7 +702,14 @@ function ShammyTime:EvaluateFade(moduleName, context)
     local shouldFade = false
 
     if cond.outOfCombat and not context.inCombat then
-        shouldFade = true
+        if moduleName == "pressureVisual" then
+            -- Keep pressure visible until it fully runs out of steam.
+            if not context.pressureActive then
+                shouldFade = true
+            end
+        else
+            shouldFade = true
+        end
     end
     if cond.noTarget and not context.hasTarget then
         shouldFade = true
@@ -660,6 +1014,7 @@ function ShammyTime:ApplyAllConfigs()
     if ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
     if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
     if ShammyTime.ApplySatelliteBubbleScale then ShammyTime.ApplySatelliteBubbleScale() end
+    if ShammyTime.ApplyPressureTuningSettings then ShammyTime.ApplyPressureTuningSettings() end
     if ShammyTime.ApplyPressurePopupDevSettings then ShammyTime.ApplyPressurePopupDevSettings() end
     if self.UpdateAllElementsFadeState then self:UpdateAllElementsFadeState() end
 end
@@ -887,7 +1242,29 @@ local MODULE_RESET_FLAT_KEYS = {
     pressureVisual = {
         "pressureEnabled",
         "pressureScale",
+        "pressurePopupIconSize",
         "pressurePopupTextSize",
+        "pressurePopupHoldSec",
+        "pressurePopupFadeSec",
+        "pressurePopupSustainSec",
+        "pressurePopupCritBounceScale",
+        "pressurePopupCritBounceSec",
+        "pressureTierConcavityDepth",
+        "pressureTierMomentumOnPromote",
+        "pressureTierMomentumPerTier",
+        "pressureTierMomentumMax",
+        "pressureTierMomentumDecayTau",
+        "pressureTierMomentumIdleDecayTau",
+        "pressureTierDamageReq1",
+        "pressureTierDamageReq2",
+        "pressureTierDamageReq3",
+        "pressureTierDamageReq4",
+        "pressureTierDamageReq5",
+        "pressureTierForceReq1",
+        "pressureTierForceReq2",
+        "pressureTierForceReq3",
+        "pressureTierForceReq4",
+        "pressureTierForceReq5",
     },
 }
 

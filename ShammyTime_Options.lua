@@ -359,6 +359,19 @@ local function BuildFullExportLines(useColorCodes)
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
     line("shieldCountY = " .. tostring(p.shieldCountY or 127))
     line("")
+    sec("Pressure popup slots")
+    line("pressurePopupIconSize = " .. tostring(p.pressurePopupIconSize or 92))
+    line("pressurePopupTextSize = " .. tostring(p.pressurePopupTextSize or 22))
+    line("pressurePopupHoldSec = " .. tostring(p.pressurePopupHoldSec or 2.20))
+    line("pressurePopupFadeSec = " .. tostring(p.pressurePopupFadeSec or 1.20))
+    line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 4.00))
+    line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
+    line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -84))
+    line("pressureSlot2X = " .. tostring(p.pressureSlot2X or 1))
+    line("pressureSlot2Y = " .. tostring(p.pressureSlot2Y or -99))
+    line("pressureSlot3X = " .. tostring(p.pressureSlot3X or 139))
+    line("pressureSlot3Y = " .. tostring(p.pressureSlot3Y or -79))
+    line("")
     sec("Modules (per-element: enabled, scale, alpha, fade)")
     if p.modules then
         for modName in pairs(p.modules) do
@@ -2212,6 +2225,107 @@ function ShammyTime:SetupOptions()
                             local st = _G.ShammyTime
                             if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
                         end,
+                    },
+                    ---------------------------------------------------------
+                    -- Pressure Popup Slots
+                    ---------------------------------------------------------
+                    pressurePopupHeader = {
+                        type = "header",
+                        name = "Pressure Popup Slots",
+                        order = 80,
+                    },
+                    pressurePopupIconSize = {
+                        type = "range",
+                        name = "Icon Size",
+                        desc = "Base icon size for the three pressure popup slots.",
+                        min = 24, max = 192, step = 1,
+                        order = 81,
+                        get = function() return getFlatDB("pressurePopupIconSize", 92) end,
+                        set = function(_, v) setFlatDB("pressurePopupIconSize", v) end,
+                    },
+                    pressurePopupTextSize = {
+                        type = "range",
+                        name = "Text Size",
+                        desc = "Base damage text size for the three pressure popup slots.",
+                        min = 8, max = 72, step = 1,
+                        order = 82,
+                        get = function() return getFlatDB("pressurePopupTextSize", 22) end,
+                        set = function(_, v) setFlatDB("pressurePopupTextSize", v) end,
+                    },
+                    pressurePopupHoldSec = {
+                        type = "range",
+                        name = "Popup Hold (sec)",
+                        desc = "How long non-sustained spell popups stay fully visible before fading.",
+                        min = 0.10, max = 10.0, step = 0.05,
+                        order = 82.1,
+                        get = function() return getFlatDB("pressurePopupHoldSec", 2.20) end,
+                        set = function(_, v) setFlatDB("pressurePopupHoldSec", v) end,
+                    },
+                    pressurePopupFadeSec = {
+                        type = "range",
+                        name = "Popup Fade (sec)",
+                        desc = "Fade duration after hold time ends.",
+                        min = 0.10, max = 10.0, step = 0.05,
+                        order = 82.2,
+                        get = function() return getFlatDB("pressurePopupFadeSec", 1.20) end,
+                        set = function(_, v) setFlatDB("pressurePopupFadeSec", v) end,
+                    },
+                    pressurePopupSustainSec = {
+                        type = "range",
+                        name = "Sustain Linger (sec)",
+                        desc = "How long CL/Flame Shock/Magma stay visible since their last damage event.",
+                        min = 0.20, max = 15.0, step = 0.05,
+                        order = 82.3,
+                        get = function() return getFlatDB("pressurePopupSustainSec", 4.00) end,
+                        set = function(_, v) setFlatDB("pressurePopupSustainSec", v) end,
+                    },
+                    pressureSlot1X = {
+                        type = "range",
+                        name = "Slot 1 X (Casts)",
+                        min = -500, max = 500, step = 1,
+                        order = 83,
+                        get = function() return getFlatDB("pressureSlot1X", -130) end,
+                        set = function(_, v) setFlatDB("pressureSlot1X", v) end,
+                    },
+                    pressureSlot1Y = {
+                        type = "range",
+                        name = "Slot 1 Y (Casts)",
+                        min = -500, max = 500, step = 1,
+                        order = 84,
+                        get = function() return getFlatDB("pressureSlot1Y", -84) end,
+                        set = function(_, v) setFlatDB("pressureSlot1Y", v) end,
+                    },
+                    pressureSlot2X = {
+                        type = "range",
+                        name = "Slot 2 X (Fire)",
+                        min = -500, max = 500, step = 1,
+                        order = 85,
+                        get = function() return getFlatDB("pressureSlot2X", 1) end,
+                        set = function(_, v) setFlatDB("pressureSlot2X", v) end,
+                    },
+                    pressureSlot2Y = {
+                        type = "range",
+                        name = "Slot 2 Y (Fire)",
+                        min = -500, max = 500, step = 1,
+                        order = 86,
+                        get = function() return getFlatDB("pressureSlot2Y", -99) end,
+                        set = function(_, v) setFlatDB("pressureSlot2Y", v) end,
+                    },
+                    pressureSlot3X = {
+                        type = "range",
+                        name = "Slot 3 X (Wind)",
+                        min = -500, max = 500, step = 1,
+                        order = 87,
+                        get = function() return getFlatDB("pressureSlot3X", 139) end,
+                        set = function(_, v) setFlatDB("pressureSlot3X", v) end,
+                    },
+                    pressureSlot3Y = {
+                        type = "range",
+                        name = "Slot 3 Y (Wind)",
+                        min = -500, max = 500, step = 1,
+                        order = 88,
+                        get = function() return getFlatDB("pressureSlot3Y", -79) end,
+                        set = function(_, v) setFlatDB("pressureSlot3Y", v) end,
                     },
                 },
             },

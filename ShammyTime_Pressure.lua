@@ -44,7 +44,28 @@ end
 local DISPLAY_WIDTH = SIZE
 local DISPLAY_HEIGHT = SIZE * VISIBLE_HEIGHT_FRACTION
 
+local SLOT_CASTS = 1
+local SLOT_FIRE = 2
+local SLOT_WIND = 3
+local SLOT_ORDER = { SLOT_CASTS, SLOT_FIRE, SLOT_WIND }
+
 local STORMSTRIKE_SPELL_ID = 17364
+local STORMSTRIKE_SPELL_IDS = {
+    [17364] = true,
+    [32175] = true, -- Stormstrike off-hand damage event
+}
+local LAVA_LASH_SPELL_IDS = {
+    [60103] = true, -- WotLK/Cata-era ID (safe fallback)
+    [73680] = true,
+}
+local CHAIN_LIGHTNING_SPELL_IDS = {
+    [421] = true,
+    [930] = true,
+    [2860] = true,
+    [10605] = true,
+    [25439] = true,
+    [25442] = true,
+}
 local EARTH_SHOCK_SPELL_IDS = {
     [8042] = true,
     [8044] = true,
@@ -55,23 +76,128 @@ local EARTH_SHOCK_SPELL_IDS = {
     [10414] = true,
     [25454] = true,
 }
+local FLAME_SHOCK_SPELL_IDS = {
+    [8050] = true,
+    [8052] = true,
+    [8053] = true,
+    [10447] = true,
+    [10448] = true,
+    [29228] = true,
+    [25457] = true,
+}
+local FROST_SHOCK_SPELL_IDS = {
+    [8056] = true,
+    [8058] = true,
+    [10472] = true,
+    [10473] = true,
+    [25464] = true,
+}
+local FIRE_NOVA_SPELL_IDS = {
+    [1535] = true,
+    [8498] = true,
+    [8499] = true,
+    [11314] = true,
+    [11315] = true,
+    [25546] = true,
+    [61649] = true,
+}
+local MAGMA_TOTEM_SPELL_IDS = {
+    [8187] = true,
+    [10579] = true,
+    [10580] = true,
+    [10581] = true,
+    [25550] = true,
+}
+local WINDFURY_ATTACK_SPELL_ID = 25584
+local WINDFURY_TOTEM_EXTRA_ATTACKS_SPELL_ID = 8516
 
-local SPELL_POPUP_ICON_SIZE = 78
-local SPELL_POPUP_ICON_OFFSET_X = -130
-local SPELL_POPUP_ICON_OFFSET_Y = -90
-local SPELL_POPUP_ICON_ROTATION_DEG = -15
-local SPELL_POPUP_ICON_INSET = 0.08
-local SPELL_POPUP_HOLD_SEC = 1.15
-local SPELL_POPUP_FADE_SEC = 0.90
-local SPELL_POPUP_MERGE_WINDOW = 0.12
+local SLOT_ICON_SIZE_DEFAULT = 92
+local SLOT_ICON_SIZE = SLOT_ICON_SIZE_DEFAULT
+local SLOT_ICON_INSET = 0.08
+local SLOT_POPUP_HOLD_SEC_DEFAULT = 2.20
+local SLOT_POPUP_HOLD_SEC = SLOT_POPUP_HOLD_SEC_DEFAULT
+local SLOT_POPUP_FADE_SEC_DEFAULT = 1.20
+local SLOT_POPUP_FADE_SEC = SLOT_POPUP_FADE_SEC_DEFAULT
+local SLOT_POPUP_SUSTAIN_SEC_DEFAULT = 4.00
+local SLOT_POPUP_SUSTAIN_SEC = SLOT_POPUP_SUSTAIN_SEC_DEFAULT
+local SLOT_BASE_FONT_SIZE_DEFAULT = 22
+local SLOT_BASE_FONT_SIZE = SLOT_BASE_FONT_SIZE_DEFAULT
+local SLOT_JACKPOT_BANG_THRESHOLD = 6000
+local SLOT_ICON_SIZE_MIN = 24
+local SLOT_ICON_SIZE_MAX = 192
+local SLOT_TEXT_SIZE_MIN = 8
+local SLOT_TEXT_SIZE_MAX = 72
+local SLOT_POPUP_HOLD_SEC_MIN = 0.10
+local SLOT_POPUP_HOLD_SEC_MAX = 10.0
+local SLOT_POPUP_FADE_SEC_MIN = 0.10
+local SLOT_POPUP_FADE_SEC_MAX = 10.0
+local SLOT_POPUP_SUSTAIN_SEC_MIN = 0.20
+local SLOT_POPUP_SUSTAIN_SEC_MAX = 15.0
+
 local STORMSTRIKE_SWING_WINDOW_SEC = 0.60
 local STORMSTRIKE_SWING_MAX_HITS = 2
+local CHAIN_LIGHTNING_CAST_WINDOW_SEC = 0.40
+local FLAME_SHOCK_ROLLING_RESET_SEC = 4.50
+local MAGMA_ROLLING_RESET_SEC = 4.50
+local FIRE_AOE_MERGE_WINDOW_SEC = 0.32
+local FIRE_AOE_MIN_POP_INTERVAL_SEC = 0.30
+local WINDFURY_BURST_WINDOW_SEC = (M and M.WF_CORRELATION_WINDOW) or 0.40
+local WINDFURY_MAX_HITS_PER_BURST = 2
 
-local MONITORED_POPUP_SPELL_IDS = {
-    [STORMSTRIKE_SPELL_ID] = true,
+local SLOT_VISUAL = {
+    [SLOT_CASTS] = {
+        offsetX = -130,
+        offsetY = -84,
+        defaultOffsetX = -130,
+        defaultOffsetY = -84,
+        dbXKey = "pressureSlot1X",
+        dbYKey = "pressureSlot1Y",
+        rotationDeg = -15,
+        defaultSpellId = STORMSTRIKE_SPELL_ID,
+        fallbackTexture = "Interface\\Icons\\Spell_Nature_StormStrike",
+    },
+    [SLOT_FIRE] = {
+        offsetX = 1,
+        offsetY = -99,
+        defaultOffsetX = 1,
+        defaultOffsetY = -99,
+        dbXKey = "pressureSlot2X",
+        dbYKey = "pressureSlot2Y",
+        rotationDeg = 0,
+        defaultSpellId = 8187,
+        fallbackTexture = "Interface\\Icons\\Spell_Fire_SealOfFire",
+    },
+    [SLOT_WIND] = {
+        offsetX = 139,
+        offsetY = -79,
+        defaultOffsetX = 139,
+        defaultOffsetY = -79,
+        dbXKey = "pressureSlot3X",
+        dbYKey = "pressureSlot3Y",
+        rotationDeg = 15,
+        defaultSpellId = WINDFURY_ATTACK_SPELL_ID,
+        fallbackTexture = "Interface\\Icons\\Spell_Nature_Cyclone",
+    },
 }
-for spellId in pairs(EARTH_SHOCK_SPELL_IDS) do
-    MONITORED_POPUP_SPELL_IDS[spellId] = true
+
+local function ClampNumber(value, defaultValue, minValue, maxValue)
+    local n = tonumber(value)
+    if not n then
+        n = defaultValue
+    end
+    if minValue and n < minValue then
+        n = minValue
+    end
+    if maxValue and n > maxValue then
+        n = maxValue
+    end
+    return n
+end
+
+local function GetPressurePopupDBNumber(key, defaultValue, minValue, maxValue)
+    local db = ShammyTime.GetDB and ShammyTime.GetDB()
+    local raw = db and db[key]
+    return ClampNumber(raw, defaultValue, minValue, maxValue)
 end
 
 local STACK = {
@@ -107,26 +233,6 @@ for _, info in ipairs(STACK) do
     frame.textures[info.key] = tex
 end
 
-local spellPopupIcon = frame:CreateTexture(nil, "ARTWORK")
-spellPopupIcon:SetDrawLayer("ARTWORK", 1)
-spellPopupIcon:SetSize(SPELL_POPUP_ICON_SIZE, SPELL_POPUP_ICON_SIZE)
-spellPopupIcon:SetPoint("CENTER", frame, "CENTER", SPELL_POPUP_ICON_OFFSET_X, SPELL_POPUP_ICON_OFFSET_Y)
-spellPopupIcon:SetTexture(GetSpellTexture(STORMSTRIKE_SPELL_ID) or "Interface\\Icons\\INV_Misc_QuestionMark")
-spellPopupIcon:SetTexCoord(
-    SPELL_POPUP_ICON_INSET,
-    1 - SPELL_POPUP_ICON_INSET,
-    SPELL_POPUP_ICON_INSET,
-    1 - SPELL_POPUP_ICON_INSET
-)
-spellPopupIcon:SetRotation(math.rad(SPELL_POPUP_ICON_ROTATION_DEG))
-
-local spellPopupDamageText = frame:CreateFontString(nil, "OVERLAY")
-spellPopupDamageText:SetFont(FONT_PATH, 16, "OUTLINE")
-spellPopupDamageText:SetPoint("TOP", spellPopupIcon, "TOP", 0, -3)
-spellPopupDamageText:SetTextColor(0.98, 0.92, 0.80)
-spellPopupDamageText:SetShadowColor(0, 0, 0, 1)
-spellPopupDamageText:SetShadowOffset(1, -1)
-
 local function FormatCompactDamage(value)
     local v = math_max(tonumber(value) or 0, 0)
     if v < 1000 then
@@ -140,108 +246,753 @@ local function FormatCompactDamage(value)
     return (short:gsub("%.0m", "m"))
 end
 
-local function SetSpellPopupDamageText(amount)
-    spellPopupDamageText:SetText(FormatCompactDamage(amount))
+local function SpellNameEquals(spellName, expected)
+    return spellName and expected and spellName == expected
 end
 
-local spellPopupQueue = {}
-local spellPopupAccumulator = {}
+local function SpellNameContains(spellName, token)
+    return spellName and token and spellName:find(token, 1, true)
+end
+
+local function BuildPopupText(amount, hadCrit)
+    local a = tonumber(amount) or 0
+    local text = FormatCompactDamage(a)
+    if a >= SLOT_JACKPOT_BANG_THRESHOLD or (hadCrit and a >= 3500) then
+        text = text .. "!"
+    end
+    return text
+end
+
+local SLOT_TEXT_NORMAL_R = 1.00
+local SLOT_TEXT_NORMAL_G = 1.00
+local SLOT_TEXT_NORMAL_B = 1.00
+local SLOT_TEXT_CRIT_R = 1.00
+local SLOT_TEXT_CRIT_G = 1.00
+local SLOT_TEXT_CRIT_B = 0.00
+local SLOT_TEXT_CRIT_PULSE_SCALE = 1.34
+local SLOT_TEXT_CRIT_PULSE_SEC = 0.30
+
+local function NewPopupState()
+    return {
+        active = false,
+        spellId = nil,
+        amount = 0,
+        hadCrit = false,
+        sustain = false,
+        sustainUntil = 0,
+        holdUntil = 0,
+        fadeUntil = 0,
+        critPulseStartAt = 0,
+        critPulseUntil = 0,
+    }
+end
+
+local function ResetPopupState(state)
+    state.active = false
+    state.spellId = nil
+    state.amount = 0
+    state.hadCrit = false
+    state.sustain = false
+    state.sustainUntil = 0
+    state.holdUntil = 0
+    state.fadeUntil = 0
+    state.critPulseStartAt = 0
+    state.critPulseUntil = 0
+end
+
+local driverSlots = {}
+for _, slotId in ipairs(SLOT_ORDER) do
+    local cfg = SLOT_VISUAL[slotId]
+    local icon = frame:CreateTexture(nil, "ARTWORK")
+    icon:SetDrawLayer("ARTWORK", 1)
+    icon:SetSize(SLOT_ICON_SIZE, SLOT_ICON_SIZE)
+    icon:SetPoint("CENTER", frame, "CENTER", cfg.offsetX, cfg.offsetY)
+    icon:SetTexture(GetSpellTexture(cfg.defaultSpellId) or cfg.fallbackTexture or "Interface\\Icons\\INV_Misc_QuestionMark")
+    icon:SetTexCoord(SLOT_ICON_INSET, 1 - SLOT_ICON_INSET, SLOT_ICON_INSET, 1 - SLOT_ICON_INSET)
+    icon:SetRotation(math.rad(cfg.rotationDeg or 0))
+
+    local text = frame:CreateFontString(nil, "OVERLAY")
+    text:SetFont(FONT_PATH, SLOT_BASE_FONT_SIZE, "OUTLINE")
+    text:SetPoint("TOP", icon, "TOP", 0, -3)
+    text:SetTextColor(SLOT_TEXT_NORMAL_R, SLOT_TEXT_NORMAL_G, SLOT_TEXT_NORMAL_B)
+    text:SetShadowColor(0, 0, 0, 1)
+    text:SetShadowOffset(1, -1)
+
+    driverSlots[slotId] = {
+        slotId = slotId,
+        cfg = cfg,
+        icon = icon,
+        text = text,
+        base = NewPopupState(),
+        overlay = NewPopupState(),
+    }
+end
+
+local spellSlotClaims = {}
+
+local function HideSlotVisual(slot)
+    if not slot then return end
+    slot.icon:SetScale(1)
+    slot.text:SetScale(1)
+    slot.icon:SetAlpha(0)
+    slot.text:SetAlpha(0)
+    slot.icon:Hide()
+    slot.text:Hide()
+end
+
+local function TriggerTextCritPulse(state, hadCritEvent, now)
+    if not state or not hadCritEvent then return end
+    state.critPulseStartAt = now
+    state.critPulseUntil = now + SLOT_TEXT_CRIT_PULSE_SEC
+end
+
+local function GetTextCritPulseScale(state, now)
+    if not state then return 1 end
+    local s = tonumber(state.critPulseStartAt) or 0
+    local e = tonumber(state.critPulseUntil) or 0
+    if now <= s or now >= e then
+        return 1
+    end
+    local dur = math_max(e - s, 0.001)
+    local t = math_min(math_max((now - s) / dur, 0), 1)
+    if t <= 0.5 then
+        return 1 + (SLOT_TEXT_CRIT_PULSE_SCALE - 1) * (t / 0.5)
+    end
+    return SLOT_TEXT_CRIT_PULSE_SCALE - (SLOT_TEXT_CRIT_PULSE_SCALE - 1) * ((t - 0.5) / 0.5)
+end
+
+local function ConfigurePopupStateFromEvent(state, spellId, amount, hadCritTotal, hadCritEvent, isSustain, now)
+    if not state then return end
+    state.active = true
+    state.spellId = spellId
+    state.amount = math_max(tonumber(amount) or 0, 0)
+    state.hadCrit = hadCritTotal and true or false
+    if isSustain then
+        state.sustain = true
+        state.sustainUntil = now + SLOT_POPUP_SUSTAIN_SEC
+        state.holdUntil = state.sustainUntil
+    else
+        state.sustain = false
+        state.sustainUntil = 0
+        state.holdUntil = now + SLOT_POPUP_HOLD_SEC
+    end
+    state.fadeUntil = state.holdUntil + SLOT_POPUP_FADE_SEC
+    TriggerTextCritPulse(state, hadCritEvent, now)
+end
+
+local function AdvancePopupState(state, now)
+    if not state or not state.active then
+        return false
+    end
+    if state.sustain and now > state.sustainUntil then
+        state.sustain = false
+        state.sustainUntil = 0
+        state.holdUntil = now
+        state.fadeUntil = now + SLOT_POPUP_FADE_SEC
+    end
+    if now >= state.fadeUntil then
+        ResetPopupState(state)
+        return false
+    end
+    return true
+end
+
+local function GetPopupStateAlpha(state, now)
+    if not state or not state.active then
+        return 0
+    end
+    if state.sustain and now <= state.sustainUntil then
+        return 1
+    end
+    if now <= state.holdUntil then
+        return 1
+    end
+    if now < state.fadeUntil then
+        local fadeProgress = (now - state.holdUntil) / math_max(SLOT_POPUP_FADE_SEC, 0.01)
+        return 1 - math_min(math_max(fadeProgress, 0), 1)
+    end
+    return 0
+end
+
+local function ApplyPopupStateToSlot(slot, state, alpha, now)
+    if not slot or not state or not state.active then return end
+    local cfg = slot.cfg
+    local amount = tonumber(state.amount) or 0
+    local hadCrit = state.hadCrit and true or false
+    local spellId = state.spellId or cfg.defaultSpellId
+
+    slot.icon:SetTexture(GetSpellTexture(spellId) or cfg.fallbackTexture or "Interface\\Icons\\INV_Misc_QuestionMark")
+    slot.icon:SetSize(SLOT_ICON_SIZE, SLOT_ICON_SIZE)
+    slot.icon:ClearAllPoints()
+    slot.icon:SetPoint("CENTER", frame, "CENTER", cfg.offsetX, cfg.offsetY)
+    slot.icon:SetRotation(math.rad(cfg.rotationDeg or 0))
+    slot.icon:SetScale(1)
+
+    slot.text:SetFont(FONT_PATH, SLOT_BASE_FONT_SIZE, "OUTLINE")
+    slot.text:SetText(BuildPopupText(amount, hadCrit))
+    if hadCrit then
+        slot.text:SetTextColor(SLOT_TEXT_CRIT_R, SLOT_TEXT_CRIT_G, SLOT_TEXT_CRIT_B)
+    else
+        slot.text:SetTextColor(SLOT_TEXT_NORMAL_R, SLOT_TEXT_NORMAL_G, SLOT_TEXT_NORMAL_B)
+    end
+    slot.text:ClearAllPoints()
+    slot.text:SetPoint("TOP", slot.icon, "TOP", 0, -3)
+    slot.text:SetScale(GetTextCritPulseScale(state, now))
+
+    slot.icon:SetAlpha(alpha)
+    slot.text:SetAlpha(alpha)
+    slot.icon:Show()
+    slot.text:Show()
+end
+
+local function GetClaimedBaseSlot(spellId)
+    if not spellId then return nil end
+    local slotId = spellSlotClaims[spellId]
+    if not slotId then return nil end
+    local slot = driverSlots[slotId]
+    if not slot or (not slot.base.active) or slot.base.spellId ~= spellId then
+        spellSlotClaims[spellId] = nil
+        return nil
+    end
+    return slot
+end
+
+local function FindFirstFreeBaseSlot()
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        if slot and not slot.base.active then
+            return slot
+        end
+    end
+    return nil
+end
+
+local function GetBaseRemaining(state, now)
+    if not state or not state.active then
+        return 0
+    end
+    if state.sustain then
+        return math_max((state.sustainUntil or now) - now, 0)
+    end
+    return math_max((state.fadeUntil or now) - now, 0)
+end
+
+local function SelectOverlaySlot(spellId, now)
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        if slot and slot.overlay.active and slot.overlay.spellId == spellId then
+            return slot
+        end
+    end
+
+    local best = nil
+    local bestRemaining = nil
+    local function consider(slot)
+        local remaining = GetBaseRemaining(slot.base, now)
+        if not best or remaining < bestRemaining then
+            best = slot
+            bestRemaining = remaining
+        end
+    end
+
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        if slot and slot.base.active and (not slot.base.sustain) then
+            consider(slot)
+        end
+    end
+    if best then
+        return best
+    end
+
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        if slot and slot.base.active then
+            consider(slot)
+        end
+    end
+
+    return best or driverSlots[SLOT_ORDER[1]]
+end
+
+local function StartOrUpdateBasePopup(spellId, amount, hadCritTotal, hadCritEvent, isSustain, now)
+    local slot = GetClaimedBaseSlot(spellId)
+    if slot then
+        ConfigurePopupStateFromEvent(slot.base, spellId, amount, hadCritTotal, hadCritEvent, isSustain, now)
+        return true
+    end
+
+    slot = FindFirstFreeBaseSlot()
+    if not slot then
+        return false
+    end
+
+    local previousSpellId = slot.base.spellId
+    if previousSpellId then
+        spellSlotClaims[previousSpellId] = nil
+    end
+    ResetPopupState(slot.base)
+    ConfigurePopupStateFromEvent(slot.base, spellId, amount, hadCritTotal, hadCritEvent, isSustain, now)
+    spellSlotClaims[spellId] = slot.slotId
+    return true
+end
+
+local function StartOrUpdateOverlayPopup(slot, spellId, amount, hadCritTotal, hadCritEvent, now)
+    if not slot then return end
+    if slot.overlay.active and slot.overlay.spellId ~= spellId then
+        ResetPopupState(slot.overlay)
+    end
+    ConfigurePopupStateFromEvent(slot.overlay, spellId, amount, hadCritTotal, hadCritEvent, false, now)
+end
+
+-- `_preferredSlotId` is accepted for compatibility with existing call sites,
+-- but slot assignment is always dynamic left-to-right based on free claims.
+local function QueueDriverSlotPopup(_preferredSlotId, spellId, amount, hadCritTotal, opts)
+    local a = tonumber(amount) or 0
+    if (not spellId) or a <= 0 then return end
+
+    local options = opts or {}
+    local now = options.now or GetTime()
+    local isSustain = options.sustain and true or false
+    local totalCrit = hadCritTotal and true or false
+    local hadCritEvent = options.critEvent
+    if hadCritEvent == nil then
+        hadCritEvent = totalCrit
+    else
+        hadCritEvent = hadCritEvent and true or false
+    end
+
+    if StartOrUpdateBasePopup(spellId, a, totalCrit, hadCritEvent, isSustain, now) then
+        return
+    end
+
+    local overlaySlot = SelectOverlaySlot(spellId, now)
+    StartOrUpdateOverlayPopup(overlaySlot, spellId, a, totalCrit, hadCritEvent, now)
+end
+
+local function ShowOrUpdateSustainedSlot(_preferredSlotId, spellId, totalAmount, hadCritTotal, now, hadCritEvent)
+    QueueDriverSlotPopup(_preferredSlotId, spellId, totalAmount, hadCritTotal, {
+        now = now or GetTime(),
+        sustain = true,
+        critEvent = hadCritEvent,
+    })
+end
+
+local function ApplyPressurePopupDevSettings()
+    SLOT_ICON_SIZE = GetPressurePopupDBNumber(
+        "pressurePopupIconSize",
+        SLOT_ICON_SIZE_DEFAULT,
+        SLOT_ICON_SIZE_MIN,
+        SLOT_ICON_SIZE_MAX
+    )
+    SLOT_BASE_FONT_SIZE = GetPressurePopupDBNumber(
+        "pressurePopupTextSize",
+        SLOT_BASE_FONT_SIZE_DEFAULT,
+        SLOT_TEXT_SIZE_MIN,
+        SLOT_TEXT_SIZE_MAX
+    )
+    SLOT_POPUP_HOLD_SEC = GetPressurePopupDBNumber(
+        "pressurePopupHoldSec",
+        SLOT_POPUP_HOLD_SEC_DEFAULT,
+        SLOT_POPUP_HOLD_SEC_MIN,
+        SLOT_POPUP_HOLD_SEC_MAX
+    )
+    SLOT_POPUP_FADE_SEC = GetPressurePopupDBNumber(
+        "pressurePopupFadeSec",
+        SLOT_POPUP_FADE_SEC_DEFAULT,
+        SLOT_POPUP_FADE_SEC_MIN,
+        SLOT_POPUP_FADE_SEC_MAX
+    )
+    SLOT_POPUP_SUSTAIN_SEC = GetPressurePopupDBNumber(
+        "pressurePopupSustainSec",
+        SLOT_POPUP_SUSTAIN_SEC_DEFAULT,
+        SLOT_POPUP_SUSTAIN_SEC_MIN,
+        SLOT_POPUP_SUSTAIN_SEC_MAX
+    )
+
+    local now = GetTime()
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local cfg = SLOT_VISUAL[slotId]
+        cfg.offsetX = GetPressurePopupDBNumber(cfg.dbXKey, cfg.defaultOffsetX)
+        cfg.offsetY = GetPressurePopupDBNumber(cfg.dbYKey, cfg.defaultOffsetY)
+
+        local slot = driverSlots[slotId]
+        if slot and slot.overlay.active then
+            ApplyPopupStateToSlot(slot, slot.overlay, GetPopupStateAlpha(slot.overlay, now), now)
+        elseif slot and slot.base.active then
+            ApplyPopupStateToSlot(slot, slot.base, GetPopupStateAlpha(slot.base, now), now)
+        elseif slot then
+            HideSlotVisual(slot)
+        end
+    end
+end
+
+ShammyTime.ApplyPressurePopupDevSettings = ApplyPressurePopupDevSettings
+ApplyPressurePopupDevSettings()
+
+local function HideDriverSlot(slot)
+    if not slot then return end
+    local baseSpellId = slot.base and slot.base.spellId
+    if baseSpellId then
+        spellSlotClaims[baseSpellId] = nil
+    end
+    if slot.base then ResetPopupState(slot.base) end
+    if slot.overlay then ResetPopupState(slot.overlay) end
+    HideSlotVisual(slot)
+end
+
+local function UpdateDriverSlots(now)
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        if slot then
+            local previousBaseSpellId = slot.base.spellId
+            local baseWasActive = slot.base.active
+            AdvancePopupState(slot.base, now)
+            if baseWasActive and (not slot.base.active) and previousBaseSpellId then
+                if spellSlotClaims[previousBaseSpellId] == slot.slotId then
+                    spellSlotClaims[previousBaseSpellId] = nil
+                end
+            end
+
+            AdvancePopupState(slot.overlay, now)
+
+            if slot.overlay.active then
+                local alpha = GetPopupStateAlpha(slot.overlay, now)
+                if alpha > 0 then
+                    ApplyPopupStateToSlot(slot, slot.overlay, alpha, now)
+                else
+                    HideSlotVisual(slot)
+                end
+            elseif slot.base.active then
+                local alpha = GetPopupStateAlpha(slot.base, now)
+                if alpha > 0 then
+                    ApplyPopupStateToSlot(slot, slot.base, alpha, now)
+                else
+                    HideSlotVisual(slot)
+                end
+            else
+                HideSlotVisual(slot)
+            end
+        end
+    end
+end
+
+for _, slotId in ipairs(SLOT_ORDER) do
+    HideDriverSlot(driverSlots[slotId])
+end
+
+local playerGUID = UnitGUID("player")
+
+local function IsPlayerSource(sourceGUID)
+    if not sourceGUID then return false end
+    if playerGUID and sourceGUID == playerGUID then
+        return true
+    end
+    local currentPlayerGUID = UnitGUID("player")
+    if currentPlayerGUID then
+        playerGUID = currentPlayerGUID
+    end
+    return sourceGUID == playerGUID
+end
+
 local stormstrikeSwingWindow = {
     activeUntil = 0,
     remainingHits = 0,
 }
-local spellPopupState = {
-    active = false,
-    holdUntil = 0,
-    fadeUntil = 0,
+
+local chainLightningBurst = {
+    spellId = nil,
+    total = 0,
+    hadCrit = false,
+    flushAt = 0,
 }
 
-local function HideSpellPopup()
-    spellPopupState.active = false
-    spellPopupIcon:SetAlpha(0)
-    spellPopupDamageText:SetAlpha(0)
-    spellPopupIcon:Hide()
-    spellPopupDamageText:Hide()
+local flameShockRolling = {
+    total = 0,
+    hadCrit = false,
+    spellId = nil,
+    lastTickAt = 0,
+}
+
+local magmaRolling = {
+    total = 0,
+    hadCrit = false,
+    spellId = nil,
+    lastTickAt = 0,
+}
+
+local fireAoeBurst = {
+    spellId = nil,
+    total = 0,
+    hadCrit = false,
+    flushAt = 0,
+    lastPopAt = 0,
+}
+
+local windfuryBurst = {
+    active = false,
+    total = 0,
+    hits = 0,
+    hadCrit = false,
+    expiresAt = 0,
+    pendingTotemSwings = 0,
+}
+
+local function IsChainLightningSpell(spellId, spellName)
+    return (spellId and CHAIN_LIGHTNING_SPELL_IDS[spellId]) or SpellNameEquals(spellName, "Chain Lightning")
 end
 
-local function StartSpellPopup(entry, now)
-    spellPopupIcon:SetTexture(GetSpellTexture(entry.spellId) or "Interface\\Icons\\INV_Misc_QuestionMark")
-    SetSpellPopupDamageText(entry.damage)
-    spellPopupIcon:SetAlpha(1)
-    spellPopupDamageText:SetAlpha(1)
-    spellPopupIcon:Show()
-    spellPopupDamageText:Show()
-    spellPopupState.active = true
-    spellPopupState.holdUntil = now + SPELL_POPUP_HOLD_SEC
-    spellPopupState.fadeUntil = spellPopupState.holdUntil + SPELL_POPUP_FADE_SEC
+local function IsStormstrikeSpell(spellId, spellName)
+    return (spellId and STORMSTRIKE_SPELL_IDS[spellId]) or SpellNameContains(spellName, "Stormstrike")
 end
 
-local function QueueSpellPopup(spellId, damage)
-    local amount = tonumber(damage) or 0
-    if amount <= 0 then return end
-    spellPopupQueue[#spellPopupQueue + 1] = { spellId = spellId, damage = amount }
+local function IsLavaLashSpell(spellId, spellName)
+    return (spellId and LAVA_LASH_SPELL_IDS[spellId]) or SpellNameEquals(spellName, "Lava Lash")
 end
 
-local function TrackPopupSpellDamage(spellId, damage, now)
-    local amount = tonumber(damage) or 0
-    if amount <= 0 then return end
-
-    local bucket = spellPopupAccumulator[spellId]
-    if not bucket then
-        bucket = { damage = 0, lastHitAt = 0 }
-        spellPopupAccumulator[spellId] = bucket
-    end
-
-    if (now - (bucket.lastHitAt or 0)) > SPELL_POPUP_MERGE_WINDOW then
-        bucket.damage = 0
-    end
-
-    bucket.damage = bucket.damage + amount
-    bucket.lastHitAt = now
+local function IsEarthShockSpell(spellId, spellName)
+    return (spellId and EARTH_SHOCK_SPELL_IDS[spellId]) or SpellNameContains(spellName, "Earth Shock")
 end
 
-local function FlushPopupAccumulator(now)
-    for spellId, bucket in pairs(spellPopupAccumulator) do
-        if bucket.damage > 0 and (now - bucket.lastHitAt) >= SPELL_POPUP_MERGE_WINDOW then
-            QueueSpellPopup(spellId, bucket.damage)
-            bucket.damage = 0
-            bucket.lastHitAt = 0
-        end
-    end
+local function IsFlameShockSpell(spellId, spellName)
+    return (spellId and FLAME_SHOCK_SPELL_IDS[spellId]) or SpellNameContains(spellName, "Flame Shock")
 end
 
-local function UpdateSpellPopup(now)
-    FlushPopupAccumulator(now)
+local function IsFrostShockSpell(spellId, spellName)
+    return (spellId and FROST_SHOCK_SPELL_IDS[spellId]) or SpellNameContains(spellName, "Frost Shock")
+end
 
-    if not spellPopupState.active then
-        local nextPopup = table.remove(spellPopupQueue, 1)
-        if nextPopup then
-            StartSpellPopup(nextPopup, now)
-        end
+local function IsShockSpell(spellId, spellName)
+    return IsEarthShockSpell(spellId, spellName)
+        or IsFlameShockSpell(spellId, spellName)
+        or IsFrostShockSpell(spellId, spellName)
+end
+
+local function IsFireNovaSpell(spellId, spellName)
+    return (spellId and FIRE_NOVA_SPELL_IDS[spellId]) or SpellNameContains(spellName, "Fire Nova")
+end
+
+local function IsMagmaTotemSpell(spellId, spellName)
+    return (spellId and MAGMA_TOTEM_SPELL_IDS[spellId]) or SpellNameContains(spellName, "Magma Totem")
+end
+
+local function IsWindfuryAttackSpell(spellId, spellName)
+    return spellId == WINDFURY_ATTACK_SPELL_ID or SpellNameEquals(spellName, "Windfury Attack")
+end
+
+local function FlushChainLightningBurst(now)
+    if chainLightningBurst.total <= 0 then
+        chainLightningBurst.total = 0
+        chainLightningBurst.hadCrit = false
+        chainLightningBurst.flushAt = 0
+        chainLightningBurst.spellId = nil
         return
     end
+    ShowOrUpdateSustainedSlot(
+        SLOT_CASTS,
+        chainLightningBurst.spellId or 421,
+        chainLightningBurst.total,
+        chainLightningBurst.hadCrit,
+        now
+    )
+    chainLightningBurst.total = 0
+    chainLightningBurst.hadCrit = false
+    chainLightningBurst.flushAt = 0
+    chainLightningBurst.spellId = nil
+end
 
-    if now <= spellPopupState.holdUntil then
-        return
+local function StartChainLightningCast(now, spellId)
+    if chainLightningBurst.total > 0 then
+        FlushChainLightningBurst(now)
     end
+    chainLightningBurst.spellId = spellId or 421
+    chainLightningBurst.total = 0
+    chainLightningBurst.hadCrit = false
+    chainLightningBurst.flushAt = now + CHAIN_LIGHTNING_CAST_WINDOW_SEC
+end
 
-    if now < spellPopupState.fadeUntil then
-        local fadeProgress = (now - spellPopupState.holdUntil) / math_max(SPELL_POPUP_FADE_SEC, 0.01)
-        local alpha = 1 - math_min(math_max(fadeProgress, 0), 1)
-        spellPopupIcon:SetAlpha(alpha)
-        spellPopupDamageText:SetAlpha(alpha)
-        return
+local function AddChainLightningDamage(spellId, amount, hadCrit, now)
+    if chainLightningBurst.flushAt <= 0 or now > chainLightningBurst.flushAt then
+        StartChainLightningCast(now, spellId)
     end
+    chainLightningBurst.spellId = spellId or chainLightningBurst.spellId or 421
+    chainLightningBurst.total = chainLightningBurst.total + amount
+    chainLightningBurst.hadCrit = chainLightningBurst.hadCrit or hadCrit
+    chainLightningBurst.flushAt = now + CHAIN_LIGHTNING_CAST_WINDOW_SEC
+    ShowOrUpdateSustainedSlot(
+        SLOT_CASTS,
+        chainLightningBurst.spellId,
+        chainLightningBurst.total,
+        chainLightningBurst.hadCrit,
+        now,
+        hadCrit
+    )
+end
 
-    HideSpellPopup()
-
-    local nextPopup = table.remove(spellPopupQueue, 1)
-    if nextPopup then
-        StartSpellPopup(nextPopup, now)
+local function FlushChainLightningBurstIfDue(now)
+    if chainLightningBurst.total > 0 and chainLightningBurst.flushAt > 0 and now >= chainLightningBurst.flushAt then
+        FlushChainLightningBurst(now)
     end
 end
 
-HideSpellPopup()
+local function AddFlameShockRolling(amount, hadCrit, spellId, now)
+    if (now - (flameShockRolling.lastTickAt or 0)) > FLAME_SHOCK_ROLLING_RESET_SEC then
+        flameShockRolling.total = 0
+        flameShockRolling.hadCrit = false
+    end
+    flameShockRolling.total = flameShockRolling.total + amount
+    flameShockRolling.hadCrit = flameShockRolling.hadCrit or hadCrit
+    flameShockRolling.spellId = spellId or flameShockRolling.spellId or 8050
+    flameShockRolling.lastTickAt = now
+    ShowOrUpdateSustainedSlot(
+        SLOT_CASTS,
+        flameShockRolling.spellId,
+        flameShockRolling.total,
+        flameShockRolling.hadCrit,
+        now,
+        hadCrit
+    )
+end
+
+local function AddMagmaRolling(amount, hadCrit, spellId, now)
+    if (now - (magmaRolling.lastTickAt or 0)) > MAGMA_ROLLING_RESET_SEC then
+        magmaRolling.total = 0
+        magmaRolling.hadCrit = false
+    end
+    magmaRolling.total = magmaRolling.total + amount
+    magmaRolling.hadCrit = magmaRolling.hadCrit or hadCrit
+    magmaRolling.spellId = spellId or magmaRolling.spellId or 8187
+    magmaRolling.lastTickAt = now
+    ShowOrUpdateSustainedSlot(
+        SLOT_FIRE,
+        magmaRolling.spellId,
+        magmaRolling.total,
+        magmaRolling.hadCrit,
+        now,
+        hadCrit
+    )
+end
+
+local function AddFireAoeDamage(amount, hadCrit, spellId, now)
+    if fireAoeBurst.total > 0 and fireAoeBurst.flushAt > 0 and now >= fireAoeBurst.flushAt then
+        QueueDriverSlotPopup(SLOT_FIRE, fireAoeBurst.spellId or spellId or 8187, fireAoeBurst.total, fireAoeBurst.hadCrit)
+        fireAoeBurst.lastPopAt = now
+        fireAoeBurst.total = 0
+        fireAoeBurst.hadCrit = false
+    end
+
+    fireAoeBurst.total = fireAoeBurst.total + amount
+    fireAoeBurst.hadCrit = fireAoeBurst.hadCrit or hadCrit
+    fireAoeBurst.spellId = spellId or fireAoeBurst.spellId or 8187
+
+    local dueAt = now + FIRE_AOE_MERGE_WINDOW_SEC
+    local minDueAt = fireAoeBurst.lastPopAt + FIRE_AOE_MIN_POP_INTERVAL_SEC
+    fireAoeBurst.flushAt = math_max(dueAt, minDueAt)
+end
+
+local function FlushFireAoeBurstIfDue(now)
+    if fireAoeBurst.total <= 0 then
+        return
+    end
+    if fireAoeBurst.flushAt <= 0 or now < fireAoeBurst.flushAt then
+        return
+    end
+    QueueDriverSlotPopup(SLOT_FIRE, fireAoeBurst.spellId or 8187, fireAoeBurst.total, fireAoeBurst.hadCrit)
+    fireAoeBurst.lastPopAt = now
+    fireAoeBurst.total = 0
+    fireAoeBurst.hadCrit = false
+    fireAoeBurst.flushAt = 0
+    fireAoeBurst.spellId = nil
+end
+
+local function StartWindfuryBurst(now, pendingTotemSwings)
+    if windfuryBurst.active and windfuryBurst.total > 0 then
+        QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit)
+    end
+    windfuryBurst.active = true
+    windfuryBurst.total = 0
+    windfuryBurst.hits = 0
+    windfuryBurst.hadCrit = false
+    windfuryBurst.expiresAt = now + WINDFURY_BURST_WINDOW_SEC
+    windfuryBurst.pendingTotemSwings = pendingTotemSwings or 0
+end
+
+local function FlushWindfuryBurst(now)
+    if windfuryBurst.total > 0 then
+        QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit)
+    end
+    windfuryBurst.active = false
+    windfuryBurst.total = 0
+    windfuryBurst.hits = 0
+    windfuryBurst.hadCrit = false
+    windfuryBurst.expiresAt = 0
+    windfuryBurst.pendingTotemSwings = 0
+end
+
+local function AddWindfuryDamage(amount, hadCrit, now)
+    if (not windfuryBurst.active) or now > windfuryBurst.expiresAt then
+        StartWindfuryBurst(now, 0)
+    end
+    windfuryBurst.total = windfuryBurst.total + amount
+    windfuryBurst.hadCrit = windfuryBurst.hadCrit or hadCrit
+    windfuryBurst.hits = windfuryBurst.hits + 1
+    if windfuryBurst.hits >= WINDFURY_MAX_HITS_PER_BURST and windfuryBurst.pendingTotemSwings <= 0 then
+        FlushWindfuryBurst(now)
+    end
+end
+
+local function FlushWindfuryBurstIfDue(now)
+    if windfuryBurst.active and windfuryBurst.expiresAt > 0 and now >= windfuryBurst.expiresAt then
+        FlushWindfuryBurst(now)
+    end
+end
+
+local function ResetDriverPopupState()
+    for _, slotId in ipairs(SLOT_ORDER) do
+        local slot = driverSlots[slotId]
+        HideDriverSlot(slot)
+    end
+
+    stormstrikeSwingWindow.activeUntil = 0
+    stormstrikeSwingWindow.remainingHits = 0
+
+    chainLightningBurst.spellId = nil
+    chainLightningBurst.total = 0
+    chainLightningBurst.hadCrit = false
+    chainLightningBurst.flushAt = 0
+
+    flameShockRolling.total = 0
+    flameShockRolling.hadCrit = false
+    flameShockRolling.spellId = nil
+    flameShockRolling.lastTickAt = 0
+
+    magmaRolling.total = 0
+    magmaRolling.hadCrit = false
+    magmaRolling.spellId = nil
+    magmaRolling.lastTickAt = 0
+
+    fireAoeBurst.spellId = nil
+    fireAoeBurst.total = 0
+    fireAoeBurst.hadCrit = false
+    fireAoeBurst.flushAt = 0
+    fireAoeBurst.lastPopAt = 0
+
+    windfuryBurst.active = false
+    windfuryBurst.total = 0
+    windfuryBurst.hits = 0
+    windfuryBurst.hadCrit = false
+    windfuryBurst.expiresAt = 0
+    windfuryBurst.pendingTotemSwings = 0
+end
+
+local function UpdateDriverPopupState(now)
+    FlushChainLightningBurstIfDue(now)
+    FlushFireAoeBurstIfDue(now)
+    FlushWindfuryBurstIfDue(now)
+    UpdateDriverSlots(now)
+end
+
+ResetDriverPopupState()
 
 local gaugeKeys = {
     "gaugeZero",
@@ -623,7 +1374,6 @@ local function GetGateCappedTier(candidateTier, squeeze, activeSec)
     end
     return capped, reason
 end
-
 local SUBEVENT_MAP = {
     SWING_DAMAGE = { amountIdx = 12, critIdx = 18 },
     SWING_DAMAGE_LANDED = { amountIdx = 12, critIdx = 18 },
@@ -646,15 +1396,36 @@ local function OnCombatLogPressure()
     local info = SUBEVENT_MAP[subevent]
     local sourceFlags = p[6]
     if not sourceFlags or bit_band(sourceFlags, AFFILIATION_MINE) == 0 then return end
+    local sourceGUID = p[4]
+    local isPlayerSource = IsPlayerSource(sourceGUID)
+    local spellId = p[12]
+    local spellName = p[13]
     local now = GetTime()
 
     if subevent == "SPELL_CAST_SUCCESS" then
-        local spellId = p[12]
-        if spellId == STORMSTRIKE_SPELL_ID then
+        if isPlayerSource and IsStormstrikeSpell(spellId, spellName) then
             stormstrikeSwingWindow.activeUntil = now + STORMSTRIKE_SWING_WINDOW_SEC
             stormstrikeSwingWindow.remainingHits = STORMSTRIKE_SWING_MAX_HITS
+            return
         end
-        return
+        if isPlayerSource and IsChainLightningSpell(spellId, spellName) then
+            StartChainLightningCast(now, spellId)
+            return
+        end
+    elseif subevent == "SPELL_EXTRA_ATTACKS" then
+        if isPlayerSource and (
+            spellId == WINDFURY_TOTEM_EXTRA_ATTACKS_SPELL_ID
+            or IsWindfuryAttackSpell(spellId, spellName)
+            or SpellNameContains(spellName, "Windfury")
+        ) then
+            local extraCount = p[15]
+            local pendingTotemSwings = 0
+            if spellId == WINDFURY_TOTEM_EXTRA_ATTACKS_SPELL_ID then
+                pendingTotemSwings = (extraCount and extraCount > 0) and extraCount or 1
+            end
+            StartWindfuryBurst(now, pendingTotemSwings)
+            return
+        end
     end
 
     if not info then return end
@@ -679,25 +1450,77 @@ local function OnCombatLogPressure()
     PS.recentHitImpulse = PS.recentHitImpulse + feedAmount
     PS.lastDamageTime = now
 
-    local spellId = info.spellIdIdx and p[info.spellIdIdx]
-    if spellId and MONITORED_POPUP_SPELL_IDS[spellId] then
-        TrackPopupSpellDamage(spellId, amount, now)
-        if spellId == STORMSTRIKE_SPELL_ID then
+    spellId = info.spellIdIdx and p[info.spellIdIdx]
+    spellName = info.spellIdIdx and p[13]
+
+    if isPlayerSource then
+        if IsChainLightningSpell(spellId, spellName) then
+            AddChainLightningDamage(spellId, amount, isCrit, now)
+        elseif IsStormstrikeSpell(spellId, spellName) then
+            QueueDriverSlotPopup(SLOT_CASTS, STORMSTRIKE_SPELL_ID, amount, isCrit, {
+                now = now,
+            })
             stormstrikeSwingWindow.remainingHits = 0
             stormstrikeSwingWindow.activeUntil = 0
+        elseif IsLavaLashSpell(spellId, spellName) then
+            QueueDriverSlotPopup(SLOT_CASTS, spellId, amount, isCrit)
+        elseif IsShockSpell(spellId, spellName) then
+            if IsFlameShockSpell(spellId, spellName) and subevent == "SPELL_PERIODIC_DAMAGE" then
+                AddFlameShockRolling(amount, isCrit, spellId, now)
+            else
+                QueueDriverSlotPopup(SLOT_CASTS, spellId, amount, isCrit)
+                if IsFlameShockSpell(spellId, spellName) then
+                    flameShockRolling.total = amount
+                    flameShockRolling.hadCrit = isCrit and true or false
+                    flameShockRolling.spellId = spellId or flameShockRolling.spellId or 8050
+                    flameShockRolling.lastTickAt = now
+                end
+            end
+        end
+
+        if (subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED")
+            and stormstrikeSwingWindow.remainingHits > 0
+            and now <= stormstrikeSwingWindow.activeUntil
+        then
+            QueueDriverSlotPopup(SLOT_CASTS, STORMSTRIKE_SPELL_ID, amount, isCrit, {
+                now = now,
+            })
+            stormstrikeSwingWindow.remainingHits = stormstrikeSwingWindow.remainingHits - 1
+            if stormstrikeSwingWindow.remainingHits <= 0 then
+                stormstrikeSwingWindow.remainingHits = 0
+                stormstrikeSwingWindow.activeUntil = 0
+            end
         end
     end
 
-    if (subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED")
-        and stormstrikeSwingWindow.remainingHits > 0
-        and now <= stormstrikeSwingWindow.activeUntil
-    then
-        TrackPopupSpellDamage(STORMSTRIKE_SPELL_ID, amount, now)
-        stormstrikeSwingWindow.remainingHits = stormstrikeSwingWindow.remainingHits - 1
-        if stormstrikeSwingWindow.remainingHits <= 0 then
-            stormstrikeSwingWindow.remainingHits = 0
-            stormstrikeSwingWindow.activeUntil = 0
+    if spellId and IsMagmaTotemSpell(spellId, spellName) then
+        AddMagmaRolling(amount, isCrit, spellId, now)
+    elseif spellId and IsFireNovaSpell(spellId, spellName) then
+        AddFireAoeDamage(amount, isCrit, spellId, now)
+    end
+
+    if isPlayerSource then
+        if IsWindfuryAttackSpell(spellId, spellName) then
+            AddWindfuryDamage(amount, isCrit, now)
+        elseif (subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED")
+            and windfuryBurst.active
+            and windfuryBurst.pendingTotemSwings > 0
+            and now <= windfuryBurst.expiresAt
+        then
+            AddWindfuryDamage(amount, isCrit, now)
+            windfuryBurst.pendingTotemSwings = windfuryBurst.pendingTotemSwings - 1
+            if windfuryBurst.pendingTotemSwings <= 0 then
+                windfuryBurst.pendingTotemSwings = 0
+                if windfuryBurst.hits > 0 then
+                    FlushWindfuryBurst(now)
+                end
+            end
         end
+    end
+
+    if stormstrikeSwingWindow.activeUntil > 0 and now > stormstrikeSwingWindow.activeUntil then
+        stormstrikeSwingWindow.activeUntil = 0
+        stormstrikeSwingWindow.remainingHits = 0
     end
 end
 
@@ -860,11 +1683,7 @@ local function ResetPressureState()
             colorOverlayCurrentColor[3]
         )
     end
-    spellPopupAccumulator = {}
-    spellPopupQueue = {}
-    stormstrikeSwingWindow.activeUntil = 0
-    stormstrikeSwingWindow.remainingHits = 0
-    HideSpellPopup()
+    ResetDriverPopupState()
     SetColorOverlayFill(colorOverlayFillFrac)
     ClearPressureDebugFrame()
 end
@@ -873,7 +1692,7 @@ ShammyTime.ResetPressureState = ResetPressureState
 
 local function OnPressureTick(_, dt)
     local now = GetTime()
-    UpdateSpellPopup(now)
+    UpdateDriverPopupState(now)
 
     PS.pressureElapsed = PS.pressureElapsed + dt
     if PS.pressureElapsed < PS.pressureTick then return end
@@ -1029,10 +1848,15 @@ pressureTickFrame:SetScript("OnUpdate", OnPressureTick)
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         eventFrame:UnregisterEvent("ADDON_LOADED")
         ExportPressureState()
+        return
+    end
+    if event == "PLAYER_LOGIN" then
+        playerGUID = UnitGUID("player")
         return
     end
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then

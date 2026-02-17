@@ -139,6 +139,18 @@ local DEFAULTS = {
         staggerHelperX = 0,
         staggerHelperY = -10,
         staggerHideDelay = 15,
+        -- Pressure popup driver slots (Developer panel)
+        pressureSlot1X = -130,
+        pressureSlot1Y = -84,
+        pressureSlot2X = 1,
+        pressureSlot2Y = -99,
+        pressureSlot3X = 139,
+        pressureSlot3Y = -79,
+        pressurePopupIconSize = 92,
+        pressurePopupTextSize = 22,
+        pressurePopupHoldSec = 2.20,
+        pressurePopupFadeSec = 1.20,
+        pressurePopupSustainSec = 4.00,
         imbueBarScale = 0.85,
         imbueBarMargin = nil,
         imbueBarGap = nil,
@@ -568,6 +580,7 @@ function ShammyTime:ApplyAllConfigs()
     if ShammyTime.RefreshImbueBar then ShammyTime.RefreshImbueBar() end
     if ShammyTime.ApplySatelliteRadius then ShammyTime.ApplySatelliteRadius() end
     if ShammyTime.ApplySatelliteBubbleScale then ShammyTime.ApplySatelliteBubbleScale() end
+    if ShammyTime.ApplyPressurePopupDevSettings then ShammyTime.ApplyPressurePopupDevSettings() end
     if self.UpdateAllElementsFadeState then self:UpdateAllElementsFadeState() end
 end
 

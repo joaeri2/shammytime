@@ -31,8 +31,8 @@ local CROP_BOTTOM = 0.33
 local MIN_FILL_U = 0.001
 local FILL_SHOW_EPS = 0.003
 local FILL_HIDE_EPS = 0.0005
-local FILL_SMOOTH_TAU_RISE = 0.30
-local FILL_SMOOTH_TAU_FALL = 2.04
+local FILL_SMOOTH_TAU_RISE = 0.18
+local FILL_SMOOTH_TAU_FALL = 8.20
 local FILL_FULL_HOLD_SEC = 0.40
 local FILL_FULL_EPSILON = 0.995
 local OVERLAY_COLOR_TAU_IN = 0.08
@@ -1303,7 +1303,7 @@ local TIER_GAUGE_INDEX = {
     [1] = 2, -- gaugeTen
     [2] = 3, -- gaugeFifty
     [3] = 4, -- gaugeSeventyFive
-    [4] = 5, -- gaugeHundred
+    [4] = 4, -- gaugeSeventyFive
     [5] = 5, -- gaugeHundred
 }
 
@@ -1329,7 +1329,7 @@ end
 PS = {
     fastCharge = 0,
     slowCharge = 0,
-    tauFast = 1.0,
+    tauFast = 1.35,
     tauSlow = 20.0,
     epsilon = 1.0,
     pressureRatio = 0,
@@ -1337,7 +1337,7 @@ PS = {
     burstDamping = 1.20,
     denominatorFloor = 200,
     displayTau = 0.30,
-    displayTauRise = 0.12,
+    displayTauRise = 0.07,
     pressureDisplaySmoothed = 0,
     pressureComposite = 0,
     instantScore = 0,
@@ -1359,7 +1359,7 @@ PS = {
     squeezeIdleDecayMult = 0.45,
     tierInstantWeight = 0.95,
     tierSqueezeWeight = 0.65,
-    tierHysteresis = 0.14,
+    tierHysteresis = 0.22,
     tierHoldMinSec = 2.20,
     tierEdgeStartFrac = 0.62,
     tierEdgePower = 1.70,
@@ -1662,8 +1662,7 @@ local function UpdatePressureDebugFrame(hitKick)
     liveResPct = math_min(math_max(((PS.tierEdgeResistance or 0) / resistMax) * 100, 0), 999)
 
     local liveSlipPct = 0
-    local topTierScale = 1 + (5 * math_max(PS.simpleTierStepFrac or 0.10, 0.01))
-    local slipCap = 0.05 * math_max(PS.simpleRubberband or 1, 0) * topTierScale
+    local slipCap = 0.05 * math_max(PS.simpleRubberband or 1, 0)
     if slipCap > 0 then
         liveSlipPct = math_min(math_max(((PS.tierEdgeSlip or 0) / slipCap) * 100, 0), 999)
     end
@@ -1717,12 +1716,14 @@ local function UpdatePressureDebugFrame(hitKick)
             tune.t5Req or 0, tune.t5Pct or 0
         ))
         bucketStrings[5]:SetText(string.format(
-            "Transfer %.2fs(%+.0f%%)  Damp %+.0f%%  Osc %+.0f%%  Help %+.0f%%",
+            "Transfer %.2fs(%+.0f%%)  Damp %+.0f%%  Osc %+.0f%%  OD ramp %.0f%% (%d/%d)",
             tune.transferDropSec or 0,
             tune.transferDropPct or 0,
             tune.transferDampingPct or 0,
             tune.transferOscPct or 0,
-            tune.helpMaxPct or 0
+            math_min(math_max(PS.overdriveWarmup or 0, 0), 1) * 100,
+            PS.overdriveSampleCount or 0,
+            PS.simpleOverdriveSampleCap or 100
         ))
         if NUM_WINDOWS > 5 then
             for wi = 6, NUM_WINDOWS do

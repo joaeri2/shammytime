@@ -193,14 +193,14 @@ local function setFlatDB(key, val)
 end
 
 local PRESSURE_DEV_DEFAULTS = {
-    pressureSimpleResistance = 0.85,
-    pressureSimpleRubberband = 1.00,
-    pressureSimpleTierBase = 1.50,
-    pressureSimpleTierStepPct = 8.00,
-    pressureSimpleTierHelp = 1.15,
-    pressureSimpleOverdrivePercentile = 97.00,
-    pressureSimpleOverdriveMultiplier = 1.10,
-    pressureSimpleTierHoldSec = 2.20,
+    pressureSimpleResistance = 1.25,
+    pressureSimpleRubberband = 1.10,
+    pressureSimpleTierBase = 2.10,
+    pressureSimpleTierStepPct = 11.00,
+    pressureSimpleTierHelp = 0.85,
+    pressureSimpleOverdrivePercentile = 98.00,
+    pressureSimpleOverdriveMultiplier = 1.16,
+    pressureSimpleTierHoldSec = 5.00,
     pressureSimpleShakeAmount = 1.00,
     pressureSimpleShakeFromDamage = 0.85,
 }
@@ -427,14 +427,14 @@ local function BuildFullExportLines(useColorCodes)
     line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 6.00))
     line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 2.00))
     line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
-    line("pressureSimpleResistance = " .. tostring(p.pressureSimpleResistance or 0.85))
-    line("pressureSimpleRubberband = " .. tostring(p.pressureSimpleRubberband or 1.00))
-    line("pressureSimpleTierBase = " .. tostring(p.pressureSimpleTierBase or 1.50))
-    line("pressureSimpleTierStepPct = " .. tostring(p.pressureSimpleTierStepPct or 8.00))
-    line("pressureSimpleTierHelp = " .. tostring(p.pressureSimpleTierHelp or 1.15))
-    line("pressureSimpleOverdrivePercentile = " .. tostring(p.pressureSimpleOverdrivePercentile or 97.00))
-    line("pressureSimpleOverdriveMultiplier = " .. tostring(p.pressureSimpleOverdriveMultiplier or 1.10))
-    line("pressureSimpleTierHoldSec = " .. tostring(p.pressureSimpleTierHoldSec or 2.20))
+    line("pressureSimpleResistance = " .. tostring(p.pressureSimpleResistance or 1.25))
+    line("pressureSimpleRubberband = " .. tostring(p.pressureSimpleRubberband or 1.10))
+    line("pressureSimpleTierBase = " .. tostring(p.pressureSimpleTierBase or 2.10))
+    line("pressureSimpleTierStepPct = " .. tostring(p.pressureSimpleTierStepPct or 11.00))
+    line("pressureSimpleTierHelp = " .. tostring(p.pressureSimpleTierHelp or 0.85))
+    line("pressureSimpleOverdrivePercentile = " .. tostring(p.pressureSimpleOverdrivePercentile or 98.00))
+    line("pressureSimpleOverdriveMultiplier = " .. tostring(p.pressureSimpleOverdriveMultiplier or 1.16))
+    line("pressureSimpleTierHoldSec = " .. tostring(p.pressureSimpleTierHoldSec or 5.00))
     line("pressureSimpleShakeAmount = " .. tostring(p.pressureSimpleShakeAmount or 1.00))
     line("pressureSimpleShakeFromDamage = " .. tostring(p.pressureSimpleShakeFromDamage or 0.85))
     line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
@@ -2650,7 +2650,7 @@ function ShammyTime:SetupOptions()
                         desc = "Global push resistance. Higher makes high-end bar progress feel heavier.",
                         min = 0.20, max = 4.00, step = 0.01,
                         order = 89.071,
-                        get = function() return getFlatDB("pressureSimpleResistance", 0.85) end,
+                        get = function() return getFlatDB("pressureSimpleResistance", 1.25) end,
                         set = function(_, v) setFlatDB("pressureSimpleResistance", v) end,
                     },
                     pressureSimpleRubberband = {
@@ -2659,7 +2659,7 @@ function ShammyTime:SetupOptions()
                         desc = "Controls transfer spring feel after tier up: drop speed, bounce amount, and added end-of-segment tension. Higher = more elastic and a bit harder.",
                         min = 0.20, max = 3.00, step = 0.01,
                         order = 89.072,
-                        get = function() return getFlatDB("pressureSimpleRubberband", 1.00) end,
+                        get = function() return getFlatDB("pressureSimpleRubberband", 1.10) end,
                         set = function(_, v) setFlatDB("pressureSimpleRubberband", v) end,
                     },
                     pressureSimpleTierBase = {
@@ -2668,7 +2668,7 @@ function ShammyTime:SetupOptions()
                         desc = "Base score needed for Tier 1. Higher means all tiers require more force.",
                         min = 0.20, max = 10.0, step = 0.01,
                         order = 89.073,
-                        get = function() return getFlatDB("pressureSimpleTierBase", 1.50) end,
+                        get = function() return getFlatDB("pressureSimpleTierBase", 2.10) end,
                         set = function(_, v) setFlatDB("pressureSimpleTierBase", v) end,
                     },
                     pressureSimpleTierStepPct = {
@@ -2677,7 +2677,7 @@ function ShammyTime:SetupOptions()
                         desc = "Percent hardness increase per tier. 10 means each tier is 10% harder than the previous.",
                         min = 1.00, max = 30.0, step = 0.10,
                         order = 89.074,
-                        get = function() return getFlatDB("pressureSimpleTierStepPct", 8.00) end,
+                        get = function() return getFlatDB("pressureSimpleTierStepPct", 11.00) end,
                         set = function(_, v) setFlatDB("pressureSimpleTierStepPct", v) end,
                     },
                     pressureSimpleTierHelp = {
@@ -2686,7 +2686,7 @@ function ShammyTime:SetupOptions()
                         desc = "Carry assistance gained while holding higher tiers (momentum help).",
                         min = 0.00, max = 3.00, step = 0.01,
                         order = 89.075,
-                        get = function() return getFlatDB("pressureSimpleTierHelp", 1.15) end,
+                        get = function() return getFlatDB("pressureSimpleTierHelp", 0.85) end,
                         set = function(_, v) setFlatDB("pressureSimpleTierHelp", v) end,
                     },
                     pressureSimpleTierHoldSec = {
@@ -2695,7 +2695,7 @@ function ShammyTime:SetupOptions()
                         desc = "How long a tier stays active before automatic cooling can demote it.",
                         min = 0.10, max = 15.0, step = 0.05,
                         order = 89.076,
-                        get = function() return getFlatDB("pressureSimpleTierHoldSec", 2.20) end,
+                        get = function() return getFlatDB("pressureSimpleTierHoldSec", 5.00) end,
                         set = function(_, v) setFlatDB("pressureSimpleTierHoldSec", v) end,
                     },
                     pressureSimpleOverdrivePercentile = {
@@ -2704,7 +2704,7 @@ function ShammyTime:SetupOptions()
                         desc = "Percentile of the last 100 hits used as overdrive baseline. Higher = rarer procs.",
                         min = 85.0, max = 99.5, step = 0.10,
                         order = 89.077,
-                        get = function() return getFlatDB("pressureSimpleOverdrivePercentile", 97.00) end,
+                        get = function() return getFlatDB("pressureSimpleOverdrivePercentile", 98.00) end,
                         set = function(_, v) setFlatDB("pressureSimpleOverdrivePercentile", v) end,
                     },
                     pressureSimpleOverdriveMultiplier = {
@@ -2713,7 +2713,7 @@ function ShammyTime:SetupOptions()
                         desc = "Extra factor above percentile baseline required to instantly promote tiers.",
                         min = 1.00, max = 3.00, step = 0.01,
                         order = 89.078,
-                        get = function() return getFlatDB("pressureSimpleOverdriveMultiplier", 1.10) end,
+                        get = function() return getFlatDB("pressureSimpleOverdriveMultiplier", 1.16) end,
                         set = function(_, v) setFlatDB("pressureSimpleOverdriveMultiplier", v) end,
                     },
                     pressureSimpleShakeAmount = {

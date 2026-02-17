@@ -154,6 +154,7 @@ function Models.CreateVisualModel(ctx)
     function model.Update(elapsed, now, impulsePressure)
         local tier = PS.currentTier or 0
         local tierColor = TIER_COLORS[tier + 1] or TIER_COLORS[1]
+        local coolingBlueBlend = 0
 
         local scoreForProgress = PS.tierEvalScore or PS.tierScore or 0
         local rawFillTarget = getTierFillTarget(scoreForProgress, tier)
@@ -171,21 +172,79 @@ function Models.CreateVisualModel(ctx)
         end
 
         if visualAnimState.colorOverlayTransferActive then
+            local fromFill = visualAnimState.colorOverlayTransferFrom or colorOverlayState.fillFrac or 0
             local landingTarget = fillTarget
             if tier >= 1 then
                 landingTarget = math_max(landingTarget, PUSH_FEEL_CFG.fillTransferLandingFloor)
             end
-            visualAnimState.colorOverlayTransferTo = landingTarget
+            local smoothedLandingTarget = SmoothAlpha(
+                visualAnimState.colorOverlayTransferTo or landingTarget,
+                landingTarget,
+                elapsed,
+                0.18,
+                0.32
+            )
+            landingTarget = smoothedLandingTarget
+            visualAnimState.colorOverlayTransferTo = smoothedLandingTarget
             visualAnimState.colorOverlayTransferElapsed = visualAnimState.colorOverlayTransferElapsed + elapsed
-            local t = math_min(math_max(visualAnimState.colorOverlayTransferElapsed / math_max(PUSH_FEEL_CFG.fillTransferDropSec, 0.01), 0), 1)
-            local decay = math_exp(-math_max(PUSH_FEEL_CFG.fillTransferRubberDamping, 0.01) * t)
-            local omega = (math.pi * 2) * math_max(PUSH_FEEL_CFG.fillTransferRubberOscillations, 0.01)
-            local rubber = decay * (0.20 + (0.80 * math.cos(omega * t)))
-            local value = landingTarget + ((visualAnimState.colorOverlayTransferFrom - landingTarget) * rubber)
-            colorOverlayState.fillFrac = math_min(math_max(value, 0), 1)
-            if t >= 1 then
+            local descending = fromFill > landingTarget
+            local transferDuration = math_max(PUSH_FEEL_CFG.fillTransferDropSec, 0.01)
+            if descending then
+                -- Extra time only for cooldown fall, so descent feels heavier.
+                transferDuration = transferDuration * 1.72
+            end
+            local tLinear = math_min(math_max(visualAnimState.colorOverlayTransferElapsed / transferDuration, 0), 1)
+            if descending then
+                -- Keep a short top hold right after tier-up so the cooldown
+                -- reads as a transfer, not an instant drop.
+                local holdFrac = 0.10
+                if tLinear <= holdFrac then
+                    tLinear = 0
+                else
+                    tLinear = (tLinear - holdFrac) / math_max(1 - holdFrac, 0.001)
+                end
+            end
+            -- Bowl-like transfer timing: slow near both corners, faster through center.
+            local t = 0.5 - (0.5 * math.cos(math.pi * tLinear))
+            local rubber
+            if descending then
+                -- Monotonic cooldown descent (no fast back-and-forth oscillation).
+                local fallShape = (1 - t) ^ 1.45
+                local tailDrag = 0.72 + (0.28 * (1 - t))
+                rubber = fallShape * tailDrag
+            else
+                local decay = math_exp(-math_max(PUSH_FEEL_CFG.fillTransferRubberDamping, 0.01) * t)
+                local omega = (math.pi * 2) * math_max(PUSH_FEEL_CFG.fillTransferRubberOscillations, 0.01)
+                rubber = decay * (0.20 + (0.80 * math.cos(omega * t)))
+            end
+            local value = landingTarget + ((fromFill - landingTarget) * rubber)
+            local targetValue = math_min(math_max(value, 0), 1)
+            if descending then
+                -- Preserve some carried pressure early in cooldown so the bar
+                -- reads as "cooling" instead of dropping to empty.
+                local carryFloor = landingTarget + ((fromFill - landingTarget) * 0.24 * ((1 - t) ^ 1.35))
+                targetValue = math_max(targetValue, carryFloor)
+                coolingBlueBlend = 0.90 * ((1 - t) ^ 0.35)
+            end
+            -- Add corner drag so both start/end naturally decelerate.
+            local corner = 1 - (4 * t * (1 - t))
+            corner = math_min(math_max(corner, 0), 1)
+            local settleTau = 0.016 + (0.080 * (corner ^ 1.35))
+            if descending then
+                settleTau = settleTau * 1.30
+            end
+            colorOverlayState.fillFrac = SmoothAlpha(
+                colorOverlayState.fillFrac,
+                targetValue,
+                elapsed,
+                settleTau,
+                settleTau * 1.10
+            )
+            if tLinear >= 1 then
                 visualAnimState.colorOverlayTransferActive = false
-                colorOverlayState.fillFrac = visualAnimState.colorOverlayTransferTo
+                if math_abs(colorOverlayState.fillFrac - visualAnimState.colorOverlayTransferTo) < 0.004 then
+                    colorOverlayState.fillFrac = visualAnimState.colorOverlayTransferTo
+                end
             end
         else
             if tier < 5 then
@@ -219,14 +278,27 @@ function Models.CreateVisualModel(ctx)
 
         local colorOverlay = frame.textures.colorOverlay
         if colorOverlay then
+            local colorTargetR = tierColor[1]
+            local colorTargetG = tierColor[2]
+            local colorTargetB = tierColor[3]
+            local colorTauIn = OVERLAY_COLOR_TAU_IN
+            local colorTauOut = OVERLAY_COLOR_TAU_OUT
+            if coolingBlueBlend > 0 then
+                local coolR, coolG, coolB = 0.10, 0.46, 1.00
+                colorTargetR = colorTargetR + ((coolR - colorTargetR) * coolingBlueBlend)
+                colorTargetG = colorTargetG + ((coolG - colorTargetG) * coolingBlueBlend)
+                colorTargetB = colorTargetB + ((coolB - colorTargetB) * coolingBlueBlend)
+                colorTauIn = 0.030
+                colorTauOut = 0.090
+            end
             colorOverlayState.currentColor[1] = SmoothAlpha(
-                colorOverlayState.currentColor[1], tierColor[1], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
+                colorOverlayState.currentColor[1], colorTargetR, elapsed, colorTauIn, colorTauOut
             )
             colorOverlayState.currentColor[2] = SmoothAlpha(
-                colorOverlayState.currentColor[2], tierColor[2], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
+                colorOverlayState.currentColor[2], colorTargetG, elapsed, colorTauIn, colorTauOut
             )
             colorOverlayState.currentColor[3] = SmoothAlpha(
-                colorOverlayState.currentColor[3], tierColor[3], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
+                colorOverlayState.currentColor[3], colorTargetB, elapsed, colorTauIn, colorTauOut
             )
             colorOverlay:SetVertexColor(
                 colorOverlayState.currentColor[1],

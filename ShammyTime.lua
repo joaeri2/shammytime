@@ -826,6 +826,10 @@ local function ApplyElementMouseState()
         local staggerBar = ShammyTime.GetStaggerBarFrame()
         if staggerBar then staggerBar:EnableMouse(visible(staggerBar) and useMouse or false) end
     end
+    if ShammyTime.GetPressureFrame then
+        local pressureFrame = ShammyTime.GetPressureFrame()
+        if pressureFrame then pressureFrame:EnableMouse(visible(pressureFrame) and useMouse or false) end
+    end
     if ShammyTime.SetSatellitesEnableMouse then
         ShammyTime.SetSatellitesEnableMouse(visible(center) and useMouse or false)
     end
@@ -901,6 +905,18 @@ local function ApplyElementVisibility()
                 local effAlpha = (ShammyTime.GetModuleEffectiveAlpha
                                   and ShammyTime.GetModuleEffectiveAlpha("staggerBar")) or 1
                 staggerBar:SetAlpha(effAlpha)
+            end
+        end
+    end
+    -- Pressure visual
+    if ShammyTime.GetPressureFrame then
+        local pressureFrame = ShammyTime.GetPressureFrame()
+        if pressureFrame then
+            if enabled("pressureEnabled") then
+                pressureFrame:Show()
+            else
+                pressureFrame:Hide()
+                pressureFrame:SetAlpha(0)
             end
         end
     end
@@ -1081,6 +1097,10 @@ function UpdateAllElementsFadeState()
             local staggerBar = ShammyTime.GetStaggerBarFrame()
             if staggerBar then staggerBar:Show(); staggerBar:SetAlpha(1) end
         end
+        if ShammyTime.GetPressureFrame then
+            local pressureFrame = ShammyTime.GetPressureFrame()
+            if pressureFrame then pressureFrame:Show(); pressureFrame:SetAlpha(1) end
+        end
         ApplyElementMouseState()
         return
     end
@@ -1129,6 +1149,7 @@ function UpdateAllElementsFadeState()
         end
     end
     local hasWindfury = ShammyTime.HasWindfuryAvailable and ShammyTime.HasWindfuryAvailable() or false
+    local pressureActive = ShammyTime.IsPressureActive and ShammyTime.IsPressureActive(3.0) or false
     local fadeContext = {
         inCombat = inCombat,
         hasTarget = hasTarget,
@@ -1145,6 +1166,7 @@ function UpdateAllElementsFadeState()
         hasShield = hasShield,
         shieldCharges = shieldCharges,
         hasWindfury = hasWindfury,
+        pressureActive = pressureActive,
     }
 
     -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
@@ -1162,7 +1184,7 @@ function UpdateAllElementsFadeState()
         local circleAlpha, circleFadeOut, circleUseSlowFade, holdHover
         local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryBubbles
         local useModulePath = mod and true
-        -- When "No Active Buff/Proc" is on, apply fade even if "Enable Fade" wasn't checked (so one checkbox is enough)
+        -- When "No Active Effect" is on, apply fade even if "Enable Fade" wasn't checked (so one checkbox is enough)
         local wfFadeActive = mod and mod.fade and (mod.fade.enabled or (mod.fade.conditions and mod.fade.conditions.inactiveBuff))
         if useModulePath and ShammyTime.EvaluateFade then
             if wfFadeActive then
@@ -1409,6 +1431,31 @@ function UpdateAllElementsFadeState()
                     end
                 else
                     SetOrAnimateFade(icdFrame, effAlphaIcd, false, false)
+                end
+            end
+        end
+    end
+    -- Pressure visual: per-module fade when enabled
+    if ShammyTime.GetPressureFrame then
+        local pressureFrame = ShammyTime.GetPressureFrame()
+        if pressureFrame then
+            if not db.pressureEnabled then
+                pressureFrame:Hide()
+            else
+                pressureFrame:Show()
+                local effAlphaPressure = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("pressureVisual")) or 1
+                local mod = useModuleFade and ShammyTime.db.profile.modules.pressureVisual
+                local pressureFadeActive = mod and mod.fade and (mod.fade.enabled or (mod.fade.conditions and mod.fade.conditions.inactiveBuff))
+                if mod and ShammyTime.EvaluateFade then
+                    if pressureFadeActive then
+                        local shouldFade, targetAlpha, useSlowMod = ShammyTime:EvaluateFade("pressureVisual", fadeContext)
+                        local useSlowIn = (not shouldFade and (mod.fade.conditions and mod.fade.conditions.fadeInOnTarget) and fadeContext.hasEnemyTarget)
+                        SetOrAnimateFade(pressureFrame, effAlphaPressure * (shouldFade and targetAlpha or 1), useSlowMod or useSlowIn, shouldFade)
+                    else
+                        SetOrAnimateFade(pressureFrame, effAlphaPressure, false, false)
+                    end
+                else
+                    SetOrAnimateFade(pressureFrame, effAlphaPressure, false, false)
                 end
             end
         end

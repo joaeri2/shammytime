@@ -608,11 +608,15 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "fadeInOnTarget") end,
                 set = function(info, v) setModuleOption(info, v, "fadeInOnTarget") end,
-                hidden = function() return moduleName ~= "windfuryBubbles" and moduleName ~= "shamanisticFocus" end,
+                hidden = function()
+                    return moduleName ~= "windfuryBubbles"
+                        and moduleName ~= "shamanisticFocus"
+                        and moduleName ~= "pressureVisual"
+                end,
             },
             inactiveBuff = {
                 type = "toggle",
-                name = "No Active Buff/Proc",
+                name = "No Active Effect",
                 order = 15,
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "inactiveBuff") end,
@@ -837,7 +841,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             fadeDesc = {
                                 type = "description",
-                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n- |cffccccccOut of Combat|r - fade when you're not in combat.\n- |cffccccccNo Target|r - fade when you have no target.\n- |cffccccccNo Active Buff/Proc|r - e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n- |cffccccccNo Totems Placed|r - totem bar fades when you have no totems down.\n- |cffccccccFade In When Targeting Enemy|r - (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
+                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n- |cffccccccOut of Combat|r - fade when you're not in combat.\n- |cffccccccNo Target|r - fade when you have no target.\n- |cffccccccNo Active Effect|r - fade when that module has no relevant active state (for example no recent proc, buff, or pressure event).\n- |cffccccccNo Totems Placed|r - totem bar fades when you have no totems down.\n- |cffccccccFade In When Targeting Enemy|r - fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -1467,6 +1471,41 @@ function ShammyTime:SetupOptions()
                             end,
                         },
                     }, true),  -- noFade: fade settings don't apply to the damage feed
+                    pressureVisual = CreateModuleOptions("pressureVisual", "Pressure Visual", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Pressure Visual tracks your outgoing damage momentum and shows it as a live pressure bar. " ..
+                                           "The three popup slots below the bar summarize your recent high-impact spells so you can read your pressure spikes at a glance.\n\n" ..
+                                           "How it works:\n" ..
+                                           "- Sustained effects (like Flame Shock and Magma Totem) keep accumulating while active.\n" ..
+                                           "- Burst events (like Stormstrike, Windfury bursts, and shocks) pop quickly and fade.\n" ..
+                                           "- Slot assignment is dynamic from left to right, with temporary overlays when all slots are occupied.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                        pressureTextHeader = {
+                            type = "header",
+                            name = "Popup Text",
+                            order = 4.1,
+                        },
+                        pressurePopupTextSize = {
+                            type = "range",
+                            name = "Text Size",
+                            desc = "Size of the popup damage numbers shown above pressure slot icons.",
+                            min = 8, max = 72, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("pressurePopupTextSize", 49) end,
+                            set = function(_, v) setFlatDB("pressurePopupTextSize", v) end,
+                        },
+                    }),
                     staggerBar = CreateModuleOptions("staggerBar", "Stagger Bar", {
                         moduleDesc = {
                             type = "group",

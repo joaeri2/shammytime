@@ -1,5 +1,5 @@
 -- ShammyTime_Modules.lua
--- Registers the 5 UI modules with ShammyTime.Modules (Create, ApplyConfig, SetEnabled, DemoStart, DemoStop)
+-- Registers UI modules with ShammyTime.Modules (Create, ApplyConfig, SetEnabled, DemoStart, DemoStop)
 -- so the options panel and demo system can drive them. Uses existing Ensure*/Apply* APIs.
 
 local ShammyTime = _G.ShammyTime
@@ -547,3 +547,53 @@ function staggerBar:DemoStop()
 end
 
 ShammyTime.Modules.staggerBar = staggerBar
+
+-- ---------------------------------------------------------------------------
+-- Pressure Visual (bar + popup slots)
+-- ---------------------------------------------------------------------------
+local pressureVisual = {
+    frame = nil,
+}
+
+function pressureVisual:Create()
+    if ShammyTime.EnsurePressureFrame then
+        self.frame = ShammyTime.EnsurePressureFrame()
+    elseif ShammyTime.GetPressureFrame then
+        self.frame = ShammyTime.GetPressureFrame()
+    end
+    return self.frame
+end
+
+function pressureVisual:ApplyConfig()
+    local cfg = getModuleConfig("pressureVisual")
+    if not cfg then return end
+    self:Create()
+    local st = _G.ShammyTime
+    local f = self.frame or (st and st.GetPressureFrame and st.GetPressureFrame())
+    if not f then return end
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    local baseScale = (st and st.GetPressureBaseScale and st.GetPressureBaseScale()) or 0.5
+    f:SetScale(baseScale * effScale)
+    local db = st and st.GetDB and st.GetDB()
+    if db then db.pressureScale = moduleScale end
+end
+
+function pressureVisual:SetEnabled(enabled)
+    local p = ShammyTime.db.profile
+    if p.modules and p.modules.pressureVisual then p.modules.pressureVisual.enabled = enabled end
+    p.pressureEnabled = enabled
+    if ShammyTime.ApplyElementVisibility then ShammyTime.ApplyElementVisibility() end
+end
+
+function pressureVisual:DemoStart()
+    local f = self:Create()
+    if f then f:Show(); f:SetAlpha(1) end
+end
+
+function pressureVisual:DemoStop()
+    local st = _G.ShammyTime
+    if st and st.UpdateAllElementsFadeState then st.UpdateAllElementsFadeState() end
+end
+
+ShammyTime.Modules.pressureVisual = pressureVisual

@@ -1975,6 +1975,22 @@ ShammyTime.EnsurePressureFrame = function()
     return frame
 end
 
+ShammyTime.GetPressureBaseScale = function()
+    return DEFAULT_SCALE
+end
+
+ShammyTime.IsPressureActive = function(windowSec)
+    local sec = tonumber(windowSec) or 3.0
+    if sec < 0.1 then sec = 0.1 end
+    if PS.currentTier and PS.currentTier > 0 then
+        return true
+    end
+    if not PS.lastDamageTime or PS.lastDamageTime <= 0 then
+        return false
+    end
+    return (GetTime() - PS.lastDamageTime) <= sec
+end
+
 local function PrintPressureHelp()
     print(ADDON_PREFIX .. " pressure commands:")
     print("  /st pressure on|off|toggle")

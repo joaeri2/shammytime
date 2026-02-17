@@ -55,6 +55,7 @@ local DEFAULTS = {
             wfImpact = moduleDefaults(true, 1.3, 1.0),
             windfuryIcd = moduleDefaults(true, 1.1, 1.0),
             staggerBar = moduleDefaults(true, 0.6, 1.0),
+            pressureVisual = moduleDefaults(true, 1.0, 1.0),
         },
         -- Flat keys (existing code)
         point = "CENTER",
@@ -117,12 +118,14 @@ local DEFAULTS = {
         },
         -- WF Impact (Windfury Totem party damage feed)
         wfImpactEnabled = true,
+        pressureEnabled = true,
         wfImpactOffsetX = 0,
         wfImpactOffsetY = -26,
         wfImpactFontScroll = 15,
         wfImpactFontTotal = 16,
         wfImpactScrollDuration = 2.0,
         wfImpactScrollDistance = 115,
+        pressureScale = 1.0,
         -- Stagger bar
         staggerBarEnabled = true,
         staggerBarAlwaysShow = true,
@@ -186,6 +189,13 @@ DEFAULTS.profile.modules.shamanisticFocus.pos = {
 
 function ShammyTime:OnInitialize()
     self.db = AceDB:New("ShammyTimeDB", DEFAULTS, true)
+    local p = self.db and self.db.profile
+    if p then
+        p.modules = p.modules or {}
+        if not p.modules.pressureVisual then
+            p.modules.pressureVisual = moduleDefaults(true, 1.0, 1.0)
+        end
+    end
     self:MigrateOldDB()
     if self.SetupOptions then
         self:SetupOptions()
@@ -292,8 +302,8 @@ function ShammyTime:MigrateOldDB()
 end
 
 --- Centralized fade evaluation: given module name and game context, returns whether to fade, target alpha, and use slow animation.
---- @param moduleName string One of: windfuryBubbles, totemBar, shamanisticFocus, weaponImbueBar, shieldIndicator
---- @param context table { inCombat, hasTarget, hasEnemyTarget, hasTotems, noTotemsFaded, focusActive, imbueActive, imbueShortTime, wfProcced, procAnimPlaying, hasShield, shieldCharges, outOfRange }
+--- @param moduleName string One of: windfuryBubbles, totemBar, shamanisticFocus, weaponImbueBar, shieldIndicator, windfuryIcd, staggerBar, pressureVisual
+--- @param context table { inCombat, hasTarget, hasEnemyTarget, hasTotems, noTotemsFaded, focusActive, imbueActive, imbueShortTime, wfProcced, procAnimPlaying, hasShield, shieldCharges, outOfRange, hasWindfury, pressureActive }
 --- @return boolean shouldFade, number targetAlpha, boolean useSlowFade
 function ShammyTime:EvaluateFade(moduleName, context)
     local p = self.db and self.db.profile
@@ -341,6 +351,8 @@ function ShammyTime:EvaluateFade(moduleName, context)
             shouldFade = true
         elseif moduleName == "windfuryIcd" and not context.hasWindfury then
             shouldFade = true
+        elseif moduleName == "pressureVisual" and not context.pressureActive then
+            shouldFade = true
         end
     end
     if cond.hideWhenActive then
@@ -364,6 +376,9 @@ function ShammyTime:SyncFlatToModules(opts)
     opts = opts or {}
     local includeFade = (opts.includeFade ~= false)
     p.modules = p.modules or {}
+    if not p.modules.pressureVisual then
+        p.modules.pressureVisual = moduleDefaults(true, 1.0, 1.0)
+    end
     p.global = p.global or {}
 
     -- Enabled flags: flat → modules
@@ -388,6 +403,9 @@ function ShammyTime:SyncFlatToModules(opts)
     if p.modules.staggerBar then
         p.modules.staggerBar.enabled = (p.staggerBarEnabled ~= false)
     end
+    if p.modules.pressureVisual then
+        p.modules.pressureVisual.enabled = (p.pressureEnabled ~= false)
+    end
 
     -- Scale: flat → modules
     if p.modules.windfuryBubbles and p.wfRadialScale then
@@ -401,6 +419,9 @@ function ShammyTime:SyncFlatToModules(opts)
     end
     if p.modules.weaponImbueBar and p.imbueBarScale then
         p.modules.weaponImbueBar.scale = p.imbueBarScale
+    end
+    if p.modules.pressureVisual and p.pressureScale then
+        p.modules.pressureVisual.scale = p.pressureScale
     end
 
     -- Shamanistic Focus: flat focusFrame → modules
@@ -467,6 +488,12 @@ function ShammyTime:SyncFlatToModules(opts)
             p.modules.staggerBar.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
             p.modules.staggerBar.fade.enabled = p.wfFadeOutOfCombat or p.modules.staggerBar.fade.enabled or false
         end
+        if p.modules.pressureVisual then
+            p.modules.pressureVisual.fade = p.modules.pressureVisual.fade or {}
+            p.modules.pressureVisual.fade.conditions = p.modules.pressureVisual.fade.conditions or {}
+            p.modules.pressureVisual.fade.conditions.outOfCombat = (p.wfFadeOutOfCombat == true)
+            p.modules.pressureVisual.fade.enabled = p.wfFadeOutOfCombat or p.modules.pressureVisual.fade.enabled or false
+        end
     end
 end
 
@@ -474,6 +501,10 @@ end
 function ShammyTime:ApplyAllConfigs()
     local p = self.db.profile
     p.global = p.global or { locked = false, demoMode = false, masterScale = 1, masterAlpha = 1, devMode = false }
+    p.modules = p.modules or {}
+    if not p.modules.pressureVisual then
+        p.modules.pressureVisual = moduleDefaults(true, 1.0, 1.0)
+    end
     -- Ensure flat enabled keys exist so Shamanistic Focus etc. show for old profiles that never had them
     if p.wfRadialEnabled == nil then p.wfRadialEnabled = true end
     if p.wfTotemBarEnabled == nil then p.wfTotemBarEnabled = true end
@@ -483,6 +514,7 @@ function ShammyTime:ApplyAllConfigs()
     if p.wfImpactEnabled == nil then p.wfImpactEnabled = true end
     if p.wfIcdEnabled == nil then p.wfIcdEnabled = true end
     if p.staggerBarEnabled == nil then p.staggerBarEnabled = true end
+    if p.pressureEnabled == nil then p.pressureEnabled = true end
     if p.fontShieldCount == nil then p.fontShieldCount = p.fontImbueTimer or 86 end
     -- Sync flat keys from modules so existing code sees them
     if p.modules then
@@ -494,10 +526,12 @@ function ShammyTime:ApplyAllConfigs()
         if p.modules.wfImpact then p.wfImpactEnabled = (p.modules.wfImpact.enabled ~= false) end
         if p.modules.windfuryIcd then p.wfIcdEnabled = (p.modules.windfuryIcd.enabled ~= false) end
         if p.modules.staggerBar then p.staggerBarEnabled = (p.modules.staggerBar.enabled ~= false) end
+        if p.modules.pressureVisual then p.pressureEnabled = (p.modules.pressureVisual.enabled ~= false) end
         if p.modules.windfuryBubbles then p.wfRadialScale = p.modules.windfuryBubbles.scale or p.wfRadialScale end
         if p.modules.totemBar then p.wfTotemBarScale = p.modules.totemBar.scale or p.wfTotemBarScale end
         if p.modules.shieldIndicator then p.shieldScale = p.modules.shieldIndicator.scale or p.shieldScale end
         if p.modules.weaponImbueBar then p.imbueBarScale = p.modules.weaponImbueBar.scale or p.imbueBarScale end
+        if p.modules.pressureVisual then p.pressureScale = p.modules.pressureVisual.scale or p.pressureScale end
         -- Sync font sizes between flat keys and modules (flat values win when set)
         local function clampFont(v) return (type(v)=="number" and v>=6 and v<=64) and v or nil end
         if p.modules.totemBar then
@@ -553,6 +587,7 @@ function ShammyTime:ApplyAllConfigs()
     if ShammyTime.GetShamanisticFocusFrame then ShammyTime.GetShamanisticFocusFrame() end
     if ShammyTime.EnsureWindfuryICDFrame then ShammyTime.EnsureWindfuryICDFrame() end
     if ShammyTime.EnsureStaggerBarFrame then ShammyTime.EnsureStaggerBarFrame() end
+    if ShammyTime.EnsurePressureFrame then ShammyTime.EnsurePressureFrame() end
 
     -- Call each module's ApplyConfig() so scale/alpha/position from profile.modules are applied (spec)
     if self.Modules then
@@ -572,6 +607,7 @@ function ShammyTime:ApplyAllConfigs()
         ShammyTime.GetShamanisticFocusFrame and ShammyTime.GetShamanisticFocusFrame() or nil,
         ShammyTime.GetWindfuryICDFrame and ShammyTime.GetWindfuryICDFrame() or nil,
         _G.ShammyTimeStaggerBarFrame,
+        ShammyTime.GetPressureFrame and ShammyTime.GetPressureFrame() or nil,
     }
     for _, frame in ipairs(framesToClearCache) do
         if frame then frame._stFadeTarget = nil end
@@ -600,7 +636,7 @@ end
 function ShammyTime:ApplyPresetAlwaysVisible()
     local p = self.db and self.db.profile
     if not p or not p.modules then return end
-    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd", "staggerBar" }
+    local moduleNames = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd", "staggerBar", "pressureVisual" }
     for _, name in ipairs(moduleNames) do
         local m = p.modules[name]
         if m then
@@ -635,6 +671,7 @@ end
 ---   Weapon Imbue Bar   → fade when no short-duration imbue (threshold 120s)
 ---   Shield Indicator   → fade when out of combat
 ---   Windfury Bubbles   → fade when not recently procced
+---   Pressure Visual    → fade when out of combat or no recent pressure activity
 function ShammyTime:ApplyPresetSmartFade()
     local p = self.db and self.db.profile
     if not p or not p.modules then return end
@@ -729,6 +766,19 @@ function ShammyTime:ApplyPresetSmartFade()
         sb.fade.conditions.inactiveBuff = false
     end
 
+    -- Pressure visual: fade when out of combat or no recent pressure activity
+    local pv = p.modules.pressureVisual
+    if pv then
+        pv.fade = pv.fade or {}
+        pv.fade.enabled = true
+        pv.fade.inactiveAlpha = 0
+        pv.fade.conditions = pv.fade.conditions or {}
+        pv.fade.conditions.outOfCombat = true
+        pv.fade.conditions.noTarget = false
+        pv.fade.conditions.inactiveBuff = true
+        pv.fade.conditions.fadeInOnTarget = false
+    end
+
     -- Sync legacy flat keys
     p.wfFadeOutOfCombat = false
     p.wfFadeWhenNotProcced = true
@@ -798,6 +848,11 @@ local MODULE_RESET_FLAT_KEYS = {
         "staggerHelperY",
         "staggerHideDelay",
     },
+    pressureVisual = {
+        "pressureEnabled",
+        "pressureScale",
+        "pressurePopupTextSize",
+    },
 }
 
 --- Reset a single module to defaults
@@ -842,7 +897,7 @@ function ShammyTime:PlayDemo()
     local addon = self  -- Capture for closures
     addon.demoActive = true
     if addon.UpdateAllElementsFadeState then addon:UpdateAllElementsFadeState() end
-    local order = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd", "staggerBar" }
+    local order = { "windfuryBubbles", "totemBar", "shamanisticFocus", "weaponImbueBar", "shieldIndicator", "windfuryIcd", "staggerBar", "pressureVisual" }
     for i, name in ipairs(order) do
         C_Timer.After((i - 1) * 2, function()
             if not addon.demoActive then return end

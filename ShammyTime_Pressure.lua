@@ -37,6 +37,34 @@ local FILL_FULL_HOLD_SEC = 0.40
 local FILL_FULL_EPSILON = 0.995
 local OVERLAY_COLOR_TAU_IN = 0.08
 local OVERLAY_COLOR_TAU_OUT = 0.16
+local PUSH_FEEL_CFG = {
+    fillSmoothTauEdgeMult = 1.95,
+    fillMass = 10.0,
+    fillTransferDropSec = 0.78,
+    fillTransferRubberDamping = 4.10,
+    fillTransferRubberOscillations = 1.60,
+    fillTransferLandingFloor = 0.08,
+    promotionVisualFullEpsilon = 0.985,
+    fillPullResistStart = 0.80,
+    fillPullLowerPower = 1.12,
+    fillPullEdgePower = 2.20,
+    tierPullBaseResistMax = 0.06,
+    tierPullBaseResistPower = 1.14,
+    tierPullEdgeStart = 0.80,
+    tierPullEdgeResistMax = 0.22,
+    tierPullEdgeResistPower = 2.30,
+    tierPromotionStepLockSec = 0.35,
+    gaugeShakeTriggerFill = 0.90,
+    gaugeShakeStressTauIn = 0.12,
+    gaugeShakeStressTauOut = 0.26,
+    gaugeShakeMaxX = 1.30,
+    gaugeShakeMaxY = 0.95,
+    gaugeShakeFreqX1 = 35.0,
+    gaugeShakeFreqX2 = 52.0,
+    gaugeShakeFreqY1 = 41.0,
+}
+local PS
+local SmoothAlpha
 local VISIBLE_HEIGHT_FRACTION = 1 - CROP_TOP - CROP_BOTTOM
 if VISIBLE_HEIGHT_FRACTION <= 0 then
     VISIBLE_HEIGHT_FRACTION = 1
@@ -1142,6 +1170,86 @@ local colorOverlayFillFrac = 0
 local colorOverlayFullHoldRemaining = 0
 local colorOverlayFillVisible = false
 local colorOverlayCurrentColor = { 0.50, 0.50, 0.50 }
+local visualAnimState = {
+    colorOverlayTransferActive = false,
+    colorOverlayTransferElapsed = 0,
+    colorOverlayTransferFrom = 0,
+    colorOverlayTransferTo = 0,
+    promotionPending = false,
+    gaugeShakeStress = 0,
+    gaugeShakeOffsetX = 0,
+    gaugeShakeOffsetY = 0,
+}
+
+local function ApplyProgressPullResistance(progressFrac)
+    local p = math_min(math_max(progressFrac or 0, 0), 1)
+    if p <= 0 then return 0 end
+    if p >= 1 then return 1 end
+
+    if p <= PUSH_FEEL_CFG.fillPullResistStart then
+        local lowerSpan = math_max(PUSH_FEEL_CFG.fillPullResistStart, 0.001)
+        local q = p / lowerSpan
+        return (q ^ PUSH_FEEL_CFG.fillPullLowerPower) * PUSH_FEEL_CFG.fillPullResistStart
+    end
+
+    local q = (p - PUSH_FEEL_CFG.fillPullResistStart) / math_max(1 - PUSH_FEEL_CFG.fillPullResistStart, 0.001)
+    return PUSH_FEEL_CFG.fillPullResistStart + ((q ^ PUSH_FEEL_CFG.fillPullEdgePower) * (1 - PUSH_FEEL_CFG.fillPullResistStart))
+end
+
+local function StartColorOverlayTransferDrop(fromFillFrac)
+    visualAnimState.colorOverlayTransferActive = true
+    visualAnimState.colorOverlayTransferElapsed = 0
+    visualAnimState.colorOverlayTransferFrom = math_min(math_max(fromFillFrac or colorOverlayFillFrac or 0, 0), 1)
+    visualAnimState.colorOverlayTransferTo = 0
+    colorOverlayFullHoldRemaining = 0
+end
+
+local function SetGaugeTextureOffset(offsetX, offsetY)
+    local x = tonumber(offsetX) or 0
+    local y = tonumber(offsetY) or 0
+    if math_abs((visualAnimState.gaugeShakeOffsetX or 0) - x) < 0.01 and math_abs((visualAnimState.gaugeShakeOffsetY or 0) - y) < 0.01 then
+        return
+    end
+    visualAnimState.gaugeShakeOffsetX = x
+    visualAnimState.gaugeShakeOffsetY = y
+    for _, key in ipairs(gaugeKeys) do
+        local tex = frame.textures[key]
+        if tex then
+            tex:ClearAllPoints()
+            tex:SetPoint("TOPLEFT", frame, "TOPLEFT", x, y)
+            tex:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", x, y)
+        end
+    end
+end
+
+local function UpdateGaugeShake(elapsed, now, rawFillTarget)
+    local fillStress = 0
+    if rawFillTarget and rawFillTarget > PUSH_FEEL_CFG.gaugeShakeTriggerFill then
+        fillStress = (rawFillTarget - PUSH_FEEL_CFG.gaugeShakeTriggerFill) / math_max(1 - PUSH_FEEL_CFG.gaugeShakeTriggerFill, 0.001)
+    end
+    local resistMax = math_max((PS and PS.tierEdgeResistMax) or 0.52, 0.001)
+    local resistStress = math_min(math_max((PS and PS.tierEdgeResistance or 0) / resistMax, 0), 1)
+    local stressTarget = math_min(math_max(math_max(fillStress, resistStress * 0.90), 0), 1)
+    visualAnimState.gaugeShakeStress = SmoothAlpha(
+        visualAnimState.gaugeShakeStress,
+        stressTarget,
+        elapsed,
+        PUSH_FEEL_CFG.gaugeShakeStressTauIn,
+        PUSH_FEEL_CFG.gaugeShakeStressTauOut
+    )
+
+    if visualAnimState.gaugeShakeStress <= 0.01 then
+        SetGaugeTextureOffset(0, 0)
+        return
+    end
+
+    local t = now or GetTime()
+    local ampX = PUSH_FEEL_CFG.gaugeShakeMaxX * visualAnimState.gaugeShakeStress
+    local ampY = PUSH_FEEL_CFG.gaugeShakeMaxY * visualAnimState.gaugeShakeStress
+    local shakeX = (math.sin(t * PUSH_FEEL_CFG.gaugeShakeFreqX1) * ampX) + (math.cos(t * PUSH_FEEL_CFG.gaugeShakeFreqX2 + 0.9) * ampX * 0.35)
+    local shakeY = math.sin(t * PUSH_FEEL_CFG.gaugeShakeFreqY1 + 1.2) * ampY
+    SetGaugeTextureOffset(shakeX, shakeY)
+end
 
 local function SetColorOverlayFill(fillFrac)
     local colorOverlay = frame.textures.colorOverlay
@@ -1183,6 +1291,7 @@ for i, key in ipairs(gaugeKeys) do
         tex:SetAlpha(gaugeCurrentAlpha[i] or 0)
     end
 end
+SetGaugeTextureOffset(0, 0)
 if frame.textures.colorOverlay then
     frame.textures.colorOverlay:SetAlpha(1)
 end
@@ -1303,7 +1412,7 @@ local TIER_GAUGE_ALPHA = {
     [5] = 1.00,
 }
 
-local function SmoothAlpha(current, target, elapsed, tauIn, tauOut)
+SmoothAlpha = function(current, target, elapsed, tauIn, tauOut)
     if math_abs(current - target) < 0.003 then
         return target
     end
@@ -1313,7 +1422,7 @@ local function SmoothAlpha(current, target, elapsed, tauIn, tauOut)
     return current + (target - current) * alpha
 end
 
-local PS = {
+PS = {
     fastCharge = 0,
     slowCharge = 0,
     tauFast = 1.0,
@@ -1349,7 +1458,7 @@ local PS = {
     tierSqueezeWeight = 0.65,
     tierHysteresis = 0.14,
     tierHoldMinSec = 2.20,
-    tierEdgeStartFrac = 0.50,
+    tierEdgeStartFrac = 0.62,
     tierEdgePower = 1.70,
     tierEdgeResistMax = 0.52,
     tierEdgeSlipStartFrac = 0.72,
@@ -1462,14 +1571,20 @@ local function GetTierResistanceAndSlip(score, now)
         return 0, 0
     end
 
+    local resistance = (segFrac ^ PUSH_FEEL_CFG.tierPullBaseResistPower) * PUSH_FEEL_CFG.tierPullBaseResistMax
+
     local edgeStart = math_min(math_max(PS.tierEdgeStartFrac or 0.50, 0.0), 0.95)
-    local resistance = 0
     if segFrac > edgeStart then
         local q = (segFrac - edgeStart) / math_max(1 - edgeStart, 0.001)
         local concavityDepth = math_max(PS.tierConcavityDepth or 0, 0)
         local power = math_max((PS.tierEdgePower or 1.0) + concavityDepth, 1.0)
         local resistMax = math_max(PS.tierEdgeResistMax or 0, 0) * (1 + (concavityDepth * 0.75))
-        resistance = (q ^ power) * resistMax
+        resistance = resistance + ((q ^ power) * resistMax)
+    end
+
+    if segFrac > PUSH_FEEL_CFG.tierPullEdgeStart then
+        local q = (segFrac - PUSH_FEEL_CFG.tierPullEdgeStart) / math_max(1 - PUSH_FEEL_CFG.tierPullEdgeStart, 0.001)
+        resistance = resistance + ((q ^ PUSH_FEEL_CFG.tierPullEdgeResistPower) * PUSH_FEEL_CFG.tierPullEdgeResistMax)
     end
 
     local slip = 0
@@ -1732,30 +1847,69 @@ local function OnCombatLogPressure()
     end
 end
 
-local function UpdatePressureVisuals(elapsed)
+local function UpdatePressureVisuals(elapsed, now)
     local tier = PS.currentTier or 0
     local tierColor = TIER_COLORS[tier + 1] or TIER_COLORS[1]
 
-    if tier >= 1 then
+    local scoreForProgress = PS.tierEvalScore or PS.tierScore or 0
+    local rawFillTarget = GetTierFillTarget(scoreForProgress, tier)
+    local fillTarget = ApplyProgressPullResistance(rawFillTarget)
+
+    if visualAnimState.promotionPending and (not visualAnimState.colorOverlayTransferActive) then
+        fillTarget = 1
+    end
+
+    if tier >= 5 then
+        fillTarget = 1
+        visualAnimState.colorOverlayTransferActive = false
+        visualAnimState.colorOverlayTransferTo = 1
         colorOverlayFullHoldRemaining = 0
-        colorOverlayFillFrac = 1
-    else
-        local fillTarget = GetTierFillTarget(PS.tierScore or 0, tier)
-        if fillTarget >= FILL_FULL_EPSILON then
-            colorOverlayFullHoldRemaining = FILL_FULL_HOLD_SEC
-            fillTarget = 1
-        elseif colorOverlayFullHoldRemaining > 0 then
-            colorOverlayFullHoldRemaining = math_max(colorOverlayFullHoldRemaining - elapsed, 0)
-            fillTarget = 1
+    end
+
+    if visualAnimState.colorOverlayTransferActive then
+        local landingTarget = fillTarget
+        if tier >= 1 then
+            landingTarget = math_max(landingTarget, PUSH_FEEL_CFG.fillTransferLandingFloor)
         end
+        visualAnimState.colorOverlayTransferTo = landingTarget
+        visualAnimState.colorOverlayTransferElapsed = visualAnimState.colorOverlayTransferElapsed + elapsed
+        local t = math_min(math_max(visualAnimState.colorOverlayTransferElapsed / math_max(PUSH_FEEL_CFG.fillTransferDropSec, 0.01), 0), 1)
+        local decay = math_exp(-math_max(PUSH_FEEL_CFG.fillTransferRubberDamping, 0.01) * t)
+        local omega = (math.pi * 2) * math_max(PUSH_FEEL_CFG.fillTransferRubberOscillations, 0.01)
+        local rubber = decay * (0.20 + (0.80 * math.cos(omega * t)))
+        local value = landingTarget + ((visualAnimState.colorOverlayTransferFrom - landingTarget) * rubber)
+        colorOverlayFillFrac = math_min(math_max(value, 0), 1)
+        if t >= 1 then
+            visualAnimState.colorOverlayTransferActive = false
+            colorOverlayFillFrac = visualAnimState.colorOverlayTransferTo
+        end
+    else
+        if tier < 5 then
+            if fillTarget >= FILL_FULL_EPSILON then
+                colorOverlayFullHoldRemaining = FILL_FULL_HOLD_SEC
+                fillTarget = 1
+            elseif colorOverlayFullHoldRemaining > 0 then
+                colorOverlayFullHoldRemaining = math_max(colorOverlayFullHoldRemaining - elapsed, 0)
+                fillTarget = 1
+            end
+        else
+            colorOverlayFullHoldRemaining = 0
+        end
+
+        local edgeProgress = 0
+        if fillTarget > PUSH_FEEL_CFG.fillPullResistStart then
+            edgeProgress = (fillTarget - PUSH_FEEL_CFG.fillPullResistStart) / math_max(1 - PUSH_FEEL_CFG.fillPullResistStart, 0.001)
+        end
+        local riseTau = FILL_SMOOTH_TAU_RISE * math_max(PUSH_FEEL_CFG.fillMass, 1) * (1 + (edgeProgress * edgeProgress * PUSH_FEEL_CFG.fillSmoothTauEdgeMult))
         colorOverlayFillFrac = SmoothAlpha(
             colorOverlayFillFrac,
             fillTarget,
             elapsed,
-            FILL_SMOOTH_TAU_RISE,
+            riseTau,
             FILL_SMOOTH_TAU_FALL
         )
     end
+
     local colorOverlay = frame.textures.colorOverlay
     if colorOverlay then
         colorOverlayCurrentColor[1] = SmoothAlpha(
@@ -1793,6 +1947,8 @@ local function UpdatePressureVisuals(elapsed)
             tex:SetAlpha(gaugeCurrentAlpha[i])
         end
     end
+
+    UpdateGaugeShake(elapsed, now, rawFillTarget)
 end
 
 local function ClearPressureDebugFrame()
@@ -1880,6 +2036,20 @@ local function ResetPressureState()
     colorOverlayFillFrac = 0
     colorOverlayFullHoldRemaining = 0
     colorOverlayFillVisible = false
+    visualAnimState.colorOverlayTransferActive = false
+    visualAnimState.colorOverlayTransferElapsed = 0
+    visualAnimState.colorOverlayTransferFrom = 0
+    visualAnimState.colorOverlayTransferTo = 0
+    visualAnimState.promotionPending = false
+    visualAnimState.gaugeShakeStress = 0
+    SetGaugeTextureOffset(0, 0)
+    for i, key in ipairs(gaugeKeys) do
+        gaugeCurrentAlpha[i] = (i == 1) and 1 or 0
+        local tex = frame.textures[key]
+        if tex then
+            tex:SetAlpha(gaugeCurrentAlpha[i])
+        end
+    end
     colorOverlayCurrentColor[1] = TIER_COLORS[1][1]
     colorOverlayCurrentColor[2] = TIER_COLORS[1][2]
     colorOverlayCurrentColor[3] = TIER_COLORS[1][3]
@@ -1940,6 +2110,13 @@ local function EnterPressureIdleState()
     PS.tierCapReason = "ok"
     PS.firstPressureAt = nil
     ClearPressureSamples()
+    visualAnimState.colorOverlayTransferActive = false
+    visualAnimState.colorOverlayTransferElapsed = 0
+    visualAnimState.colorOverlayTransferFrom = 0
+    visualAnimState.colorOverlayTransferTo = 0
+    visualAnimState.promotionPending = false
+    visualAnimState.gaugeShakeStress = 0
+    SetGaugeTextureOffset(0, 0)
     PS.bucketStatsElapsed = 0
     for wi = 1, NUM_WINDOWS do
         PS.pressureBucketAvg[wi] = 0
@@ -2119,14 +2296,30 @@ local function OnPressureTick(_, dt)
 
     local gatedTier
     gatedTier, PS.tierCapReason = GetGateCappedTier(candidateTier, PS.squeezeCharge, activeSec)
+    local canPromoteNow = (now - (PS.lastTierChangeAt or 0)) >= PUSH_FEEL_CFG.tierPromotionStepLockSec
+    visualAnimState.promotionPending = false
 
     if gatedTier > PS.currentTier then
-        PS.currentTier = gatedTier
-        PS.lastTierChangeAt = now
-        PS.tierMomentumBoost = math_min(
-            (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
-            math_max(PS.tierMomentumMax or 0, 0)
-        )
+        local currentTierFillRaw = GetTierFillTarget(PS.tierEvalScore or PS.tierScore or 0, PS.currentTier)
+        local scoreReadyForPromotion = currentTierFillRaw >= FILL_FULL_EPSILON
+        if scoreReadyForPromotion then
+            visualAnimState.promotionPending = true
+        end
+
+        local visualReadyForPromotion = colorOverlayFillFrac >= PUSH_FEEL_CFG.promotionVisualFullEpsilon
+        if canPromoteNow and visualAnimState.promotionPending and visualReadyForPromotion and (not visualAnimState.colorOverlayTransferActive) then
+            local previousTier = PS.currentTier
+            PS.currentTier = math_min(gatedTier, PS.currentTier + 1)
+            PS.lastTierChangeAt = now
+            PS.tierMomentumBoost = math_min(
+                (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
+                math_max(PS.tierMomentumMax or 0, 0)
+            )
+            if PS.currentTier > previousTier then
+                StartColorOverlayTransferDrop(1)
+            end
+            visualAnimState.promotionPending = false
+        end
     elseif gatedTier < PS.currentTier then
         local currentIdx = PS.currentTier + 1
         local gateFailsCurrentTier = (PS.squeezeCharge < (PS.tierMinSqueeze[currentIdx] or 0))
@@ -2140,7 +2333,7 @@ local function OnPressureTick(_, dt)
         end
     end
 
-    UpdatePressureVisuals(elapsed)
+    UpdatePressureVisuals(elapsed, now)
     UpdatePressureDebugFrame(hitKick)
     ExportPressureState()
 end

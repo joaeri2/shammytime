@@ -192,6 +192,54 @@ local function setFlatDB(key, val)
     if st and st.ApplyAllConfigs then st:ApplyAllConfigs() end
 end
 
+local PRESSURE_DEV_DEFAULTS = {
+    pressurePopupIconSize = 74,
+    pressurePopupTextSize = 49,
+    pressurePopupHoldSec = 5.20,
+    pressurePopupFadeSec = 1.20,
+    pressurePopupSustainSec = 6.00,
+    pressurePopupCritBounceScale = 2.00,
+    pressurePopupCritBounceSec = 0.20,
+    pressureSlot1X = -130,
+    pressureSlot1Y = -104,
+    pressureSlot1TextX = 0,
+    pressureSlot1TextY = -14,
+    pressureSlot2X = 1,
+    pressureSlot2Y = -123,
+    pressureSlot2TextX = 0,
+    pressureSlot2TextY = -16,
+    pressureSlot3X = 135,
+    pressureSlot3Y = -104,
+    pressureSlot3TextX = -7,
+    pressureSlot3TextY = -18,
+    pressureTierConcavityDepth = 0.00,
+    pressureTierMomentumOnPromote = 0.08,
+    pressureTierMomentumPerTier = 0.04,
+    pressureTierMomentumMax = 0.22,
+    pressureTierMomentumDecayTau = 3.20,
+    pressureTierMomentumIdleDecayTau = 1.15,
+    pressureTierDamageReq1 = 1.50,
+    pressureTierDamageReq2 = 1.85,
+    pressureTierDamageReq3 = 2.32,
+    pressureTierDamageReq4 = 3.05,
+    pressureTierDamageReq5 = 3.90,
+    pressureTierForceReq1 = 0.00,
+    pressureTierForceReq2 = 0.18,
+    pressureTierForceReq3 = 0.35,
+    pressureTierForceReq4 = 0.70,
+    pressureTierForceReq5 = 0.92,
+}
+
+local function resetPressureDevOptions()
+    local p = getDB()
+    if not p then return end
+    for key, value in pairs(PRESSURE_DEV_DEFAULTS) do
+        p[key] = value
+    end
+    local st = _G.ShammyTime
+    if st and st.ApplyAllConfigs then st:ApplyAllConfigs() end
+end
+
 -- Getter/setter for per-satellite overrides
 local function getSatelliteOverride(bubbleName, key, default)
     local p = getDB()
@@ -2532,6 +2580,16 @@ function ShammyTime:SetupOptions()
                         name = "Developer-only pressure tuning. Adjust momentum, per-tier damage breakpoints, per-tier force gates, and concavity depth (easier early climb, tougher high-end push).",
                         order = 89.05,
                         width = "full",
+                    },
+                    pressureDevReset = {
+                        type = "execute",
+                        name = "Reset Pressure Dev Options",
+                        desc = "Reset pressure popup slots and pressure engine tuning values to defaults.",
+                        order = 89.06,
+                        width = "full",
+                        confirm = true,
+                        confirmText = "Reset all Pressure developer options to defaults?",
+                        func = resetPressureDevOptions,
                     },
                     pressureTierConcavityDepth = {
                         type = "range",

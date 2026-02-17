@@ -122,6 +122,10 @@ local SLOT_POPUP_SUSTAIN_SEC_DEFAULT = 4.00
 local SLOT_POPUP_SUSTAIN_SEC = SLOT_POPUP_SUSTAIN_SEC_DEFAULT
 local SLOT_BASE_FONT_SIZE_DEFAULT = 22
 local SLOT_BASE_FONT_SIZE = SLOT_BASE_FONT_SIZE_DEFAULT
+local SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT = 1.34
+local SLOT_TEXT_CRIT_PULSE_SCALE = SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT
+local SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT = 0.30
+local SLOT_TEXT_CRIT_PULSE_SEC = SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT
 local SLOT_JACKPOT_BANG_THRESHOLD = 6000
 local SLOT_ICON_SIZE_MIN = 24
 local SLOT_ICON_SIZE_MAX = 192
@@ -133,9 +137,14 @@ local SLOT_POPUP_FADE_SEC_MIN = 0.10
 local SLOT_POPUP_FADE_SEC_MAX = 10.0
 local SLOT_POPUP_SUSTAIN_SEC_MIN = 0.20
 local SLOT_POPUP_SUSTAIN_SEC_MAX = 15.0
+local SLOT_TEXT_CRIT_PULSE_SCALE_MIN = 1.00
+local SLOT_TEXT_CRIT_PULSE_SCALE_MAX = 2.50
+local SLOT_TEXT_CRIT_PULSE_SEC_MIN = 0.05
+local SLOT_TEXT_CRIT_PULSE_SEC_MAX = 1.50
 
 local STORMSTRIKE_SWING_WINDOW_SEC = 0.60
 local STORMSTRIKE_SWING_MAX_HITS = 2
+local STORMSTRIKE_MERGE_WINDOW_SEC = 0.24
 local CHAIN_LIGHTNING_CAST_WINDOW_SEC = 0.40
 local FLAME_SHOCK_ROLLING_RESET_SEC = 4.50
 local MAGMA_ROLLING_RESET_SEC = 4.50
@@ -152,6 +161,12 @@ local SLOT_VISUAL = {
         defaultOffsetY = -84,
         dbXKey = "pressureSlot1X",
         dbYKey = "pressureSlot1Y",
+        textOffsetX = 0,
+        textOffsetY = -3,
+        defaultTextOffsetX = 0,
+        defaultTextOffsetY = -3,
+        dbTextXKey = "pressureSlot1TextX",
+        dbTextYKey = "pressureSlot1TextY",
         rotationDeg = -15,
         defaultSpellId = STORMSTRIKE_SPELL_ID,
         fallbackTexture = "Interface\\Icons\\Spell_Nature_StormStrike",
@@ -163,6 +178,12 @@ local SLOT_VISUAL = {
         defaultOffsetY = -99,
         dbXKey = "pressureSlot2X",
         dbYKey = "pressureSlot2Y",
+        textOffsetX = 0,
+        textOffsetY = -3,
+        defaultTextOffsetX = 0,
+        defaultTextOffsetY = -3,
+        dbTextXKey = "pressureSlot2TextX",
+        dbTextYKey = "pressureSlot2TextY",
         rotationDeg = 0,
         defaultSpellId = 8187,
         fallbackTexture = "Interface\\Icons\\Spell_Fire_SealOfFire",
@@ -174,6 +195,12 @@ local SLOT_VISUAL = {
         defaultOffsetY = -79,
         dbXKey = "pressureSlot3X",
         dbYKey = "pressureSlot3Y",
+        textOffsetX = 0,
+        textOffsetY = -3,
+        defaultTextOffsetX = 0,
+        defaultTextOffsetY = -3,
+        dbTextXKey = "pressureSlot3TextX",
+        dbTextYKey = "pressureSlot3TextY",
         rotationDeg = 15,
         defaultSpellId = WINDFURY_ATTACK_SPELL_ID,
         fallbackTexture = "Interface\\Icons\\Spell_Nature_Cyclone",
@@ -263,14 +290,14 @@ local function BuildPopupText(amount, hadCrit)
     return text
 end
 
-local SLOT_TEXT_NORMAL_R = 1.00
-local SLOT_TEXT_NORMAL_G = 1.00
-local SLOT_TEXT_NORMAL_B = 1.00
-local SLOT_TEXT_CRIT_R = 1.00
-local SLOT_TEXT_CRIT_G = 1.00
-local SLOT_TEXT_CRIT_B = 0.00
-local SLOT_TEXT_CRIT_PULSE_SCALE = 1.34
-local SLOT_TEXT_CRIT_PULSE_SEC = 0.30
+local SLOT_TEXT_NORMAL = { 1.00, 1.00, 1.00 }
+local SLOT_TEXT_CRIT = { 1.00, 1.00, 0.00 }
+
+local function SetOptionalTextRotation(text, radians)
+    if text and text.SetRotation then
+        text:SetRotation(radians or 0)
+    end
+end
 
 local function NewPopupState()
     return {
@@ -313,10 +340,11 @@ for _, slotId in ipairs(SLOT_ORDER) do
 
     local text = frame:CreateFontString(nil, "OVERLAY")
     text:SetFont(FONT_PATH, SLOT_BASE_FONT_SIZE, "OUTLINE")
-    text:SetPoint("TOP", icon, "TOP", 0, -3)
-    text:SetTextColor(SLOT_TEXT_NORMAL_R, SLOT_TEXT_NORMAL_G, SLOT_TEXT_NORMAL_B)
+    text:SetPoint("TOP", icon, "TOP", cfg.textOffsetX or 0, cfg.textOffsetY or -3)
+    text:SetTextColor(SLOT_TEXT_NORMAL[1], SLOT_TEXT_NORMAL[2], SLOT_TEXT_NORMAL[3])
     text:SetShadowColor(0, 0, 0, 1)
     text:SetShadowOffset(1, -1)
+    SetOptionalTextRotation(text, math.rad(cfg.rotationDeg or 0))
 
     driverSlots[slotId] = {
         slotId = slotId,
@@ -431,12 +459,13 @@ local function ApplyPopupStateToSlot(slot, state, alpha, now)
     slot.text:SetFont(FONT_PATH, SLOT_BASE_FONT_SIZE, "OUTLINE")
     slot.text:SetText(BuildPopupText(amount, hadCrit))
     if hadCrit then
-        slot.text:SetTextColor(SLOT_TEXT_CRIT_R, SLOT_TEXT_CRIT_G, SLOT_TEXT_CRIT_B)
+        slot.text:SetTextColor(SLOT_TEXT_CRIT[1], SLOT_TEXT_CRIT[2], SLOT_TEXT_CRIT[3])
     else
-        slot.text:SetTextColor(SLOT_TEXT_NORMAL_R, SLOT_TEXT_NORMAL_G, SLOT_TEXT_NORMAL_B)
+        slot.text:SetTextColor(SLOT_TEXT_NORMAL[1], SLOT_TEXT_NORMAL[2], SLOT_TEXT_NORMAL[3])
     end
     slot.text:ClearAllPoints()
-    slot.text:SetPoint("TOP", slot.icon, "TOP", 0, -3)
+    slot.text:SetPoint("TOP", slot.icon, "TOP", cfg.textOffsetX or 0, cfg.textOffsetY or -3)
+    SetOptionalTextRotation(slot.text, math.rad(cfg.rotationDeg or 0))
     slot.text:SetScale(GetTextCritPulseScale(state, now))
 
     slot.icon:SetAlpha(alpha)
@@ -609,12 +638,26 @@ local function ApplyPressurePopupDevSettings()
         SLOT_POPUP_SUSTAIN_SEC_MIN,
         SLOT_POPUP_SUSTAIN_SEC_MAX
     )
+    SLOT_TEXT_CRIT_PULSE_SCALE = GetPressurePopupDBNumber(
+        "pressurePopupCritBounceScale",
+        SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT,
+        SLOT_TEXT_CRIT_PULSE_SCALE_MIN,
+        SLOT_TEXT_CRIT_PULSE_SCALE_MAX
+    )
+    SLOT_TEXT_CRIT_PULSE_SEC = GetPressurePopupDBNumber(
+        "pressurePopupCritBounceSec",
+        SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT,
+        SLOT_TEXT_CRIT_PULSE_SEC_MIN,
+        SLOT_TEXT_CRIT_PULSE_SEC_MAX
+    )
 
     local now = GetTime()
     for _, slotId in ipairs(SLOT_ORDER) do
         local cfg = SLOT_VISUAL[slotId]
         cfg.offsetX = GetPressurePopupDBNumber(cfg.dbXKey, cfg.defaultOffsetX)
         cfg.offsetY = GetPressurePopupDBNumber(cfg.dbYKey, cfg.defaultOffsetY)
+        cfg.textOffsetX = GetPressurePopupDBNumber(cfg.dbTextXKey, cfg.defaultTextOffsetX)
+        cfg.textOffsetY = GetPressurePopupDBNumber(cfg.dbTextYKey, cfg.defaultTextOffsetY)
 
         local slot = driverSlots[slotId]
         if slot and slot.overlay.active then
@@ -700,6 +743,13 @@ local stormstrikeSwingWindow = {
     remainingHits = 0,
 }
 
+local stormstrikeBurst = {
+    total = 0,
+    hadCrit = false,
+    hits = 0,
+    flushAt = 0,
+}
+
 local chainLightningBurst = {
     spellId = nil,
     total = 0,
@@ -778,6 +828,44 @@ end
 
 local function IsWindfuryAttackSpell(spellId, spellName)
     return spellId == WINDFURY_ATTACK_SPELL_ID or SpellNameEquals(spellName, "Windfury Attack")
+end
+
+local function StartStormstrikeBurst(now)
+    stormstrikeBurst.total = 0
+    stormstrikeBurst.hadCrit = false
+    stormstrikeBurst.hits = 0
+    stormstrikeBurst.flushAt = now + STORMSTRIKE_MERGE_WINDOW_SEC
+end
+
+local function AddStormstrikeDamage(amount, hadCrit, now)
+    if stormstrikeBurst.flushAt <= 0 or now > stormstrikeBurst.flushAt then
+        StartStormstrikeBurst(now)
+    end
+    stormstrikeBurst.total = stormstrikeBurst.total + (tonumber(amount) or 0)
+    stormstrikeBurst.hadCrit = stormstrikeBurst.hadCrit or (hadCrit and true or false)
+    stormstrikeBurst.hits = stormstrikeBurst.hits + 1
+    stormstrikeBurst.flushAt = now + STORMSTRIKE_MERGE_WINDOW_SEC
+
+    QueueDriverSlotPopup(SLOT_CASTS, STORMSTRIKE_SPELL_ID, stormstrikeBurst.total, stormstrikeBurst.hadCrit, {
+        now = now,
+        critEvent = hadCrit and true or false,
+    })
+
+    if stormstrikeBurst.hits >= STORMSTRIKE_SWING_MAX_HITS then
+        stormstrikeBurst.total = 0
+        stormstrikeBurst.hadCrit = false
+        stormstrikeBurst.hits = 0
+        stormstrikeBurst.flushAt = 0
+    end
+end
+
+local function FlushStormstrikeBurstIfDue(now)
+    if stormstrikeBurst.flushAt > 0 and now >= stormstrikeBurst.flushAt then
+        stormstrikeBurst.total = 0
+        stormstrikeBurst.hadCrit = false
+        stormstrikeBurst.hits = 0
+        stormstrikeBurst.flushAt = 0
+    end
 end
 
 local function FlushChainLightningBurst(now)
@@ -955,6 +1043,10 @@ local function ResetDriverPopupState()
 
     stormstrikeSwingWindow.activeUntil = 0
     stormstrikeSwingWindow.remainingHits = 0
+    stormstrikeBurst.total = 0
+    stormstrikeBurst.hadCrit = false
+    stormstrikeBurst.hits = 0
+    stormstrikeBurst.flushAt = 0
 
     chainLightningBurst.spellId = nil
     chainLightningBurst.total = 0
@@ -986,6 +1078,7 @@ local function ResetDriverPopupState()
 end
 
 local function UpdateDriverPopupState(now)
+    FlushStormstrikeBurstIfDue(now)
     FlushChainLightningBurstIfDue(now)
     FlushFireAoeBurstIfDue(now)
     FlushWindfuryBurstIfDue(now)
@@ -1055,16 +1148,19 @@ SetColorOverlayFill(colorOverlayFillFrac)
 
 frame:Show()
 
-local LINE_HEIGHT = 14
-local HEADER_HEIGHT = 22
-local PADDING = 6
-local DEBUG_FRAME_WIDTH = 340
-local DEBUG_BAR_HEIGHT = 24
-local DEBUG_FRAME_HEIGHT = HEADER_HEIGHT + PADDING * 2 + DEBUG_BAR_HEIGHT + 4
-    + LINE_HEIGHT + LINE_HEIGHT + 4 + NUM_WINDOWS * (LINE_HEIGHT + 2) + PADDING
+local DEBUG_LAYOUT = {
+    lineHeight = 14,
+    headerHeight = 22,
+    padding = 6,
+    frameWidth = 340,
+    barHeight = 24,
+}
+local DEBUG_FRAME_HEIGHT = DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding * 2 + DEBUG_LAYOUT.barHeight + 4
+    + DEBUG_LAYOUT.lineHeight + DEBUG_LAYOUT.lineHeight + 4
+    + NUM_WINDOWS * (DEBUG_LAYOUT.lineHeight + 2) + DEBUG_LAYOUT.padding
 
 local debugFrame = CreateFrame("Frame", "ShammyTimePressureDebugFrame", UIParent, "BackdropTemplate")
-debugFrame:SetSize(DEBUG_FRAME_WIDTH, DEBUG_FRAME_HEIGHT)
+debugFrame:SetSize(DEBUG_LAYOUT.frameWidth, DEBUG_FRAME_HEIGHT)
 debugFrame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 20, -120)
 debugFrame:SetBackdrop({
     bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -1085,13 +1181,13 @@ debugFrame:Hide()
 
 local debugTitle = debugFrame:CreateFontString(nil, "OVERLAY")
 debugTitle:SetFont(FONT_PATH, 12, "OUTLINE")
-debugTitle:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", PADDING, -PADDING)
+debugTitle:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", DEBUG_LAYOUT.padding, -DEBUG_LAYOUT.padding)
 debugTitle:SetText("ShammyTime Pressure Debug")
 debugTitle:SetTextColor(1, 0.82, 0)
 
 local debugBar = CreateFrame("StatusBar", nil, debugFrame)
-debugBar:SetSize(DEBUG_FRAME_WIDTH - PADDING * 2 - 4, DEBUG_BAR_HEIGHT)
-debugBar:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", PADDING + 2, -(HEADER_HEIGHT + PADDING))
+debugBar:SetSize(DEBUG_LAYOUT.frameWidth - DEBUG_LAYOUT.padding * 2 - 4, DEBUG_LAYOUT.barHeight)
+debugBar:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", DEBUG_LAYOUT.padding + 2, -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding))
 debugBar:SetStatusBarTexture("Interface\\BUTTONS\\WHITE8X8")
 debugBar:SetMinMaxValues(0.0, 4.0)
 debugBar:SetValue(0.0)
@@ -1112,23 +1208,28 @@ debugBarTierText:SetPoint("RIGHT", debugBar, "RIGHT", -4, 0)
 debugBarTierText:SetText("T0")
 debugBarTierText:SetTextColor(0.6, 0.6, 0.6)
 
-local yAfterBar = -(HEADER_HEIGHT + PADDING + DEBUG_BAR_HEIGHT + 4)
 local debugText = debugFrame:CreateFontString(nil, "OVERLAY")
 debugText:SetFont(FONT_PATH, 10, "")
 debugText:SetJustifyH("LEFT")
-debugText:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", PADDING, yAfterBar)
-debugText:SetPoint("RIGHT", debugFrame, "RIGHT", -PADDING, 0)
+debugText:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", DEBUG_LAYOUT.padding, -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4))
+debugText:SetPoint("RIGHT", debugFrame, "RIGHT", -DEBUG_LAYOUT.padding, 0)
 debugText:SetTextColor(0.6, 0.6, 0.6)
 debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 ok")
 
-local yBucketStart = yAfterBar - LINE_HEIGHT - 4
 local bucketStrings = {}
 for i = 1, NUM_WINDOWS do
     local fs = debugFrame:CreateFontString(nil, "OVERLAY")
     fs:SetFont(FONT_PATH, 11, "")
     fs:SetJustifyH("LEFT")
-    fs:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", PADDING, yBucketStart - (i - 1) * (LINE_HEIGHT + 2))
-    fs:SetPoint("RIGHT", debugFrame, "RIGHT", -PADDING, 0)
+    fs:SetPoint(
+        "TOPLEFT",
+        debugFrame,
+        "TOPLEFT",
+        DEBUG_LAYOUT.padding,
+        -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4 + DEBUG_LAYOUT.lineHeight + 4)
+            - (i - 1) * (DEBUG_LAYOUT.lineHeight + 2)
+    )
+    fs:SetPoint("RIGHT", debugFrame, "RIGHT", -DEBUG_LAYOUT.padding, 0)
     fs:SetText("")
     bucketStrings[i] = fs
 end
@@ -1406,6 +1507,7 @@ local function OnCombatLogPressure()
         if isPlayerSource and IsStormstrikeSpell(spellId, spellName) then
             stormstrikeSwingWindow.activeUntil = now + STORMSTRIKE_SWING_WINDOW_SEC
             stormstrikeSwingWindow.remainingHits = STORMSTRIKE_SWING_MAX_HITS
+            StartStormstrikeBurst(now)
             return
         end
         if isPlayerSource and IsChainLightningSpell(spellId, spellName) then
@@ -1457,11 +1559,14 @@ local function OnCombatLogPressure()
         if IsChainLightningSpell(spellId, spellName) then
             AddChainLightningDamage(spellId, amount, isCrit, now)
         elseif IsStormstrikeSpell(spellId, spellName) then
-            QueueDriverSlotPopup(SLOT_CASTS, STORMSTRIKE_SPELL_ID, amount, isCrit, {
-                now = now,
-            })
-            stormstrikeSwingWindow.remainingHits = 0
-            stormstrikeSwingWindow.activeUntil = 0
+            AddStormstrikeDamage(amount, isCrit, now)
+            if stormstrikeSwingWindow.remainingHits > 0 then
+                stormstrikeSwingWindow.remainingHits = stormstrikeSwingWindow.remainingHits - 1
+                if stormstrikeSwingWindow.remainingHits <= 0 then
+                    stormstrikeSwingWindow.remainingHits = 0
+                    stormstrikeSwingWindow.activeUntil = 0
+                end
+            end
         elseif IsLavaLashSpell(spellId, spellName) then
             QueueDriverSlotPopup(SLOT_CASTS, spellId, amount, isCrit)
         elseif IsShockSpell(spellId, spellName) then
@@ -1475,20 +1580,6 @@ local function OnCombatLogPressure()
                     flameShockRolling.spellId = spellId or flameShockRolling.spellId or 8050
                     flameShockRolling.lastTickAt = now
                 end
-            end
-        end
-
-        if (subevent == "SWING_DAMAGE" or subevent == "SWING_DAMAGE_LANDED")
-            and stormstrikeSwingWindow.remainingHits > 0
-            and now <= stormstrikeSwingWindow.activeUntil
-        then
-            QueueDriverSlotPopup(SLOT_CASTS, STORMSTRIKE_SPELL_ID, amount, isCrit, {
-                now = now,
-            })
-            stormstrikeSwingWindow.remainingHits = stormstrikeSwingWindow.remainingHits - 1
-            if stormstrikeSwingWindow.remainingHits <= 0 then
-                stormstrikeSwingWindow.remainingHits = 0
-                stormstrikeSwingWindow.activeUntil = 0
             end
         end
     end

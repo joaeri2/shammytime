@@ -126,6 +126,7 @@ local SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT = 2.00
 local SLOT_TEXT_CRIT_PULSE_SCALE = SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT
 local SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT = 0.20
 local SLOT_TEXT_CRIT_PULSE_SEC = SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT
+local SLOT_POPUP_FAST_END_FADE_FRACTION = 0.50
 local SLOT_JACKPOT_BANG_THRESHOLD = 6000
 local SLOT_ICON_SIZE_MIN = 24
 local SLOT_ICON_SIZE_MAX = 192
@@ -436,7 +437,15 @@ local function GetPopupStateAlpha(state, now)
         return 1
     end
     if now < state.fadeUntil then
-        local fadeProgress = (now - state.holdUntil) / math_max(SLOT_POPUP_FADE_SEC, 0.01)
+        -- Keep total lifetime unchanged, but do the visual fade in the last
+        -- portion of the fade window so the end drop feels snappier.
+        local fadeWindow = math_max(SLOT_POPUP_FADE_SEC, 0.01)
+        local fastFadeWindow = math_max(fadeWindow * SLOT_POPUP_FAST_END_FADE_FRACTION, 0.01)
+        local fadeStart = state.fadeUntil - fastFadeWindow
+        if now <= fadeStart then
+            return 1
+        end
+        local fadeProgress = (now - fadeStart) / fastFadeWindow
         return 1 - math_min(math_max(fadeProgress, 0), 1)
     end
     return 0
@@ -1014,8 +1023,8 @@ local function StartWindfuryBurst(now, pendingTotemSwings)
     windfuryBurst.pendingTotemSwings = pendingTotemSwings or 0
 end
 
-local function FlushWindfuryBurst(now)
-    if windfuryBurst.total > 0 then
+local function FlushWindfuryBurst(now, skipPopup)
+    if windfuryBurst.total > 0 and not skipPopup then
         QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit, {
             now = now,
             critEvent = windfuryBurst.hadCrit,
@@ -1036,8 +1045,16 @@ local function AddWindfuryDamage(amount, hadCrit, now)
     windfuryBurst.total = windfuryBurst.total + amount
     windfuryBurst.hadCrit = windfuryBurst.hadCrit or hadCrit
     windfuryBurst.hits = windfuryBurst.hits + 1
+
+    -- Show/update immediately on each hit so WF feedback feels instant while
+    -- still accumulating both hits into a single running total.
+    QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit, {
+        now = now,
+        critEvent = hadCrit and true or false,
+    })
+
     if windfuryBurst.hits >= WINDFURY_MAX_HITS_PER_BURST and windfuryBurst.pendingTotemSwings <= 0 then
-        FlushWindfuryBurst(now)
+        FlushWindfuryBurst(now, true)
     end
 end
 

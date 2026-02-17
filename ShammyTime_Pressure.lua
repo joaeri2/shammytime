@@ -26,8 +26,8 @@ local NUM_WINDOWS = #WINDOWS
 
 local SIZE = 1024
 local DEFAULT_SCALE = 0.5
-local CROP_TOP = 0.20
-local CROP_BOTTOM = 0.20
+local CROP_TOP = 0.28
+local CROP_BOTTOM = 0.33
 local MIN_FILL_U = 0.001
 local FILL_SHOW_EPS = 0.003
 local FILL_HIDE_EPS = 0.0005
@@ -111,20 +111,20 @@ local MAGMA_TOTEM_SPELL_IDS = {
 local WINDFURY_ATTACK_SPELL_ID = 25584
 local WINDFURY_TOTEM_EXTRA_ATTACKS_SPELL_ID = 8516
 
-local SLOT_ICON_SIZE_DEFAULT = 92
+local SLOT_ICON_SIZE_DEFAULT = 74
 local SLOT_ICON_SIZE = SLOT_ICON_SIZE_DEFAULT
 local SLOT_ICON_INSET = 0.08
 local SLOT_POPUP_HOLD_SEC_DEFAULT = 2.20
 local SLOT_POPUP_HOLD_SEC = SLOT_POPUP_HOLD_SEC_DEFAULT
 local SLOT_POPUP_FADE_SEC_DEFAULT = 1.20
 local SLOT_POPUP_FADE_SEC = SLOT_POPUP_FADE_SEC_DEFAULT
-local SLOT_POPUP_SUSTAIN_SEC_DEFAULT = 4.00
+local SLOT_POPUP_SUSTAIN_SEC_DEFAULT = 3.00
 local SLOT_POPUP_SUSTAIN_SEC = SLOT_POPUP_SUSTAIN_SEC_DEFAULT
-local SLOT_BASE_FONT_SIZE_DEFAULT = 22
+local SLOT_BASE_FONT_SIZE_DEFAULT = 49
 local SLOT_BASE_FONT_SIZE = SLOT_BASE_FONT_SIZE_DEFAULT
-local SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT = 1.34
+local SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT = 2.00
 local SLOT_TEXT_CRIT_PULSE_SCALE = SLOT_TEXT_CRIT_PULSE_SCALE_DEFAULT
-local SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT = 0.30
+local SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT = 0.20
 local SLOT_TEXT_CRIT_PULSE_SEC = SLOT_TEXT_CRIT_PULSE_SEC_DEFAULT
 local SLOT_JACKPOT_BANG_THRESHOLD = 6000
 local SLOT_ICON_SIZE_MIN = 24
@@ -156,15 +156,15 @@ local WINDFURY_MAX_HITS_PER_BURST = 2
 local SLOT_VISUAL = {
     [SLOT_CASTS] = {
         offsetX = -130,
-        offsetY = -84,
+        offsetY = -104,
         defaultOffsetX = -130,
-        defaultOffsetY = -84,
+        defaultOffsetY = -104,
         dbXKey = "pressureSlot1X",
         dbYKey = "pressureSlot1Y",
         textOffsetX = 0,
-        textOffsetY = -3,
+        textOffsetY = -14,
         defaultTextOffsetX = 0,
-        defaultTextOffsetY = -3,
+        defaultTextOffsetY = -14,
         dbTextXKey = "pressureSlot1TextX",
         dbTextYKey = "pressureSlot1TextY",
         rotationDeg = -15,
@@ -173,15 +173,15 @@ local SLOT_VISUAL = {
     },
     [SLOT_FIRE] = {
         offsetX = 1,
-        offsetY = -99,
+        offsetY = -123,
         defaultOffsetX = 1,
-        defaultOffsetY = -99,
+        defaultOffsetY = -123,
         dbXKey = "pressureSlot2X",
         dbYKey = "pressureSlot2Y",
         textOffsetX = 0,
-        textOffsetY = -3,
+        textOffsetY = -16,
         defaultTextOffsetX = 0,
-        defaultTextOffsetY = -3,
+        defaultTextOffsetY = -16,
         dbTextXKey = "pressureSlot2TextX",
         dbTextYKey = "pressureSlot2TextY",
         rotationDeg = 0,
@@ -189,16 +189,16 @@ local SLOT_VISUAL = {
         fallbackTexture = "Interface\\Icons\\Spell_Fire_SealOfFire",
     },
     [SLOT_WIND] = {
-        offsetX = 139,
-        offsetY = -79,
-        defaultOffsetX = 139,
-        defaultOffsetY = -79,
+        offsetX = 135,
+        offsetY = -104,
+        defaultOffsetX = 135,
+        defaultOffsetY = -104,
         dbXKey = "pressureSlot3X",
         dbYKey = "pressureSlot3Y",
-        textOffsetX = 0,
-        textOffsetY = -3,
-        defaultTextOffsetX = 0,
-        defaultTextOffsetY = -3,
+        textOffsetX = -7,
+        textOffsetY = -18,
+        defaultTextOffsetX = -7,
+        defaultTextOffsetY = -18,
         dbTextXKey = "pressureSlot3TextX",
         dbTextYKey = "pressureSlot3TextY",
         rotationDeg = 15,
@@ -290,7 +290,7 @@ local function BuildPopupText(amount, hadCrit)
     return text
 end
 
-local SLOT_TEXT_NORMAL = { 1.00, 1.00, 1.00 }
+local SLOT_TEXT_NORMAL = { 1.00, 1.00, 0.00 }
 local SLOT_TEXT_CRIT = { 1.00, 1.00, 0.00 }
 
 local function SetOptionalTextRotation(text, radians)
@@ -848,7 +848,7 @@ local function AddStormstrikeDamage(amount, hadCrit, now)
 
     QueueDriverSlotPopup(SLOT_CASTS, STORMSTRIKE_SPELL_ID, stormstrikeBurst.total, stormstrikeBurst.hadCrit, {
         now = now,
-        critEvent = hadCrit and true or false,
+        critEvent = stormstrikeBurst.hadCrit and true or false,
     })
 
     if stormstrikeBurst.hits >= STORMSTRIKE_SWING_MAX_HITS then
@@ -913,7 +913,7 @@ local function AddChainLightningDamage(spellId, amount, hadCrit, now)
         chainLightningBurst.total,
         chainLightningBurst.hadCrit,
         now,
-        hadCrit
+        chainLightningBurst.hadCrit
     )
 end
 
@@ -938,7 +938,7 @@ local function AddFlameShockRolling(amount, hadCrit, spellId, now)
         flameShockRolling.total,
         flameShockRolling.hadCrit,
         now,
-        hadCrit
+        flameShockRolling.hadCrit
     )
 end
 
@@ -957,13 +957,16 @@ local function AddMagmaRolling(amount, hadCrit, spellId, now)
         magmaRolling.total,
         magmaRolling.hadCrit,
         now,
-        hadCrit
+        magmaRolling.hadCrit
     )
 end
 
 local function AddFireAoeDamage(amount, hadCrit, spellId, now)
     if fireAoeBurst.total > 0 and fireAoeBurst.flushAt > 0 and now >= fireAoeBurst.flushAt then
-        QueueDriverSlotPopup(SLOT_FIRE, fireAoeBurst.spellId or spellId or 8187, fireAoeBurst.total, fireAoeBurst.hadCrit)
+        QueueDriverSlotPopup(SLOT_FIRE, fireAoeBurst.spellId or spellId or 8187, fireAoeBurst.total, fireAoeBurst.hadCrit, {
+            now = now,
+            critEvent = fireAoeBurst.hadCrit,
+        })
         fireAoeBurst.lastPopAt = now
         fireAoeBurst.total = 0
         fireAoeBurst.hadCrit = false
@@ -985,7 +988,10 @@ local function FlushFireAoeBurstIfDue(now)
     if fireAoeBurst.flushAt <= 0 or now < fireAoeBurst.flushAt then
         return
     end
-    QueueDriverSlotPopup(SLOT_FIRE, fireAoeBurst.spellId or 8187, fireAoeBurst.total, fireAoeBurst.hadCrit)
+    QueueDriverSlotPopup(SLOT_FIRE, fireAoeBurst.spellId or 8187, fireAoeBurst.total, fireAoeBurst.hadCrit, {
+        now = now,
+        critEvent = fireAoeBurst.hadCrit,
+    })
     fireAoeBurst.lastPopAt = now
     fireAoeBurst.total = 0
     fireAoeBurst.hadCrit = false
@@ -995,7 +1001,10 @@ end
 
 local function StartWindfuryBurst(now, pendingTotemSwings)
     if windfuryBurst.active and windfuryBurst.total > 0 then
-        QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit)
+        QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit, {
+            now = now,
+            critEvent = windfuryBurst.hadCrit,
+        })
     end
     windfuryBurst.active = true
     windfuryBurst.total = 0
@@ -1007,7 +1016,10 @@ end
 
 local function FlushWindfuryBurst(now)
     if windfuryBurst.total > 0 then
-        QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit)
+        QueueDriverSlotPopup(SLOT_WIND, WINDFURY_ATTACK_SPELL_ID, windfuryBurst.total, windfuryBurst.hadCrit, {
+            now = now,
+            critEvent = windfuryBurst.hadCrit,
+        })
     end
     windfuryBurst.active = false
     windfuryBurst.total = 0

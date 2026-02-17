@@ -360,25 +360,25 @@ local function BuildFullExportLines(useColorCodes)
     line("shieldCountY = " .. tostring(p.shieldCountY or 127))
     line("")
     sec("Pressure popup slots")
-    line("pressurePopupIconSize = " .. tostring(p.pressurePopupIconSize or 92))
-    line("pressurePopupTextSize = " .. tostring(p.pressurePopupTextSize or 22))
+    line("pressurePopupIconSize = " .. tostring(p.pressurePopupIconSize or 74))
+    line("pressurePopupTextSize = " .. tostring(p.pressurePopupTextSize or 49))
     line("pressurePopupHoldSec = " .. tostring(p.pressurePopupHoldSec or 2.20))
     line("pressurePopupFadeSec = " .. tostring(p.pressurePopupFadeSec or 1.20))
-    line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 4.00))
-    line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 1.34))
-    line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.30))
+    line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 3.00))
+    line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 2.00))
+    line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
     line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
-    line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -84))
+    line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -104))
     line("pressureSlot1TextX = " .. tostring(p.pressureSlot1TextX or 0))
-    line("pressureSlot1TextY = " .. tostring(p.pressureSlot1TextY or -3))
+    line("pressureSlot1TextY = " .. tostring(p.pressureSlot1TextY or -14))
     line("pressureSlot2X = " .. tostring(p.pressureSlot2X or 1))
-    line("pressureSlot2Y = " .. tostring(p.pressureSlot2Y or -99))
+    line("pressureSlot2Y = " .. tostring(p.pressureSlot2Y or -123))
     line("pressureSlot2TextX = " .. tostring(p.pressureSlot2TextX or 0))
-    line("pressureSlot2TextY = " .. tostring(p.pressureSlot2TextY or -3))
-    line("pressureSlot3X = " .. tostring(p.pressureSlot3X or 139))
-    line("pressureSlot3Y = " .. tostring(p.pressureSlot3Y or -79))
-    line("pressureSlot3TextX = " .. tostring(p.pressureSlot3TextX or 0))
-    line("pressureSlot3TextY = " .. tostring(p.pressureSlot3TextY or -3))
+    line("pressureSlot2TextY = " .. tostring(p.pressureSlot2TextY or -16))
+    line("pressureSlot3X = " .. tostring(p.pressureSlot3X or 135))
+    line("pressureSlot3Y = " .. tostring(p.pressureSlot3Y or -104))
+    line("pressureSlot3TextX = " .. tostring(p.pressureSlot3TextX or -7))
+    line("pressureSlot3TextY = " .. tostring(p.pressureSlot3TextY or -18))
     line("")
     sec("Modules (per-element: enabled, scale, alpha, fade)")
     if p.modules then
@@ -2248,7 +2248,7 @@ function ShammyTime:SetupOptions()
                         desc = "Base icon size for the three pressure popup slots.",
                         min = 24, max = 192, step = 1,
                         order = 81,
-                        get = function() return getFlatDB("pressurePopupIconSize", 92) end,
+                        get = function() return getFlatDB("pressurePopupIconSize", 74) end,
                         set = function(_, v) setFlatDB("pressurePopupIconSize", v) end,
                     },
                     pressurePopupTextSize = {
@@ -2257,7 +2257,7 @@ function ShammyTime:SetupOptions()
                         desc = "Base damage text size for the three pressure popup slots.",
                         min = 8, max = 72, step = 1,
                         order = 82,
-                        get = function() return getFlatDB("pressurePopupTextSize", 22) end,
+                        get = function() return getFlatDB("pressurePopupTextSize", 49) end,
                         set = function(_, v) setFlatDB("pressurePopupTextSize", v) end,
                     },
                     pressurePopupHoldSec = {
@@ -2284,7 +2284,7 @@ function ShammyTime:SetupOptions()
                         desc = "How long CL/Flame Shock/Magma stay visible since their last damage event.",
                         min = 0.20, max = 15.0, step = 0.05,
                         order = 82.3,
-                        get = function() return getFlatDB("pressurePopupSustainSec", 4.00) end,
+                        get = function() return getFlatDB("pressurePopupSustainSec", 3.00) end,
                         set = function(_, v) setFlatDB("pressurePopupSustainSec", v) end,
                     },
                     pressurePopupCritBounceScale = {
@@ -2293,7 +2293,7 @@ function ShammyTime:SetupOptions()
                         desc = "How big the damage text expands on crit pulses (1.00 = no bounce).",
                         min = 1.00, max = 2.50, step = 0.01,
                         order = 82.4,
-                        get = function() return getFlatDB("pressurePopupCritBounceScale", 1.34) end,
+                        get = function() return getFlatDB("pressurePopupCritBounceScale", 2.00) end,
                         set = function(_, v) setFlatDB("pressurePopupCritBounceScale", v) end,
                     },
                     pressurePopupCritBounceSec = {
@@ -2302,7 +2302,7 @@ function ShammyTime:SetupOptions()
                         desc = "Duration of the text crit bounce animation.",
                         min = 0.05, max = 1.50, step = 0.01,
                         order = 82.5,
-                        get = function() return getFlatDB("pressurePopupCritBounceSec", 0.30) end,
+                        get = function() return getFlatDB("pressurePopupCritBounceSec", 0.20) end,
                         set = function(_, v) setFlatDB("pressurePopupCritBounceSec", v) end,
                     },
                     pressureSlot1X = {
@@ -2318,7 +2318,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 1 Y",
                         min = -500, max = 500, step = 1,
                         order = 84,
-                        get = function() return getFlatDB("pressureSlot1Y", -84) end,
+                        get = function() return getFlatDB("pressureSlot1Y", -104) end,
                         set = function(_, v) setFlatDB("pressureSlot1Y", v) end,
                     },
                     pressureSlot1TextX = {
@@ -2334,7 +2334,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 1 Text Y",
                         min = -500, max = 500, step = 1,
                         order = 84.2,
-                        get = function() return getFlatDB("pressureSlot1TextY", -3) end,
+                        get = function() return getFlatDB("pressureSlot1TextY", -14) end,
                         set = function(_, v) setFlatDB("pressureSlot1TextY", v) end,
                     },
                     pressureSlot2X = {
@@ -2350,7 +2350,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 2 Y",
                         min = -500, max = 500, step = 1,
                         order = 86,
-                        get = function() return getFlatDB("pressureSlot2Y", -99) end,
+                        get = function() return getFlatDB("pressureSlot2Y", -123) end,
                         set = function(_, v) setFlatDB("pressureSlot2Y", v) end,
                     },
                     pressureSlot2TextX = {
@@ -2366,7 +2366,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 2 Text Y",
                         min = -500, max = 500, step = 1,
                         order = 86.2,
-                        get = function() return getFlatDB("pressureSlot2TextY", -3) end,
+                        get = function() return getFlatDB("pressureSlot2TextY", -16) end,
                         set = function(_, v) setFlatDB("pressureSlot2TextY", v) end,
                     },
                     pressureSlot3X = {
@@ -2374,7 +2374,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 3 X",
                         min = -500, max = 500, step = 1,
                         order = 87,
-                        get = function() return getFlatDB("pressureSlot3X", 139) end,
+                        get = function() return getFlatDB("pressureSlot3X", 135) end,
                         set = function(_, v) setFlatDB("pressureSlot3X", v) end,
                     },
                     pressureSlot3Y = {
@@ -2382,7 +2382,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 3 Y",
                         min = -500, max = 500, step = 1,
                         order = 88,
-                        get = function() return getFlatDB("pressureSlot3Y", -79) end,
+                        get = function() return getFlatDB("pressureSlot3Y", -104) end,
                         set = function(_, v) setFlatDB("pressureSlot3Y", v) end,
                     },
                     pressureSlot3TextX = {
@@ -2390,7 +2390,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 3 Text X",
                         min = -500, max = 500, step = 1,
                         order = 88.1,
-                        get = function() return getFlatDB("pressureSlot3TextX", 0) end,
+                        get = function() return getFlatDB("pressureSlot3TextX", -7) end,
                         set = function(_, v) setFlatDB("pressureSlot3TextX", v) end,
                     },
                     pressureSlot3TextY = {
@@ -2398,7 +2398,7 @@ function ShammyTime:SetupOptions()
                         name = "Slot 3 Text Y",
                         min = -500, max = 500, step = 1,
                         order = 88.2,
-                        get = function() return getFlatDB("pressureSlot3TextY", -3) end,
+                        get = function() return getFlatDB("pressureSlot3TextY", -18) end,
                         set = function(_, v) setFlatDB("pressureSlot3TextY", v) end,
                     },
                 },

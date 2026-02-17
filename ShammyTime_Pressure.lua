@@ -34,7 +34,7 @@ local FILL_HIDE_EPS = 0.0005
 local FILL_SMOOTH_TAU_RISE = 0.18
 local FILL_SMOOTH_TAU_FALL = 8.20
 local FILL_FULL_HOLD_SEC = 0.40
-local FILL_FULL_EPSILON = 0.995
+local FILL_FULL_EPSILON = 0.985
 local OVERLAY_COLOR_TAU_IN = 0.08
 local OVERLAY_COLOR_TAU_OUT = 0.16
 local PUSH_FEEL_CFG = {
@@ -309,6 +309,21 @@ local function FormatCompactDamage(value)
     return (short:gsub("%.0m", "m"))
 end
 
+local gaugeDpsText = frame:CreateFontString(nil, "OVERLAY")
+gaugeDpsText:SetFont(FONT_PATH, 28, "OUTLINE")
+gaugeDpsText:SetPoint("CENTER", frame, "CENTER", 0, 58)
+local GAUGE_DPS_COLOR_R = 1
+local GAUGE_DPS_COLOR_G = 0.97
+local GAUGE_DPS_COLOR_B = 0.70
+local DPS_POST_COMBAT_LOCK_SEC = 10.0
+local DPS_POST_COMBAT_FADE_SEC = 1.25
+local dpsPostCombatHoldUntil = 0
+local dpsPostCombatFadeUntil = 0
+gaugeDpsText:SetTextColor(GAUGE_DPS_COLOR_R, GAUGE_DPS_COLOR_G, GAUGE_DPS_COLOR_B, 1)
+gaugeDpsText:SetShadowColor(0, 0, 0, 1)
+gaugeDpsText:SetShadowOffset(1, -1)
+gaugeDpsText:SetText("")
+
 local function SpellNameEquals(spellName, expected)
     return spellName and expected and spellName == expected
 end
@@ -324,6 +339,43 @@ local function BuildPopupText(amount, hadCrit)
         text = text .. "!"
     end
     return text
+end
+
+local function ArmPostCombatDpsFade(now)
+    local tNow = now or GetTime()
+    dpsPostCombatHoldUntil = tNow + DPS_POST_COMBAT_LOCK_SEC
+    dpsPostCombatFadeUntil = dpsPostCombatHoldUntil + DPS_POST_COMBAT_FADE_SEC
+end
+
+local function ClearPostCombatDpsFade()
+    dpsPostCombatHoldUntil = 0
+    dpsPostCombatFadeUntil = 0
+end
+
+local function UpdateGaugeDpsText(now)
+    if not gaugeDpsText then return end
+    local tNow = now or GetTime()
+    local fightDps = tonumber(PS and PS.debugFightDps) or 0
+    local liveDps = tonumber(PS and PS.debugCurrentDps) or 0
+    -- Center number should be live by default (requested behavior),
+    -- with fight DPS only as fallback when live has no signal yet.
+    local shownDps = (liveDps > 0) and liveDps or fightDps
+    local alpha = 1
+    if dpsPostCombatHoldUntil > 0 and dpsPostCombatFadeUntil > dpsPostCombatHoldUntil and tNow >= dpsPostCombatHoldUntil then
+        if tNow >= dpsPostCombatFadeUntil then
+            alpha = 0
+        else
+            alpha = 1 - ((tNow - dpsPostCombatHoldUntil) / (dpsPostCombatFadeUntil - dpsPostCombatHoldUntil))
+        end
+    end
+
+    gaugeDpsText:SetTextColor(GAUGE_DPS_COLOR_R, GAUGE_DPS_COLOR_G, GAUGE_DPS_COLOR_B, alpha)
+    gaugeDpsText:SetShadowColor(0, 0, 0, alpha)
+    if shownDps <= 0.5 or alpha <= 0.01 then
+        gaugeDpsText:SetText("")
+        return
+    end
+    gaugeDpsText:SetText(FormatCompactDamage(shownDps))
 end
 
 local SLOT_TEXT_NORMAL = { 1.00, 1.00, 0.00 }
@@ -1210,8 +1262,10 @@ local DEBUG_LAYOUT = {
     frameWidth = 340,
     barHeight = 24,
 }
+local DEBUG_SUMMARY_LINES = 2
+local DEBUG_SUMMARY_GAP = 4
 local DEBUG_FRAME_HEIGHT = DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding * 2 + DEBUG_LAYOUT.barHeight + 4
-    + DEBUG_LAYOUT.lineHeight + DEBUG_LAYOUT.lineHeight + 4
+    + (DEBUG_LAYOUT.lineHeight * DEBUG_SUMMARY_LINES) + DEBUG_SUMMARY_GAP
     + NUM_WINDOWS * (DEBUG_LAYOUT.lineHeight + 2) + DEBUG_LAYOUT.padding
 
 local debugFrame = CreateFrame("Frame", "ShammyTimePressureDebugFrame", UIParent, "BackdropTemplate")
@@ -1269,7 +1323,7 @@ debugText:SetJustifyH("LEFT")
 debugText:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", DEBUG_LAYOUT.padding, -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4))
 debugText:SetPoint("RIGHT", debugFrame, "RIGHT", -DEBUG_LAYOUT.padding, 0)
 debugText:SetTextColor(0.6, 0.6, 0.6)
-debugText:SetText("n:0.00 i:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 r:0% s:0% ok\ndelta push:+0% spring:+0% diff:+0% T5:+0% OD:+0% shake:+0%")
+debugText:SetText("ratio:0.00 eval:0.00 hold:0.00 tier:T0 (want T0) ok\nflow:hold +0% gate:0% target:0% shown:0%")
 
 local bucketStrings = {}
 for i = 1, NUM_WINDOWS do
@@ -1281,7 +1335,7 @@ for i = 1, NUM_WINDOWS do
         debugFrame,
         "TOPLEFT",
         DEBUG_LAYOUT.padding,
-        -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4 + DEBUG_LAYOUT.lineHeight + 4)
+        -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4 + (DEBUG_LAYOUT.lineHeight * DEBUG_SUMMARY_LINES) + DEBUG_SUMMARY_GAP)
             - (i - 1) * (DEBUG_LAYOUT.lineHeight + 2)
     )
     fs:SetPoint("RIGHT", debugFrame, "RIGHT", -DEBUG_LAYOUT.padding, 0)
@@ -1329,14 +1383,15 @@ end
 PS = {
     fastCharge = 0,
     slowCharge = 0,
-    tauFast = 1.35,
+    tauFast = 1.55,
     tauSlow = 20.0,
     epsilon = 1.0,
     pressureRatio = 0,
     displayGain = 1.20,
     burstDamping = 1.20,
     denominatorFloor = 200,
-    displayTau = 0.30,
+    startupSeedWindowSec = 2.40,
+    displayTau = 0.42,
     displayTauRise = 0.07,
     pressureDisplaySmoothed = 0,
     pressureComposite = 0,
@@ -1344,6 +1399,7 @@ PS = {
     squeezeScore = 0,
     tierScore = 0,
     tierEvalScore = 0,
+    tierHoldScore = 0,
     tierEdgeResistance = 0,
     tierEdgeSlip = 0,
     currentTier = 0,
@@ -1359,8 +1415,8 @@ PS = {
     squeezeIdleDecayMult = 0.45,
     tierInstantWeight = 0.95,
     tierSqueezeWeight = 0.65,
-    tierHysteresis = 0.22,
-    tierHoldMinSec = 2.20,
+    tierHysteresis = 0.28,
+    tierHoldMinSec = 5.00,
     tierEdgeStartFrac = 0.62,
     tierEdgePower = 1.70,
     tierEdgeResistMax = 0.52,
@@ -1372,8 +1428,8 @@ PS = {
     tierMomentumMax = 0.22,
     tierMomentumBuildTau = 0.55,
     tierMomentumDecayTau = 3.20,
-    tierMomentumIdleDecayTau = 1.15,
-    tierMomentumIdleGrace = 0.70,
+    tierMomentumIdleDecayTau = 2.20,
+    tierMomentumIdleGrace = 0.90,
     tierMomentumTierScalar = 0.04,
     hitImpulseTau = 1.20,
     nearTierProgressFrac = 0.90,
@@ -1637,7 +1693,7 @@ local function ClearPressureDebugFrame()
     debugBarText:SetText("0.00x")
     debugBarTierText:SetText("T0")
     debugBarTierText:SetTextColor(0.6, 0.6, 0.6)
-    debugText:SetText("n:0.00 i:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 r:0% s:0% ok\ndelta push:+0% spring:+0% diff:+0% T5:+0% OD:+0% shake:+0%")
+    debugText:SetText("ratio:0.00 eval:0.00 hold:0.00 tier:T0 (want T0) ok\nflow:hold +0% gate:0% target:0% shown:0%")
     for i = 1, NUM_WINDOWS do
         bucketStrings[i]:SetText("")
     end
@@ -1662,68 +1718,93 @@ local function UpdatePressureDebugFrame(hitKick)
     liveResPct = math_min(math_max(((PS.tierEdgeResistance or 0) / resistMax) * 100, 0), 999)
 
     local liveSlipPct = 0
-    local slipCap = 0.05 * math_max(PS.simpleRubberband or 1, 0)
+    local slipCap = 0.035 * math_max(PS.simpleRubberband or 1, 0)
     if slipCap > 0 then
         liveSlipPct = math_min(math_max(((PS.tierEdgeSlip or 0) / slipCap) * 100, 0), 999)
+    end
+
+    local scoreForBuild = PS.tierEvalScore or PS.tierScore or 0
+    local targetFillRaw = 0
+    if PressureTierModel and PressureTierModel.GetTierFillTarget then
+        targetFillRaw = PressureTierModel.GetTierFillTarget(scoreForBuild, tier)
+    end
+    local shownFill = colorOverlayState.fillFrac or 0
+    local flowPct = (targetFillRaw - shownFill) * 100
+    local flowDir = "hold"
+    if flowPct > 1 then
+        flowDir = "up"
+    elseif flowPct < -1 then
+        flowDir = "down"
+    end
+    local nextGate = 0
+    if PressureTierModel and PressureTierModel.GetPromoteThreshold then
+        if tier >= 5 then
+            nextGate = (scoreForBuild > 0) and scoreForBuild or 1
+        else
+            nextGate = PressureTierModel.GetPromoteThreshold(tier + 1)
+        end
+    end
+    local gatePct = 0
+    if nextGate > 0 then
+        gatePct = math_min(math_max((scoreForBuild / nextGate) * 100, 0), 999)
+    end
+    local candidateTier = tier
+    if PressureTierModel and PressureTierModel.GetTier then
+        candidateTier = PressureTierModel.GetTier(scoreForBuild or 0)
+    end
+    local nextReq = nextGate
+    if tier >= 5 then
+        nextReq = scoreForBuild
     end
 
     local tune = PS.debugTune
     if tune then
         debugText:SetText(string.format(
-            "n:%.2f i:%.2f ts:%.2f te:%.2f m:%.2f hk:%.2f r:%.0f%% s:%.0f%% %s\ndelta push:%+.0f%% spring:%+.0f%% diff:%+.0f%% T5:%+.0f%% OD:%+.0f%% shake:%+.0f%%",
+            "ratio:%.2f eval:%.2f hold:%.2f tier:T%d (want T%d) %s\nflow:%s %+.0f%% gate:%.0f%% target:%.0f%% shown:%.0f%%",
             PS.pressureRatio or 0,
-            PS.instantScore or 0,
-            PS.tierScore or 0,
             PS.tierEvalScore or 0,
-            PS.tierMomentumBoost or 0,
-            hitKick or 0,
-            liveResPct,
-            liveSlipPct,
+            PS.tierHoldScore or 0,
+            tier,
+            candidateTier,
             PS.tierCapReason or "ok",
-            tune.resistanceScalePct or 0,
-            tune.springinessPct or 0,
-            tune.difficultyPct or 0,
-            tune.t5Pct or 0,
-            tune.overdriveThresholdPct or 0,
-            tune.shakeCouplingPct or 0
+            flowDir,
+            flowPct,
+            gatePct,
+            targetFillRaw * 100,
+            shownFill * 100
         ))
 
         bucketStrings[1]:SetText(string.format(
-            "K1 R %.2f  RB %.2f  Base %.2f  Step %.1f%%",
+            "DPS: live %.0f  fight %.0f  base %.0f  delta %+.0f%%",
+            PS.debugCurrentDps or 0,
+            PS.debugFightDps or 0,
+            PS.debugMedianDps or 0,
+            PS.debugDpsAbovePct or 0
+        ))
+        bucketStrings[2]:SetText(string.format(
+            "Req next: %.2f  now:%.2f  hold:%.2f",
+            nextReq or 0,
+            scoreForBuild or 0,
+            PS.tierHoldScore or 0
+        ))
+        bucketStrings[3]:SetText(string.format(
+            "Feel: R %.2f  RB %.2f  Base %.2f  Step %.1f%%",
             tune.resistance or 0,
             tune.rubberband or 0,
             tune.tierBase or 0,
             tune.tierStepPct or 0
         ))
-        bucketStrings[2]:SetText(string.format(
-            "K2 Help %.2f  Hold %.2fs  OD %.1f%% x%.2f  Shk %.2f x %.2f",
+        bucketStrings[4]:SetText(string.format(
+            "Hold cfg: help %.2f  hold %.2fs  hyst %.2f",
             tune.tierHelp or 0,
             tune.holdSec or 0,
-            tune.overdrivePercentile or 0,
-            tune.overdriveMultiplier or 0,
-            tune.shakeAmount or 0,
-            tune.shakeFromDamage or 0
-        ))
-        bucketStrings[3]:SetText(string.format(
-            "Req T1 %.2f(%+.0f%%)  T2 %.2f(%+.0f%%)",
-            tune.t1Req or 0, tune.t1Pct or 0,
-            tune.t2Req or 0, tune.t2Pct or 0
-        ))
-        bucketStrings[4]:SetText(string.format(
-            "Req T3 %.2f(%+.0f%%)  T4 %.2f(%+.0f%%)  T5 %.2f(%+.0f%%)",
-            tune.t3Req or 0, tune.t3Pct or 0,
-            tune.t4Req or 0, tune.t4Pct or 0,
-            tune.t5Req or 0, tune.t5Pct or 0
+            PS.tierHysteresis or 0
         ))
         bucketStrings[5]:SetText(string.format(
-            "Transfer %.2fs(%+.0f%%)  Damp %+.0f%%  Osc %+.0f%%  OD ramp %.0f%% (%d/%d)",
-            tune.transferDropSec or 0,
-            tune.transferDropPct or 0,
-            tune.transferDampingPct or 0,
-            tune.transferOscPct or 0,
-            math_min(math_max(PS.overdriveWarmup or 0, 0), 1) * 100,
-            PS.overdriveSampleCount or 0,
-            PS.simpleOverdriveSampleCap or 100
+            "Overdrive: need %.0f  hit %+.0f%%  samples %d",
+            PS.debugOverdriveHitThreshold or 0,
+            PS.debugOverdriveHitAbovePct or 0,
+            PS.overdriveSampleCount or 0
         ))
         if NUM_WINDOWS > 5 then
             for wi = 6, NUM_WINDOWS do
@@ -1732,16 +1813,18 @@ local function UpdatePressureDebugFrame(hitKick)
         end
     else
         debugText:SetText(string.format(
-            "n:%.2f i:%.2f ts:%.2f te:%.2f m:%.2f hk:%.2f r:%.0f%% s:%.0f%% %s",
+            "ratio:%.2f eval:%.2f hold:%.2f tier:T%d (want T%d) %s\nflow:%s %+.0f%% gate:%.0f%% target:%.0f%% shown:%.0f%%",
             PS.pressureRatio or 0,
-            PS.instantScore or 0,
-            PS.tierScore or 0,
             PS.tierEvalScore or 0,
-            PS.tierMomentumBoost or 0,
-            hitKick or 0,
-            liveResPct,
-            liveSlipPct,
-            PS.tierCapReason or "ok"
+            PS.tierHoldScore or 0,
+            tier,
+            candidateTier,
+            PS.tierCapReason or "ok",
+            flowDir,
+            flowPct,
+            gatePct,
+            targetFillRaw * 100,
+            shownFill * 100
         ))
         for wi = 1, NUM_WINDOWS do
             local w = WINDOWS[wi]
@@ -1776,6 +1859,7 @@ local function ResetPressureState()
     PS.squeezeScore = 0
     PS.tierScore = 0
     PS.tierEvalScore = 0
+    PS.tierHoldScore = 0
     PS.tierEdgeResistance = 0
     PS.tierEdgeSlip = 0
     PS.tierMomentumBoost = 0
@@ -1826,6 +1910,8 @@ local function ResetPressureState()
     ResetDriverPopupState()
     PressureVisualModel.SetColorOverlayFill(colorOverlayState.fillFrac)
     ClearPressureDebugFrame()
+    ClearPostCombatDpsFade()
+    UpdateGaugeDpsText()
 end
 
 ShammyTime.ResetPressureState = ResetPressureState
@@ -1841,6 +1927,8 @@ local function HasDriverPopupActivity()
 end
 
 local function HasResidualPressureVisual()
+    local now = GetTime()
+    if dpsPostCombatFadeUntil > 0 and now < dpsPostCombatFadeUntil then return true end
     if (PS.currentTier or 0) > 0 then return true end
     if (PS.pressureDisplaySmoothed or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
     if (PS.squeezeCharge or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
@@ -1865,6 +1953,7 @@ local function EnterPressureIdleState()
     PS.squeezeScore = 0
     PS.tierScore = 0
     PS.tierEvalScore = 0
+    PS.tierHoldScore = 0
     PS.tierEdgeResistance = 0
     PS.tierEdgeSlip = 0
     PS.tierMomentumBoost = 0
@@ -1888,6 +1977,8 @@ local function EnterPressureIdleState()
         PS.pressureBucketAvg[wi] = 0
         PS.pressureBucketMax[wi] = 0
     end
+    ClearPostCombatDpsFade()
+    UpdateGaugeDpsText()
 end
 
 local pressureMathIdle = false
@@ -1914,6 +2005,7 @@ local function OnPressureTick(_, dt)
             pressureTickFrame:SetScript("OnUpdate", nil)
             pressureTickRunning = false
         end
+        UpdateGaugeDpsText()
         return
     end
     pressureMathIdle = false
@@ -1921,14 +2013,28 @@ local function OnPressureTick(_, dt)
     -- Only update popup state when there's potential activity.
     UpdateDriverPopupState(now)
 
+    local visualSlowCharge = PS.slowCharge
+    if PS.firstPressureAt and PS.firstPressureAt > 0 and PS.fastCharge > 0 then
+        local warmWindow = math_max(PS.startupSeedWindowSec or 2.40, 0.01)
+        local age = now - PS.firstPressureAt
+        local fade = 1 - math_min(math_max(age / warmWindow, 0), 1)
+        if fade > 0 then
+            local seedSlow = (PS.fastCharge * (PS.tauSlow / math_max(PS.tauFast, 0.001))) * fade
+            if visualSlowCharge < seedSlow then
+                visualSlowCharge = seedSlow
+            end
+        end
+    end
+
     local visualScale = PS.tauFast / math_max(PS.tauSlow, 0.001)
-    local visualSteadyDen = PS.slowCharge * visualScale
+    local visualSteadyDen = visualSlowCharge * visualScale
     local visualDampedDen = (visualSteadyDen + (PS.fastCharge * PS.burstDamping)) / (1 + PS.burstDamping)
     visualDampedDen = math_max(visualDampedDen, PS.denominatorFloor)
     local visualImpulsePressure = PS.recentHitImpulse / math_max(visualDampedDen, PS.epsilon)
 
     PS.pressureElapsed = PS.pressureElapsed + dt
     if PS.pressureElapsed < PS.pressureTick then
+        UpdateGaugeDpsText()
         PressureVisualModel.Update(visualElapsed, now, visualImpulsePressure)
         return
     end
@@ -1939,6 +2045,20 @@ local function OnPressureTick(_, dt)
     PS.slowCharge = PS.slowCharge * math_exp(-elapsed / math_max(PS.tauSlow, 0.01))
     if PS.fastCharge < 0.01 then PS.fastCharge = 0 end
     if PS.slowCharge < 0.01 then PS.slowCharge = 0 end
+
+    -- Fight-start stabilization: seed the long-window reference from fast charge,
+    -- then fade it out over the startup window to avoid spike-then-collapse behavior.
+    if PS.firstPressureAt and PS.firstPressureAt > 0 and PS.fastCharge > 0 then
+        local warmWindow = math_max(PS.startupSeedWindowSec or 2.40, 0.01)
+        local age = now - PS.firstPressureAt
+        local fade = 1 - math_min(math_max(age / warmWindow, 0), 1)
+        if fade > 0 then
+            local seedSlow = (PS.fastCharge * (PS.tauSlow / math_max(PS.tauFast, 0.001))) * fade
+            if PS.slowCharge < seedSlow then
+                PS.slowCharge = seedSlow
+            end
+        end
+    end
 
     local scale = PS.tauFast / math_max(PS.tauSlow, 0.001)
     local steadyDen = PS.slowCharge * scale
@@ -1958,10 +2078,17 @@ local function OnPressureTick(_, dt)
     PS.squeezeScore = 0
     PS.tierScore = PS.instantScore
     PressureTierModel.UpdateTierMomentumBonus(elapsed, now)
+    if PressureTierModel and PressureTierModel.UpdateDebugTelemetry then
+        PressureTierModel.UpdateDebugTelemetry(now)
+    end
+    UpdateGaugeDpsText()
     local edgeResistance, edgeSlip = PressureTierModel.GetTierResistanceAndSlip(PS.tierScore, now)
     PS.tierEdgeResistance = edgeResistance
     PS.tierEdgeSlip = edgeSlip
-    PS.tierEvalScore = PS.tierScore - edgeResistance - edgeSlip + (PS.tierMomentumBoost or 0)
+    -- Climb score stays "pure" (damage pressure vs resistance).
+    PS.tierEvalScore = PS.tierScore - edgeResistance - edgeSlip
+    -- Hold score adds tier-help so reached tiers feel stable instead of instantly dropping.
+    PS.tierHoldScore = PS.tierEvalScore + math_max(PS.tierMomentumBoost or 0, 0)
 
     PS.recentHitImpulse = PS.recentHitImpulse * math_exp(-elapsed / math_max(PS.hitImpulseTau, 0.1))
     local impulsePressure = PS.recentHitImpulse / math_max(dampedDen, PS.epsilon)
@@ -2011,10 +2138,10 @@ local function OnPressureTick(_, dt)
             visualAnimState.promotionPending = false
         end
     elseif gatedTier < PS.currentTier then
-        local demoteThreshold = PressureTierModel.GetDemoteThreshold(PS.currentTier)
-        local scoreWantsDemote = PS.tierEvalScore <= demoteThreshold
+        -- If the pure score wants a lower tier, step down after hold time.
+        -- This avoids getting stuck at high tiers when hold-assist is active.
         local holdElapsed = now - PS.lastTierChangeAt
-        if holdElapsed >= PS.tierHoldMinSec and scoreWantsDemote then
+        if holdElapsed >= PS.tierHoldMinSec then
             PS.currentTier = math_max(gatedTier, PS.currentTier - 1)
             PS.lastTierChangeAt = now
         end
@@ -2033,6 +2160,8 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         eventFrame:UnregisterEvent("ADDON_LOADED")
@@ -2041,6 +2170,30 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     if event == "PLAYER_LOGIN" then
         playerGUID = UnitGUID("player")
+        return
+    end
+    if event == "PLAYER_REGEN_DISABLED" then
+        local now = GetTime()
+        ClearPostCombatDpsFade()
+        if PressureTierModel and PressureTierModel.StartCombatDamageMeter then
+            PressureTierModel.StartCombatDamageMeter(now)
+        elseif PressureTierModel and PressureTierModel.ResetRuntime then
+            PressureTierModel.ResetRuntime(false)
+        end
+        UpdateGaugeDpsText(now)
+        UpdatePressureDebugFrame(0)
+        return
+    end
+    if event == "PLAYER_REGEN_ENABLED" then
+        local now = GetTime()
+        if PressureTierModel and PressureTierModel.EndCombatDamageMeter then
+            PressureTierModel.EndCombatDamageMeter(now, DPS_POST_COMBAT_LOCK_SEC + DPS_POST_COMBAT_FADE_SEC)
+        elseif PressureTierModel and PressureTierModel.ResetRuntime then
+            PressureTierModel.ResetRuntime(false)
+        end
+        ArmPostCombatDpsFade(now)
+        UpdateGaugeDpsText(now)
+        UpdatePressureDebugFrame(0)
         return
     end
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then

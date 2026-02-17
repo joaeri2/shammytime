@@ -193,41 +193,48 @@ local function setFlatDB(key, val)
 end
 
 local PRESSURE_DEV_DEFAULTS = {
-    pressurePopupIconSize = 74,
-    pressurePopupTextSize = 49,
-    pressurePopupHoldSec = 5.20,
-    pressurePopupFadeSec = 1.20,
-    pressurePopupSustainSec = 6.00,
-    pressurePopupCritBounceScale = 2.00,
-    pressurePopupCritBounceSec = 0.20,
-    pressureSlot1X = -130,
-    pressureSlot1Y = -104,
-    pressureSlot1TextX = 0,
-    pressureSlot1TextY = -14,
-    pressureSlot2X = 1,
-    pressureSlot2Y = -123,
-    pressureSlot2TextX = 0,
-    pressureSlot2TextY = -16,
-    pressureSlot3X = 135,
-    pressureSlot3Y = -104,
-    pressureSlot3TextX = -7,
-    pressureSlot3TextY = -18,
-    pressureTierConcavityDepth = 0.00,
-    pressureTierMomentumOnPromote = 0.08,
-    pressureTierMomentumPerTier = 0.04,
-    pressureTierMomentumMax = 0.22,
-    pressureTierMomentumDecayTau = 3.20,
-    pressureTierMomentumIdleDecayTau = 1.15,
-    pressureTierDamageReq1 = 1.50,
-    pressureTierDamageReq2 = 1.85,
-    pressureTierDamageReq3 = 2.32,
-    pressureTierDamageReq4 = 3.05,
-    pressureTierDamageReq5 = 3.90,
-    pressureTierForceReq1 = 0.00,
-    pressureTierForceReq2 = 0.18,
-    pressureTierForceReq3 = 0.35,
-    pressureTierForceReq4 = 0.70,
-    pressureTierForceReq5 = 0.92,
+    pressureSimpleResistance = 0.85,
+    pressureSimpleRubberband = 1.00,
+    pressureSimpleTierBase = 1.50,
+    pressureSimpleTierStepPct = 8.00,
+    pressureSimpleTierHelp = 1.15,
+    pressureSimpleOverdrivePercentile = 97.00,
+    pressureSimpleOverdriveMultiplier = 1.10,
+    pressureSimpleTierHoldSec = 2.20,
+    pressureSimpleShakeAmount = 1.00,
+    pressureSimpleShakeFromDamage = 0.85,
+}
+
+local PRESSURE_DEV_LEGACY_KEYS = {
+    "pressureFeelMass",
+    "pressureFeelResistanceScale",
+    "pressureFeelRubberDropSec",
+    "pressureFeelRubberDamping",
+    "pressureFeelRubberOscillations",
+    "pressureFeelRubberLandingFloor",
+    "pressureFeelTierHelpScale",
+    "pressureFeelShakeAmount",
+    "pressureFeelShakeDamageScale",
+    "pressureOverloadThreshold",
+    "pressureOverloadTierBoost",
+    "pressureOverloadCooldownSec",
+    "pressureTierHoldMinSec",
+    "pressureTierConcavityDepth",
+    "pressureTierMomentumOnPromote",
+    "pressureTierMomentumPerTier",
+    "pressureTierMomentumMax",
+    "pressureTierMomentumDecayTau",
+    "pressureTierMomentumIdleDecayTau",
+    "pressureTierDamageReq1",
+    "pressureTierDamageReq2",
+    "pressureTierDamageReq3",
+    "pressureTierDamageReq4",
+    "pressureTierDamageReq5",
+    "pressureTierForceReq1",
+    "pressureTierForceReq2",
+    "pressureTierForceReq3",
+    "pressureTierForceReq4",
+    "pressureTierForceReq5",
 }
 
 local function resetPressureDevOptions()
@@ -235,6 +242,9 @@ local function resetPressureDevOptions()
     if not p then return end
     for key, value in pairs(PRESSURE_DEV_DEFAULTS) do
         p[key] = value
+    end
+    for _, key in ipairs(PRESSURE_DEV_LEGACY_KEYS) do
+        p[key] = nil
     end
     local st = _G.ShammyTime
     if st and st.ApplyAllConfigs then st:ApplyAllConfigs() end
@@ -417,32 +427,26 @@ local function BuildFullExportLines(useColorCodes)
     line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 6.00))
     line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 2.00))
     line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
-    line("pressureTierConcavityDepth = " .. tostring(p.pressureTierConcavityDepth or 0.00))
-    line("pressureTierMomentumOnPromote = " .. tostring(p.pressureTierMomentumOnPromote or 0.08))
-    line("pressureTierMomentumPerTier = " .. tostring(p.pressureTierMomentumPerTier or 0.04))
-    line("pressureTierMomentumMax = " .. tostring(p.pressureTierMomentumMax or 0.22))
-    line("pressureTierMomentumDecayTau = " .. tostring(p.pressureTierMomentumDecayTau or 3.20))
-    line("pressureTierMomentumIdleDecayTau = " .. tostring(p.pressureTierMomentumIdleDecayTau or 1.15))
-    line("pressureTierDamageReq1 = " .. tostring(p.pressureTierDamageReq1 or 1.50))
-    line("pressureTierDamageReq2 = " .. tostring(p.pressureTierDamageReq2 or 1.85))
-    line("pressureTierDamageReq3 = " .. tostring(p.pressureTierDamageReq3 or 2.32))
-    line("pressureTierDamageReq4 = " .. tostring(p.pressureTierDamageReq4 or 3.05))
-    line("pressureTierDamageReq5 = " .. tostring(p.pressureTierDamageReq5 or 3.90))
-    line("pressureTierForceReq1 = " .. tostring(p.pressureTierForceReq1 or 0.00))
-    line("pressureTierForceReq2 = " .. tostring(p.pressureTierForceReq2 or 0.18))
-    line("pressureTierForceReq3 = " .. tostring(p.pressureTierForceReq3 or 0.35))
-    line("pressureTierForceReq4 = " .. tostring(p.pressureTierForceReq4 or 0.70))
-    line("pressureTierForceReq5 = " .. tostring(p.pressureTierForceReq5 or 0.92))
+    line("pressureSimpleResistance = " .. tostring(p.pressureSimpleResistance or 0.85))
+    line("pressureSimpleRubberband = " .. tostring(p.pressureSimpleRubberband or 1.00))
+    line("pressureSimpleTierBase = " .. tostring(p.pressureSimpleTierBase or 1.50))
+    line("pressureSimpleTierStepPct = " .. tostring(p.pressureSimpleTierStepPct or 8.00))
+    line("pressureSimpleTierHelp = " .. tostring(p.pressureSimpleTierHelp or 1.15))
+    line("pressureSimpleOverdrivePercentile = " .. tostring(p.pressureSimpleOverdrivePercentile or 97.00))
+    line("pressureSimpleOverdriveMultiplier = " .. tostring(p.pressureSimpleOverdriveMultiplier or 1.10))
+    line("pressureSimpleTierHoldSec = " .. tostring(p.pressureSimpleTierHoldSec or 2.20))
+    line("pressureSimpleShakeAmount = " .. tostring(p.pressureSimpleShakeAmount or 1.00))
+    line("pressureSimpleShakeFromDamage = " .. tostring(p.pressureSimpleShakeFromDamage or 0.85))
     line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
-    line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -104))
+    line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -147))
     line("pressureSlot1TextX = " .. tostring(p.pressureSlot1TextX or 0))
     line("pressureSlot1TextY = " .. tostring(p.pressureSlot1TextY or -14))
     line("pressureSlot2X = " .. tostring(p.pressureSlot2X or 1))
-    line("pressureSlot2Y = " .. tostring(p.pressureSlot2Y or -123))
+    line("pressureSlot2Y = " .. tostring(p.pressureSlot2Y or -171))
     line("pressureSlot2TextX = " .. tostring(p.pressureSlot2TextX or 0))
     line("pressureSlot2TextY = " .. tostring(p.pressureSlot2TextY or -16))
     line("pressureSlot3X = " .. tostring(p.pressureSlot3X or 135))
-    line("pressureSlot3Y = " .. tostring(p.pressureSlot3Y or -104))
+    line("pressureSlot3Y = " .. tostring(p.pressureSlot3Y or -147))
     line("pressureSlot3TextX = " .. tostring(p.pressureSlot3TextX or -7))
     line("pressureSlot3TextY = " .. tostring(p.pressureSlot3TextY or -18))
     line("")
@@ -2411,6 +2415,19 @@ function ShammyTime:SetupOptions()
                         name = "Pressure Popup Slots",
                         order = 80,
                     },
+                    pressurePopupInfo = {
+                        type = "description",
+                        name =
+                            "What these control:\n" ..
+                            "Icon Size / Text Size: Global size for popup icons and damage text.\n" ..
+                            "Popup Hold / Popup Fade: Burst popup lifetime (hold fully visible, then fade out).\n" ..
+                            "Sustain Linger: Extra on-screen time for sustained sources (like DoTs/totem ticks) after their last hit.\n" ..
+                            "Crit Bounce Scale / Time: How strong and how long crit text pulse animation is.\n" ..
+                            "Slot X/Y: Moves each popup icon around the pressure frame (X right/left, Y up/down).\n" ..
+                            "Slot Text X/Y: Moves the number text relative to that slot icon only.",
+                        order = 80.05,
+                        width = "full",
+                    },
                     pressurePopupIconSize = {
                         type = "range",
                         name = "Icon Size",
@@ -2477,6 +2494,7 @@ function ShammyTime:SetupOptions()
                     pressureSlot1X = {
                         type = "range",
                         name = "Slot 1 X",
+                        desc = "Horizontal icon offset for slot 1 from the pressure frame center.",
                         min = -500, max = 500, step = 1,
                         order = 83,
                         get = function() return getFlatDB("pressureSlot1X", -130) end,
@@ -2485,14 +2503,16 @@ function ShammyTime:SetupOptions()
                     pressureSlot1Y = {
                         type = "range",
                         name = "Slot 1 Y",
+                        desc = "Vertical icon offset for slot 1 from the pressure frame center.",
                         min = -500, max = 500, step = 1,
                         order = 84,
-                        get = function() return getFlatDB("pressureSlot1Y", -104) end,
+                        get = function() return getFlatDB("pressureSlot1Y", -147) end,
                         set = function(_, v) setFlatDB("pressureSlot1Y", v) end,
                     },
                     pressureSlot1TextX = {
                         type = "range",
                         name = "Slot 1 Text X",
+                        desc = "Horizontal offset of slot 1 number text relative to slot 1 icon.",
                         min = -500, max = 500, step = 1,
                         order = 84.1,
                         get = function() return getFlatDB("pressureSlot1TextX", 0) end,
@@ -2501,6 +2521,7 @@ function ShammyTime:SetupOptions()
                     pressureSlot1TextY = {
                         type = "range",
                         name = "Slot 1 Text Y",
+                        desc = "Vertical offset of slot 1 number text relative to slot 1 icon.",
                         min = -500, max = 500, step = 1,
                         order = 84.2,
                         get = function() return getFlatDB("pressureSlot1TextY", -14) end,
@@ -2509,6 +2530,7 @@ function ShammyTime:SetupOptions()
                     pressureSlot2X = {
                         type = "range",
                         name = "Slot 2 X",
+                        desc = "Horizontal icon offset for slot 2 from the pressure frame center.",
                         min = -500, max = 500, step = 1,
                         order = 85,
                         get = function() return getFlatDB("pressureSlot2X", 1) end,
@@ -2517,14 +2539,16 @@ function ShammyTime:SetupOptions()
                     pressureSlot2Y = {
                         type = "range",
                         name = "Slot 2 Y",
+                        desc = "Vertical icon offset for slot 2 from the pressure frame center.",
                         min = -500, max = 500, step = 1,
                         order = 86,
-                        get = function() return getFlatDB("pressureSlot2Y", -123) end,
+                        get = function() return getFlatDB("pressureSlot2Y", -171) end,
                         set = function(_, v) setFlatDB("pressureSlot2Y", v) end,
                     },
                     pressureSlot2TextX = {
                         type = "range",
                         name = "Slot 2 Text X",
+                        desc = "Horizontal offset of slot 2 number text relative to slot 2 icon.",
                         min = -500, max = 500, step = 1,
                         order = 86.1,
                         get = function() return getFlatDB("pressureSlot2TextX", 0) end,
@@ -2533,6 +2557,7 @@ function ShammyTime:SetupOptions()
                     pressureSlot2TextY = {
                         type = "range",
                         name = "Slot 2 Text Y",
+                        desc = "Vertical offset of slot 2 number text relative to slot 2 icon.",
                         min = -500, max = 500, step = 1,
                         order = 86.2,
                         get = function() return getFlatDB("pressureSlot2TextY", -16) end,
@@ -2541,6 +2566,7 @@ function ShammyTime:SetupOptions()
                     pressureSlot3X = {
                         type = "range",
                         name = "Slot 3 X",
+                        desc = "Horizontal icon offset for slot 3 from the pressure frame center.",
                         min = -500, max = 500, step = 1,
                         order = 87,
                         get = function() return getFlatDB("pressureSlot3X", 135) end,
@@ -2549,14 +2575,16 @@ function ShammyTime:SetupOptions()
                     pressureSlot3Y = {
                         type = "range",
                         name = "Slot 3 Y",
+                        desc = "Vertical icon offset for slot 3 from the pressure frame center.",
                         min = -500, max = 500, step = 1,
                         order = 88,
-                        get = function() return getFlatDB("pressureSlot3Y", -104) end,
+                        get = function() return getFlatDB("pressureSlot3Y", -147) end,
                         set = function(_, v) setFlatDB("pressureSlot3Y", v) end,
                     },
                     pressureSlot3TextX = {
                         type = "range",
                         name = "Slot 3 Text X",
+                        desc = "Horizontal offset of slot 3 number text relative to slot 3 icon.",
                         min = -500, max = 500, step = 1,
                         order = 88.1,
                         get = function() return getFlatDB("pressureSlot3TextX", -7) end,
@@ -2565,6 +2593,7 @@ function ShammyTime:SetupOptions()
                     pressureSlot3TextY = {
                         type = "range",
                         name = "Slot 3 Text Y",
+                        desc = "Vertical offset of slot 3 number text relative to slot 3 icon.",
                         min = -500, max = 500, step = 1,
                         order = 88.2,
                         get = function() return getFlatDB("pressureSlot3TextY", -18) end,
@@ -2577,163 +2606,133 @@ function ShammyTime:SetupOptions()
                     },
                     pressureEngineTuneDesc = {
                         type = "description",
-                        name = "Developer-only pressure tuning. Adjust momentum, per-tier damage breakpoints, per-tier force gates, and concavity depth (easier early climb, tougher high-end push).",
+                        name = "Developer-only pressure tuning with simple controls. Tune resistance, rubberband feel, tier scaling, overdrive trigger, cooldown hold, and shake response.",
                         order = 89.05,
                         width = "full",
                     },
                     pressureDevReset = {
                         type = "execute",
                         name = "Reset Pressure Dev Options",
-                        desc = "Reset pressure popup slots and pressure engine tuning values to defaults.",
+                        desc = "Reset only pressure engine tuning values to defaults.",
                         order = 89.06,
                         width = "full",
                         confirm = true,
-                        confirmText = "Reset all Pressure developer options to defaults?",
+                        confirmText = "Reset only Pressure tuning settings to defaults?",
                         func = resetPressureDevOptions,
                     },
-                    pressureTierConcavityDepth = {
+                    pressureFeelHeader = {
+                        type = "header",
+                        name = "Simple Pressure Controls",
+                        order = 89.07,
+                    },
+                    pressureSimpleTuneInfo = {
+                        type = "description",
+                        name =
+                            "What each setting does:\n" ..
+                            "|cffccccccResistance|r: Core push weight. Higher = heavier bar pull, especially from ~80% to 100%.\n" ..
+                            "|cffccccccRubberband|r: Post-tier transfer spring behavior. Higher = longer drop-back, more bounce, and slightly more overall tier difficulty.\n" ..
+                            "|cffccccccTier Base|r: Global difficulty floor (Tier 1 requirement). Raising it makes every tier harder.\n" ..
+                            "|cffccccccTier Step %|r: Extra difficulty added per tier. Higher tiers scale harder by this step.\n" ..
+                            "|cffccccccTier Help|r: Carry help from holding tiers (momentum + transfer landing support).\n" ..
+                            "|cffccccccTier Hold Seconds|r: Time a tier stays before cooldown-based demotion can happen.\n" ..
+                            "|cffccccccOverdrive Percentile|r: Rare-hit baseline from last 100 hits (higher = rarer overdrive).\n" ..
+                            "|cffccccccOverdrive Multiplier|r: How far above that baseline a hit must be to instantly tier up.\n" ..
+                            "|cffccccccShake Amount|r: Max circular gauge shake strength.\n" ..
+                            "|cffccccccShake From Damage|r: How much current damage drives shake intensity.\n\n" ..
+                            "Fast tuning order:\n" ..
+                            "1) Tier Base, 2) Tier Step %, 3) Resistance, 4) Tier Help, 5) Overdrive settings.",
+                        order = 89.0705,
+                        width = "full",
+                    },
+                    pressureSimpleResistance = {
                         type = "range",
-                        name = "Concavity Depth",
-                        desc = "Adds gravity near the top of each tier segment (higher = easier around mid-fill, harder near 70%-100%).",
+                        name = "Resistance",
+                        desc = "Global push resistance. Higher makes high-end bar progress feel heavier.",
+                        min = 0.20, max = 4.00, step = 0.01,
+                        order = 89.071,
+                        get = function() return getFlatDB("pressureSimpleResistance", 0.85) end,
+                        set = function(_, v) setFlatDB("pressureSimpleResistance", v) end,
+                    },
+                    pressureSimpleRubberband = {
+                        type = "range",
+                        name = "Rubberband",
+                        desc = "Controls transfer spring feel after tier up: drop speed, bounce amount, and added end-of-segment tension. Higher = more elastic and a bit harder.",
+                        min = 0.20, max = 3.00, step = 0.01,
+                        order = 89.072,
+                        get = function() return getFlatDB("pressureSimpleRubberband", 1.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleRubberband", v) end,
+                    },
+                    pressureSimpleTierBase = {
+                        type = "range",
+                        name = "Tier Base",
+                        desc = "Base score needed for Tier 1. Higher means all tiers require more force.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 89.073,
+                        get = function() return getFlatDB("pressureSimpleTierBase", 1.50) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierBase", v) end,
+                    },
+                    pressureSimpleTierStepPct = {
+                        type = "range",
+                        name = "Tier Step %",
+                        desc = "Percent hardness increase per tier. 10 means each tier is 10% harder than the previous.",
+                        min = 1.00, max = 30.0, step = 0.10,
+                        order = 89.074,
+                        get = function() return getFlatDB("pressureSimpleTierStepPct", 8.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierStepPct", v) end,
+                    },
+                    pressureSimpleTierHelp = {
+                        type = "range",
+                        name = "Tier Help",
+                        desc = "Carry assistance gained while holding higher tiers (momentum help).",
                         min = 0.00, max = 3.00, step = 0.01,
-                        order = 89.1,
-                        get = function() return getFlatDB("pressureTierConcavityDepth", 0.00) end,
-                        set = function(_, v) setFlatDB("pressureTierConcavityDepth", v) end,
+                        order = 89.075,
+                        get = function() return getFlatDB("pressureSimpleTierHelp", 1.15) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierHelp", v) end,
                     },
-                    pressureTierMomentumOnPromote = {
+                    pressureSimpleTierHoldSec = {
                         type = "range",
-                        name = "Momentum Gain On Promote",
-                        desc = "Extra momentum injected on each successful tier promotion.",
-                        min = 0.00, max = 1.00, step = 0.01,
-                        order = 89.2,
-                        get = function() return getFlatDB("pressureTierMomentumOnPromote", 0.08) end,
-                        set = function(_, v) setFlatDB("pressureTierMomentumOnPromote", v) end,
+                        name = "Tier Hold Seconds",
+                        desc = "How long a tier stays active before automatic cooling can demote it.",
+                        min = 0.10, max = 15.0, step = 0.05,
+                        order = 89.076,
+                        get = function() return getFlatDB("pressureSimpleTierHoldSec", 2.20) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierHoldSec", v) end,
                     },
-                    pressureTierMomentumPerTier = {
+                    pressureSimpleOverdrivePercentile = {
                         type = "range",
-                        name = "Momentum Per Tier",
-                        desc = "Passive momentum bonus per current tier (higher tiers carry more momentum).",
-                        min = 0.00, max = 0.25, step = 0.005,
-                        order = 89.3,
-                        get = function() return getFlatDB("pressureTierMomentumPerTier", 0.04) end,
-                        set = function(_, v) setFlatDB("pressureTierMomentumPerTier", v) end,
+                        name = "Overdrive Percentile",
+                        desc = "Percentile of the last 100 hits used as overdrive baseline. Higher = rarer procs.",
+                        min = 85.0, max = 99.5, step = 0.10,
+                        order = 89.077,
+                        get = function() return getFlatDB("pressureSimpleOverdrivePercentile", 97.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleOverdrivePercentile", v) end,
                     },
-                    pressureTierMomentumMax = {
+                    pressureSimpleOverdriveMultiplier = {
                         type = "range",
-                        name = "Momentum Max",
-                        desc = "Maximum momentum bonus cap.",
-                        min = 0.00, max = 1.50, step = 0.01,
-                        order = 89.4,
-                        get = function() return getFlatDB("pressureTierMomentumMax", 0.22) end,
-                        set = function(_, v) setFlatDB("pressureTierMomentumMax", v) end,
+                        name = "Overdrive Multiplier",
+                        desc = "Extra factor above percentile baseline required to instantly promote tiers.",
+                        min = 1.00, max = 3.00, step = 0.01,
+                        order = 89.078,
+                        get = function() return getFlatDB("pressureSimpleOverdriveMultiplier", 1.10) end,
+                        set = function(_, v) setFlatDB("pressureSimpleOverdriveMultiplier", v) end,
                     },
-                    pressureTierMomentumDecayTau = {
+                    pressureSimpleShakeAmount = {
                         type = "range",
-                        name = "Momentum Decay Tau",
-                        desc = "How quickly momentum decays during normal pressure activity.",
-                        min = 0.20, max = 12.0, step = 0.05,
-                        order = 89.5,
-                        get = function() return getFlatDB("pressureTierMomentumDecayTau", 3.20) end,
-                        set = function(_, v) setFlatDB("pressureTierMomentumDecayTau", v) end,
+                        name = "Shake Amount",
+                        desc = "Overall circular gauge shake intensity cap.",
+                        min = 0.00, max = 2.50, step = 0.01,
+                        order = 89.079,
+                        get = function() return getFlatDB("pressureSimpleShakeAmount", 1.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleShakeAmount", v) end,
                     },
-                    pressureTierMomentumIdleDecayTau = {
+                    pressureSimpleShakeFromDamage = {
                         type = "range",
-                        name = "Momentum Idle Decay Tau",
-                        desc = "How quickly momentum decays while idle.",
-                        min = 0.10, max = 8.0, step = 0.05,
-                        order = 89.6,
-                        get = function() return getFlatDB("pressureTierMomentumIdleDecayTau", 1.15) end,
-                        set = function(_, v) setFlatDB("pressureTierMomentumIdleDecayTau", v) end,
-                    },
-                    pressureTierDamageReq1 = {
-                        type = "range",
-                        name = "Damage Req T1",
-                        desc = "Damage pressure needed to break into tier 1.",
-                        min = 0.20, max = 10.0, step = 0.01,
-                        order = 89.7,
-                        get = function() return getFlatDB("pressureTierDamageReq1", 1.50) end,
-                        set = function(_, v) setFlatDB("pressureTierDamageReq1", v) end,
-                    },
-                    pressureTierDamageReq2 = {
-                        type = "range",
-                        name = "Damage Req T2",
-                        desc = "Damage pressure needed to break into tier 2.",
-                        min = 0.20, max = 10.0, step = 0.01,
-                        order = 89.8,
-                        get = function() return getFlatDB("pressureTierDamageReq2", 1.85) end,
-                        set = function(_, v) setFlatDB("pressureTierDamageReq2", v) end,
-                    },
-                    pressureTierDamageReq3 = {
-                        type = "range",
-                        name = "Damage Req T3",
-                        desc = "Damage pressure needed to break into tier 3.",
-                        min = 0.20, max = 10.0, step = 0.01,
-                        order = 89.9,
-                        get = function() return getFlatDB("pressureTierDamageReq3", 2.32) end,
-                        set = function(_, v) setFlatDB("pressureTierDamageReq3", v) end,
-                    },
-                    pressureTierDamageReq4 = {
-                        type = "range",
-                        name = "Damage Req T4",
-                        desc = "Damage pressure needed to break into tier 4.",
-                        min = 0.20, max = 10.0, step = 0.01,
-                        order = 90.0,
-                        get = function() return getFlatDB("pressureTierDamageReq4", 3.05) end,
-                        set = function(_, v) setFlatDB("pressureTierDamageReq4", v) end,
-                    },
-                    pressureTierDamageReq5 = {
-                        type = "range",
-                        name = "Damage Req T5",
-                        desc = "Damage pressure needed to break into tier 5.",
-                        min = 0.20, max = 10.0, step = 0.01,
-                        order = 90.1,
-                        get = function() return getFlatDB("pressureTierDamageReq5", 3.90) end,
-                        set = function(_, v) setFlatDB("pressureTierDamageReq5", v) end,
-                    },
-                    pressureTierForceReq1 = {
-                        type = "range",
-                        name = "Force Req T1",
-                        desc = "Minimum force gate (squeeze) required to enter tier 1.",
-                        min = 0.00, max = 1.00, step = 0.01,
-                        order = 90.2,
-                        get = function() return getFlatDB("pressureTierForceReq1", 0.00) end,
-                        set = function(_, v) setFlatDB("pressureTierForceReq1", v) end,
-                    },
-                    pressureTierForceReq2 = {
-                        type = "range",
-                        name = "Force Req T2",
-                        desc = "Minimum force gate (squeeze) required to enter tier 2.",
-                        min = 0.00, max = 1.00, step = 0.01,
-                        order = 90.3,
-                        get = function() return getFlatDB("pressureTierForceReq2", 0.18) end,
-                        set = function(_, v) setFlatDB("pressureTierForceReq2", v) end,
-                    },
-                    pressureTierForceReq3 = {
-                        type = "range",
-                        name = "Force Req T3",
-                        desc = "Minimum force gate (squeeze) required to enter tier 3.",
-                        min = 0.00, max = 1.00, step = 0.01,
-                        order = 90.4,
-                        get = function() return getFlatDB("pressureTierForceReq3", 0.35) end,
-                        set = function(_, v) setFlatDB("pressureTierForceReq3", v) end,
-                    },
-                    pressureTierForceReq4 = {
-                        type = "range",
-                        name = "Force Req T4",
-                        desc = "Minimum force gate (squeeze) required to enter tier 4.",
-                        min = 0.00, max = 1.00, step = 0.01,
-                        order = 90.5,
-                        get = function() return getFlatDB("pressureTierForceReq4", 0.70) end,
-                        set = function(_, v) setFlatDB("pressureTierForceReq4", v) end,
-                    },
-                    pressureTierForceReq5 = {
-                        type = "range",
-                        name = "Force Req T5",
-                        desc = "Minimum force gate (squeeze) required to enter tier 5.",
-                        min = 0.00, max = 1.00, step = 0.01,
-                        order = 90.6,
-                        get = function() return getFlatDB("pressureTierForceReq5", 0.92) end,
-                        set = function(_, v) setFlatDB("pressureTierForceReq5", v) end,
+                        name = "Shake From Damage",
+                        desc = "How much burst damage contributes to gauge shake (starts near 90% fill).",
+                        min = 0.00, max = 3.00, step = 0.01,
+                        order = 89.08,
+                        get = function() return getFlatDB("pressureSimpleShakeFromDamage", 0.85) end,
+                        set = function(_, v) setFlatDB("pressureSimpleShakeFromDamage", v) end,
                     },
                 },
             },

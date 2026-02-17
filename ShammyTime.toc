@@ -28,5 +28,9 @@ ShammyTime_Windfury.lua
 ShammyTime_ShamanisticFocus.lua
 ShammyTime_WindfuryICD.lua
 ShammyTime_StaggerBar.lua
+Pressure\Models\Bootstrap.lua
+Pressure\Models\Sample.lua
+Pressure\Models\Tier.lua
+Pressure\Models\Visual.lua
 ShammyTime_Pressure.lua
 ShammyTime_WFImpact.lua

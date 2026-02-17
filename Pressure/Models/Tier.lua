@@ -23,11 +23,67 @@ function Models.CreateTierModel(ctx)
     local overdriveCount = 0
     local overdrivePendingTierBoost = 0
     local overdriveLockUntil = 0
+    local SIMPLE_DEFAULTS = {
+        resistance = 0.85,
+        rubberband = 1.00,
+        tierBase = 1.50,
+        tierStepPct = 8.00,
+        tierHelp = 1.15,
+        holdSec = 2.20,
+        overdrivePercentile = 97.00,
+        overdriveMultiplier = 1.10,
+        shakeAmount = 1.00,
+        shakeFromDamage = 0.85,
+    }
 
     local function Clamp(value, minValue, maxValue)
         if value < minValue then return minValue end
         if value > maxValue then return maxValue end
         return value
+    end
+
+    local function GetSimpleDifficulty(resistance, rubberband)
+        -- Normalize the two knobs into one scalar so default 1.0/1.0 is not overly punitive.
+        return math_max(((resistance or 1) + (rubberband or 1)) * 0.65, 0.10)
+    end
+
+    local function PctDelta(value, baseline)
+        local b = baseline or 0
+        if b < 0.00001 and b > -0.00001 then
+            return 0
+        end
+        return ((value or 0) / b - 1) * 100
+    end
+
+    local BuildSimpleThresholds
+
+    local function BuildDerivedSnapshot(resistance, rubberband, tierBase, tierStepPct, tierHelp, overdriveMultiplier, shakeAmount, shakeFromDamage)
+        local tierStepFrac = math_max((tierStepPct or 0) / 100, 0.001)
+        local thresholds = BuildSimpleThresholds(tierBase, resistance, rubberband, tierStepFrac)
+        local difficulty = GetSimpleDifficulty(resistance, rubberband)
+        local resistanceScale = 0.55 + ((resistance or 1) * 0.45)
+        local transferDropSec = 0.30 + ((rubberband or 1) * 0.46)
+        local transferDamping = Clamp(5.80 - ((rubberband or 1) * 1.30), 1.00, 10.00)
+        local transferOsc = Clamp(0.85 + ((rubberband or 1) * 0.90), 0.30, 5.00)
+        local springiness = (transferDropSec * transferOsc) / math_max(transferDamping, 0.01)
+        local landingFloor = Clamp(0.10 + ((tierHelp or 0) * 0.06), 0.00, 0.80)
+        local helpMax = 0.10 + ((tierHelp or 0) * 0.30)
+        local overloadThreshold = 1.00 + (((overdriveMultiplier or 1.10) - 1.00) * 0.75)
+        local shakeCoupling = (shakeAmount or 0) * (shakeFromDamage or 0)
+
+        return {
+            difficulty = difficulty,
+            thresholds = thresholds,
+            resistanceScale = resistanceScale,
+            transferDropSec = transferDropSec,
+            transferDamping = transferDamping,
+            transferOsc = transferOsc,
+            springiness = springiness,
+            landingFloor = landingFloor,
+            helpMax = helpMax,
+            overloadThreshold = overloadThreshold,
+            shakeCoupling = shakeCoupling,
+        }
     end
 
     local function PushOverdriveSample(hitAmount)
@@ -63,28 +119,29 @@ function Models.CreateTierModel(ctx)
         return tmp[rank]
     end
 
-    local function BuildSimpleThresholds(baseDamage, tierStepFrac)
+    BuildSimpleThresholds = function(baseDamage, resistance, rubberband, tierStepFrac)
         local thresholds = {}
-        local stepMult = 1 + math_max(tierStepFrac or 0, 0)
-        local current = math_max(baseDamage or 1.50, 0.01)
-        for i = 1, 5 do
-            thresholds[i] = current
-            current = current * stepMult
-        end
-        return thresholds
-    end
-
-    local function BuildSimpleForceReq(resistance, rubberband, tierStepFrac)
-        local req = {}
-        local scalar = math_max((resistance + rubberband) * math_max(tierStepFrac, 0.01), 0.01)
+        local base = math_max(baseDamage or 1.50, 0.01)
+        local step = math_max(tierStepFrac or 0, 0.001)
+        local difficulty = GetSimpleDifficulty(resistance, rubberband)
         for tier = 1, 5 do
             if tier <= 1 then
-                req[tier] = 0
+                thresholds[tier] = base
             else
-                req[tier] = math_min((tier - 1) * scalar, 0.95)
+                -- Simple shared curve across tiers:
+                -- base * (1 + (resistance + rubberband) * tierIndex * step%)
+                local tierIndex = tier - 1
+                local tierMult = 1 + (difficulty * tierIndex * step)
+                thresholds[tier] = base * tierMult
             end
         end
-        return req
+        for i = 2, #thresholds do
+            local minNext = thresholds[i - 1] + 0.01
+            if thresholds[i] < minNext then
+                thresholds[i] = minNext
+            end
+        end
+        return thresholds
     end
 
     function model.GetTier(score)
@@ -145,20 +202,20 @@ function Models.CreateTierModel(ctx)
         end
 
         local tierScale = 1 + (segTier * math_max(PS.simpleTierStepFrac or 0.10, 0.01))
-        local pressureScale = math_max((PS.simpleResistance or 1) + (PS.simpleRubberband or 1), 0.10)
+        local pressureScale = GetSimpleDifficulty(PS.simpleResistance or 1, PS.simpleRubberband or 1)
 
-        local baseCurve = (segFrac ^ 1.25) * 0.05
+        local baseCurve = (segFrac ^ 1.20) * 0.035
         local edgeCurve = 0
-        if segFrac > 0.80 then
-            local q = (segFrac - 0.80) / 0.20
-            edgeCurve = (q ^ 2.20) * 0.24
+        if segFrac > 0.82 then
+            local q = (segFrac - 0.82) / 0.18
+            edgeCurve = (q ^ 2.00) * 0.16
         end
 
         local resistance = (baseCurve + edgeCurve) * pressureScale * tierScale
         resistance = resistance * math_max(PUSH_FEEL_CFG.resistanceScale or 1, 0)
 
         local maxTierScale = 1 + (5 * math_max(PS.simpleTierStepFrac or 0.10, 0.01))
-        PS.tierEdgeResistMax = math_max((0.30 * pressureScale) * maxTierScale, 0.001)
+        PS.tierEdgeResistMax = math_max((0.20 * pressureScale) * maxTierScale, 0.001)
 
         local slip = 0
         local idleGrace = math_max(PS.tierMomentumIdleGrace or 0.70, 0)
@@ -167,7 +224,7 @@ function Models.CreateTierModel(ctx)
             local idleFor = (now - (PS.lastDamageTime or 0)) - idleGrace
             local holdSec = math_max(PS.tierHoldMinSec or 2.20, 0.20)
             local idleScale = math_min(idleFor / holdSec, 1)
-            slip = (q ^ 1.25) * (0.08 * math_max(PS.simpleRubberband or 1, 0)) * tierScale * idleScale
+            slip = (q ^ 1.20) * (0.05 * math_max(PS.simpleRubberband or 1, 0)) * tierScale * idleScale
         end
 
         return resistance, slip
@@ -197,48 +254,26 @@ function Models.CreateTierModel(ctx)
         )
     end
 
-    function model.GetGateCappedTier(candidateTier, squeeze, activeSec)
-        local capped = candidateTier
-        local reason = "ok"
-        while capped > 0 do
-            local idx = capped + 1
-            local needSqueeze = PS.tierMinSqueeze[idx] or 0
-            local needTime = PS.tierMinActiveSec[idx] or 0
-            local hasSqueeze = squeeze >= needSqueeze
-            local hasTime = activeSec >= needTime
-            if hasSqueeze and hasTime then
-                break
-            end
-            if not hasSqueeze and not hasTime then
-                reason = string.format("sqz<%.2f&t<%.0f", needSqueeze, needTime)
-            elseif not hasSqueeze then
-                reason = string.format("sqz<%.2f", needSqueeze)
-            else
-                reason = string.format("t<%.0f", needTime)
-            end
-            capped = capped - 1
-        end
-        return capped, reason
-    end
-
     function model.RecordDamageEvent(amount, now)
         local hitAmount = tonumber(amount) or 0
         if hitAmount <= 0 then return end
 
-        local minSamples = PS.simpleOverdriveMinSamples or 20
+        local minSamples = PS.simpleOverdriveMinSamples or 40
         if overdriveCount >= minSamples then
             local percentileRef = GetOverdrivePercentileValue(PS.simpleOverdrivePercentile or 0.95)
+            local medianRef = GetOverdrivePercentileValue(0.50)
             local threshold = math_max(
                 percentileRef * math_max(PS.simpleOverdriveMultiplier or 1.10, 1.00),
                 PS.simpleOverdriveFloor or 1
             )
+            threshold = math_max(
+                threshold,
+                medianRef * (1.65 + ((math_max(PS.simpleOverdriveMultiplier or 1.10, 1.00) - 1.00) * 1.50))
+            )
             if threshold > 0 and (now or 0) >= overdriveLockUntil and hitAmount >= threshold then
-                local ratio = hitAmount / threshold
                 local tierBoost = 1
-                if ratio >= 1.75 then tierBoost = 2 end
-                if ratio >= 2.60 then tierBoost = 3 end
                 overdrivePendingTierBoost = math_max(overdrivePendingTierBoost, tierBoost)
-                overdriveLockUntil = (now or 0) + (PS.simpleOverdriveCooldownSec or 0.45)
+                overdriveLockUntil = (now or 0) + (PS.simpleOverdriveCooldownSec or 0.85)
             end
         end
 
@@ -264,25 +299,31 @@ function Models.CreateTierModel(ctx)
     end
 
     function model.ApplyTuningSettings()
-        local resistance = GetPressurePopupDBNumber("pressureSimpleResistance", 1.00, 0.20, 4.00)
+        local resistance = GetPressurePopupDBNumber("pressureSimpleResistance", 0.85, 0.20, 4.00)
         local rubberband = GetPressurePopupDBNumber("pressureSimpleRubberband", 1.00, 0.20, 3.00)
         local tierBase = GetPressurePopupDBNumber("pressureSimpleTierBase", 1.50, 0.20, 10.00)
-        local tierStepPct = GetPressurePopupDBNumber("pressureSimpleTierStepPct", 10.00, 1.00, 30.00)
-        local tierHelp = GetPressurePopupDBNumber("pressureSimpleTierHelp", 1.00, 0.00, 3.00)
+        local tierStepPct = GetPressurePopupDBNumber("pressureSimpleTierStepPct", 8.00, 1.00, 30.00)
+        local tierHelp = GetPressurePopupDBNumber("pressureSimpleTierHelp", 1.15, 0.00, 3.00)
         local holdSec = GetPressurePopupDBNumber("pressureSimpleTierHoldSec", 2.20, 0.10, 15.00)
-        local overdrivePercentile = GetPressurePopupDBNumber("pressureSimpleOverdrivePercentile", 95.00, 85.00, 99.50)
-        local overdriveMultiplier = GetPressurePopupDBNumber("pressureSimpleOverdriveMultiplier", 1.12, 1.00, 3.00)
+        local overdrivePercentile = GetPressurePopupDBNumber("pressureSimpleOverdrivePercentile", 97.00, 85.00, 99.50)
+        local overdriveMultiplier = GetPressurePopupDBNumber("pressureSimpleOverdriveMultiplier", 1.10, 1.00, 3.00)
         local shakeAmount = GetPressurePopupDBNumber("pressureSimpleShakeAmount", 1.00, 0.00, 2.50)
         local shakeFromDamage = GetPressurePopupDBNumber("pressureSimpleShakeFromDamage", 0.85, 0.00, 3.00)
         local tierStepFrac = tierStepPct / 100
 
         PS.simpleResistance = resistance
         PS.simpleRubberband = rubberband
+        PS.simpleTierBase = tierBase
+        PS.simpleTierStepPct = tierStepPct
+        PS.simpleTierHelp = tierHelp
+        PS.simpleTierHoldSec = holdSec
+        PS.simpleShakeAmount = shakeAmount
+        PS.simpleShakeFromDamage = shakeFromDamage
         PS.simpleTierStepFrac = tierStepFrac
-        PS.tierThresholds = BuildSimpleThresholds(tierBase, tierStepFrac)
+        PS.tierThresholds = BuildSimpleThresholds(tierBase, resistance, rubberband, tierStepFrac)
 
-        local forceReq = BuildSimpleForceReq(resistance, rubberband, tierStepFrac)
-        PS.tierMinSqueeze = { 0.00, forceReq[1], forceReq[2], forceReq[3], forceReq[4], forceReq[5] }
+        -- Simple mode: no hidden squeeze gate. Tier ups should follow bar/score directly.
+        PS.tierMinSqueeze = { 0, 0, 0, 0, 0, 0 }
         PS.tierMinActiveSec = { 0, 0, 0, 0, 0, 0 }
         PS.tierHoldMinSec = holdSec
 
@@ -297,22 +338,83 @@ function Models.CreateTierModel(ctx)
 
         PS.simpleOverdrivePercentile = overdrivePercentile / 100
         PS.simpleOverdriveMultiplier = overdriveMultiplier
-        PS.simpleOverdriveMinSamples = 20
+        PS.simpleOverdriveMinSamples = 40
         PS.simpleOverdriveFloor = 1
-        PS.simpleOverdriveCooldownSec = 0.45
+        PS.simpleOverdriveCooldownSec = 0.85
 
-        PUSH_FEEL_CFG.fillMass = 1.60 + (resistance * 1.80)
+        PUSH_FEEL_CFG.fillMass = 1.05 + (resistance * 0.85)
         PUSH_FEEL_CFG.resistanceScale = 0.55 + (resistance * 0.45)
         PUSH_FEEL_CFG.fillTransferDropSec = 0.30 + (rubberband * 0.46)
         PUSH_FEEL_CFG.fillTransferRubberDamping = Clamp(5.80 - (rubberband * 1.30), 1.00, 10.00)
         PUSH_FEEL_CFG.fillTransferRubberOscillations = Clamp(0.85 + (rubberband * 0.90), 0.30, 5.00)
-        PUSH_FEEL_CFG.fillTransferLandingFloor = Clamp(0.04 + (tierHelp * 0.05), 0.00, 0.80)
-        PUSH_FEEL_CFG.fillPullResistStart = Clamp(0.76 + ((resistance - 1.00) * 0.05), 0.65, 0.90)
+        PUSH_FEEL_CFG.fillTransferLandingFloor = Clamp(0.10 + (tierHelp * 0.06), 0.00, 0.80)
+        PUSH_FEEL_CFG.fillPullResistStart = Clamp(0.72 + ((resistance - 1.00) * 0.04), 0.60, 0.88)
         PUSH_FEEL_CFG.fillPullLowerPower = 1.10 + (resistance * 0.12)
-        PUSH_FEEL_CFG.fillPullEdgePower = 1.85 + (resistance * 0.65)
+        PUSH_FEEL_CFG.fillPullEdgePower = 1.45 + (resistance * 0.45)
         PUSH_FEEL_CFG.gaugeShakeAmount = shakeAmount
         PUSH_FEEL_CFG.gaugeShakeDamageScale = shakeFromDamage
         PUSH_FEEL_CFG.overloadThreshold = 1.00 + ((overdriveMultiplier - 1.00) * 0.75)
+
+        do
+            local current = BuildDerivedSnapshot(
+                resistance,
+                rubberband,
+                tierBase,
+                tierStepPct,
+                tierHelp,
+                overdriveMultiplier,
+                shakeAmount,
+                shakeFromDamage
+            )
+            local defaults = BuildDerivedSnapshot(
+                SIMPLE_DEFAULTS.resistance,
+                SIMPLE_DEFAULTS.rubberband,
+                SIMPLE_DEFAULTS.tierBase,
+                SIMPLE_DEFAULTS.tierStepPct,
+                SIMPLE_DEFAULTS.tierHelp,
+                SIMPLE_DEFAULTS.overdriveMultiplier,
+                SIMPLE_DEFAULTS.shakeAmount,
+                SIMPLE_DEFAULTS.shakeFromDamage
+            )
+
+            PS.debugTune = {
+                resistance = resistance,
+                rubberband = rubberband,
+                tierBase = tierBase,
+                tierStepPct = tierStepPct,
+                tierHelp = tierHelp,
+                holdSec = holdSec,
+                overdrivePercentile = overdrivePercentile,
+                overdriveMultiplier = overdriveMultiplier,
+                shakeAmount = shakeAmount,
+                shakeFromDamage = shakeFromDamage,
+
+                resistanceScalePct = PctDelta(current.resistanceScale, defaults.resistanceScale),
+                difficultyPct = PctDelta(current.difficulty, defaults.difficulty),
+                t1Pct = PctDelta(current.thresholds[1], defaults.thresholds[1]),
+                t2Pct = PctDelta(current.thresholds[2], defaults.thresholds[2]),
+                t3Pct = PctDelta(current.thresholds[3], defaults.thresholds[3]),
+                t4Pct = PctDelta(current.thresholds[4], defaults.thresholds[4]),
+                t5Pct = PctDelta(current.thresholds[5], defaults.thresholds[5]),
+                springinessPct = PctDelta(current.springiness, defaults.springiness),
+                transferDropPct = PctDelta(current.transferDropSec, defaults.transferDropSec),
+                transferDampingPct = PctDelta(current.transferDamping, defaults.transferDamping),
+                transferOscPct = PctDelta(current.transferOsc, defaults.transferOsc),
+                helpMaxPct = PctDelta(current.helpMax, defaults.helpMax),
+                landingFloorPct = PctDelta(current.landingFloor, defaults.landingFloor),
+                overdriveThresholdPct = PctDelta(current.overloadThreshold, defaults.overloadThreshold),
+                shakeCouplingPct = PctDelta(current.shakeCoupling, defaults.shakeCoupling),
+
+                t1Req = current.thresholds[1],
+                t2Req = current.thresholds[2],
+                t3Req = current.thresholds[3],
+                t4Req = current.thresholds[4],
+                t5Req = current.thresholds[5],
+                transferDropSec = current.transferDropSec,
+                transferDamping = current.transferDamping,
+                transferOsc = current.transferOsc,
+            }
+        end
     end
 
     return model

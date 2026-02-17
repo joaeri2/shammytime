@@ -26,7 +26,7 @@ local NUM_WINDOWS = #WINDOWS
 
 local SIZE = 1024
 local DEFAULT_SCALE = 0.5
-local CROP_TOP = 0.28
+local CROP_TOP = 0.20
 local CROP_BOTTOM = 0.33
 local MIN_FILL_U = 0.001
 local FILL_SHOW_EPS = 0.003
@@ -39,7 +39,7 @@ local OVERLAY_COLOR_TAU_IN = 0.08
 local OVERLAY_COLOR_TAU_OUT = 0.16
 local PUSH_FEEL_CFG = {
     fillSmoothTauEdgeMult = 1.95,
-    fillMass = 10.0,
+    fillMass = 3.40,
     fillTransferDropSec = 0.78,
     fillTransferRubberDamping = 4.10,
     fillTransferRubberOscillations = 1.60,
@@ -48,20 +48,19 @@ local PUSH_FEEL_CFG = {
     fillPullResistStart = 0.80,
     fillPullLowerPower = 1.12,
     fillPullEdgePower = 2.20,
-    tierPullBaseResistMax = 0.06,
-    tierPullBaseResistPower = 1.14,
-    tierPullEdgeStart = 0.80,
-    tierPullEdgeResistMax = 0.22,
-    tierPullEdgeResistPower = 2.30,
     tierPromotionStepLockSec = 0.35,
+    resistanceScale = 1.00,
     gaugeShakeTriggerFill = 0.90,
     gaugeShakeStressTauIn = 0.12,
     gaugeShakeStressTauOut = 0.26,
+    gaugeShakeAmount = 1.00,
+    gaugeShakeDamageScale = 0.85,
     gaugeShakeMaxX = 1.30,
     gaugeShakeMaxY = 0.95,
     gaugeShakeFreqX1 = 35.0,
     gaugeShakeFreqX2 = 52.0,
     gaugeShakeFreqY1 = 41.0,
+    overloadThreshold = 1.10,
 }
 local PS
 local SmoothAlpha
@@ -193,9 +192,9 @@ local WINDFURY_MAX_HITS_PER_BURST = 2
 local SLOT_VISUAL = {
     [SLOT_CASTS] = {
         offsetX = -130,
-        offsetY = -104,
+        offsetY = -147,
         defaultOffsetX = -130,
-        defaultOffsetY = -104,
+        defaultOffsetY = -147,
         dbXKey = "pressureSlot1X",
         dbYKey = "pressureSlot1Y",
         textOffsetX = 0,
@@ -210,9 +209,9 @@ local SLOT_VISUAL = {
     },
     [SLOT_FIRE] = {
         offsetX = 1,
-        offsetY = -123,
+        offsetY = -171,
         defaultOffsetX = 1,
-        defaultOffsetY = -123,
+        defaultOffsetY = -171,
         dbXKey = "pressureSlot2X",
         dbYKey = "pressureSlot2Y",
         textOffsetX = 0,
@@ -227,9 +226,9 @@ local SLOT_VISUAL = {
     },
     [SLOT_WIND] = {
         offsetX = 135,
-        offsetY = -104,
+        offsetY = -147,
         defaultOffsetX = 135,
-        defaultOffsetY = -104,
+        defaultOffsetY = -147,
         dbXKey = "pressureSlot3X",
         dbYKey = "pressureSlot3Y",
         textOffsetX = -7,
@@ -1166,10 +1165,12 @@ local gaugeKeys = {
 }
 
 local gaugeCurrentAlpha = { 1, 0, 0, 0, 0 }
-local colorOverlayFillFrac = 0
-local colorOverlayFullHoldRemaining = 0
-local colorOverlayFillVisible = false
-local colorOverlayCurrentColor = { 0.50, 0.50, 0.50 }
+local colorOverlayState = {
+    fillFrac = 0,
+    fullHoldRemaining = 0,
+    fillVisible = false,
+    currentColor = { 0.50, 0.50, 0.50 },
+}
 local visualAnimState = {
     colorOverlayTransferActive = false,
     colorOverlayTransferElapsed = 0,
@@ -1181,101 +1182,9 @@ local visualAnimState = {
     gaugeShakeOffsetY = 0,
 }
 
-local function ApplyProgressPullResistance(progressFrac)
-    local p = math_min(math_max(progressFrac or 0, 0), 1)
-    if p <= 0 then return 0 end
-    if p >= 1 then return 1 end
-
-    if p <= PUSH_FEEL_CFG.fillPullResistStart then
-        local lowerSpan = math_max(PUSH_FEEL_CFG.fillPullResistStart, 0.001)
-        local q = p / lowerSpan
-        return (q ^ PUSH_FEEL_CFG.fillPullLowerPower) * PUSH_FEEL_CFG.fillPullResistStart
-    end
-
-    local q = (p - PUSH_FEEL_CFG.fillPullResistStart) / math_max(1 - PUSH_FEEL_CFG.fillPullResistStart, 0.001)
-    return PUSH_FEEL_CFG.fillPullResistStart + ((q ^ PUSH_FEEL_CFG.fillPullEdgePower) * (1 - PUSH_FEEL_CFG.fillPullResistStart))
-end
-
-local function StartColorOverlayTransferDrop(fromFillFrac)
-    visualAnimState.colorOverlayTransferActive = true
-    visualAnimState.colorOverlayTransferElapsed = 0
-    visualAnimState.colorOverlayTransferFrom = math_min(math_max(fromFillFrac or colorOverlayFillFrac or 0, 0), 1)
-    visualAnimState.colorOverlayTransferTo = 0
-    colorOverlayFullHoldRemaining = 0
-end
-
-local function SetGaugeTextureOffset(offsetX, offsetY)
-    local x = tonumber(offsetX) or 0
-    local y = tonumber(offsetY) or 0
-    if math_abs((visualAnimState.gaugeShakeOffsetX or 0) - x) < 0.01 and math_abs((visualAnimState.gaugeShakeOffsetY or 0) - y) < 0.01 then
-        return
-    end
-    visualAnimState.gaugeShakeOffsetX = x
-    visualAnimState.gaugeShakeOffsetY = y
-    for _, key in ipairs(gaugeKeys) do
-        local tex = frame.textures[key]
-        if tex then
-            tex:ClearAllPoints()
-            tex:SetPoint("TOPLEFT", frame, "TOPLEFT", x, y)
-            tex:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", x, y)
-        end
-    end
-end
-
-local function UpdateGaugeShake(elapsed, now, rawFillTarget)
-    local fillStress = 0
-    if rawFillTarget and rawFillTarget > PUSH_FEEL_CFG.gaugeShakeTriggerFill then
-        fillStress = (rawFillTarget - PUSH_FEEL_CFG.gaugeShakeTriggerFill) / math_max(1 - PUSH_FEEL_CFG.gaugeShakeTriggerFill, 0.001)
-    end
-    local resistMax = math_max((PS and PS.tierEdgeResistMax) or 0.52, 0.001)
-    local resistStress = math_min(math_max((PS and PS.tierEdgeResistance or 0) / resistMax, 0), 1)
-    local stressTarget = math_min(math_max(math_max(fillStress, resistStress * 0.90), 0), 1)
-    visualAnimState.gaugeShakeStress = SmoothAlpha(
-        visualAnimState.gaugeShakeStress,
-        stressTarget,
-        elapsed,
-        PUSH_FEEL_CFG.gaugeShakeStressTauIn,
-        PUSH_FEEL_CFG.gaugeShakeStressTauOut
-    )
-
-    if visualAnimState.gaugeShakeStress <= 0.01 then
-        SetGaugeTextureOffset(0, 0)
-        return
-    end
-
-    local t = now or GetTime()
-    local ampX = PUSH_FEEL_CFG.gaugeShakeMaxX * visualAnimState.gaugeShakeStress
-    local ampY = PUSH_FEEL_CFG.gaugeShakeMaxY * visualAnimState.gaugeShakeStress
-    local shakeX = (math.sin(t * PUSH_FEEL_CFG.gaugeShakeFreqX1) * ampX) + (math.cos(t * PUSH_FEEL_CFG.gaugeShakeFreqX2 + 0.9) * ampX * 0.35)
-    local shakeY = math.sin(t * PUSH_FEEL_CFG.gaugeShakeFreqY1 + 1.2) * ampY
-    SetGaugeTextureOffset(shakeX, shakeY)
-end
-
-local function SetColorOverlayFill(fillFrac)
-    local colorOverlay = frame.textures.colorOverlay
-    if not colorOverlay then return end
-
-    local frac = math_min(math_max(fillFrac or 0, 0), 1)
-    if frac <= FILL_HIDE_EPS then
-        colorOverlayFillVisible = false
-        colorOverlay:Hide()
-        colorOverlay:SetWidth(1)
-        colorOverlay:SetTexCoord(0, MIN_FILL_U, CROP_TOP, 1 - CROP_BOTTOM)
-        return
-    end
-
-    if (not colorOverlayFillVisible) and frac < FILL_SHOW_EPS then
-        colorOverlay:SetWidth(1)
-        colorOverlay:SetTexCoord(0, MIN_FILL_U, CROP_TOP, 1 - CROP_BOTTOM)
-        return
-    end
-
-    colorOverlayFillVisible = true
-    local uRight = math_max(frac, MIN_FILL_U)
-    colorOverlay:Show()
-    colorOverlay:SetWidth(DISPLAY_WIDTH * uRight)
-    colorOverlay:SetTexCoord(0, uRight, CROP_TOP, 1 - CROP_BOTTOM)
-end
+local PressureVisualModel
+local PressureTierModel
+local PressureSampleModel
 
 if frame.textures.colorOverlay then
     local colorOverlay = frame.textures.colorOverlay
@@ -1291,11 +1200,6 @@ for i, key in ipairs(gaugeKeys) do
         tex:SetAlpha(gaugeCurrentAlpha[i] or 0)
     end
 end
-SetGaugeTextureOffset(0, 0)
-if frame.textures.colorOverlay then
-    frame.textures.colorOverlay:SetAlpha(1)
-end
-SetColorOverlayFill(colorOverlayFillFrac)
 
 frame:Show()
 
@@ -1328,7 +1232,7 @@ debugFrame:EnableMouse(true)
 debugFrame:RegisterForDrag("LeftButton")
 debugFrame:SetScript("OnDragStart", debugFrame.StartMoving)
 debugFrame:SetScript("OnDragStop", debugFrame.StopMovingOrSizing)
-debugFrame:Hide()
+debugFrame:Show()
 
 local debugTitle = debugFrame:CreateFontString(nil, "OVERLAY")
 debugTitle:SetFont(FONT_PATH, 12, "OUTLINE")
@@ -1365,7 +1269,7 @@ debugText:SetJustifyH("LEFT")
 debugText:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", DEBUG_LAYOUT.padding, -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4))
 debugText:SetPoint("RIGHT", debugFrame, "RIGHT", -DEBUG_LAYOUT.padding, 0)
 debugText:SetTextColor(0.6, 0.6, 0.6)
-debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 ok")
+debugText:SetText("n:0.00 i:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 r:0% s:0% ok\ndelta push:+0% spring:+0% diff:+0% T5:+0% OD:+0% shake:+0%")
 
 local bucketStrings = {}
 for i = 1, NUM_WINDOWS do
@@ -1448,7 +1352,6 @@ PS = {
     recentHitImpulse = 0,
     squeezeCharge = 0,
     squeezeDecayTau = 18.0,
-    critBonusMult = 2.0,
     squeezeBuildRate = 0.25,
     squeezeBonusMax = 0.85,
     squeezeBuildBaseline = 1.20,
@@ -1496,14 +1399,6 @@ PS = {
     tierThresholds = { 1.50, 1.85, 2.32, 3.05, 3.90 },
 }
 
-local function ClearPressureSamples()
-    PS.pressureSamples = {}
-    PS.pressureSampleValues = {}
-    PS.pressureSampleHead = 1
-    PS.pressureSampleTail = 0
-    PS.pressureSampleCount = 0
-end
-
 local function ExportPressureState()
     ShammyTime.PressureState = PS
     ShammyTime.GetPressureState = function()
@@ -1515,189 +1410,76 @@ end
 
 ExportPressureState()
 
-local function GetTier(score)
-    for i = #PS.tierThresholds, 1, -1 do
-        if score >= PS.tierThresholds[i] then return i end
+do
+    local PressureModels = ShammyTime.PressureModels
+    if not PressureModels
+        or (type(PressureModels.CreateSampleModel) ~= "function")
+        or (type(PressureModels.CreateTierModel) ~= "function")
+        or (type(PressureModels.CreateVisualModel) ~= "function")
+    then
+        print(ADDON_PREFIX .. " pressure models missing; disabling pressure engine.")
+        return
     end
-    return 0
+
+    PressureSampleModel = PressureModels.CreateSampleModel({
+        PS = PS,
+        WINDOWS = WINDOWS,
+        NUM_WINDOWS = NUM_WINDOWS,
+        math_max = math_max,
+    })
+
+    PressureTierModel = PressureModels.CreateTierModel({
+        PS = PS,
+        PUSH_FEEL_CFG = PUSH_FEEL_CFG,
+        SmoothAlpha = SmoothAlpha,
+        GetPressurePopupDBNumber = GetPressurePopupDBNumber,
+        math_max = math_max,
+        math_min = math_min,
+    })
+
+    PressureVisualModel = PressureModels.CreateVisualModel({
+        frame = frame,
+        gaugeKeys = gaugeKeys,
+        gaugeCurrentAlpha = gaugeCurrentAlpha,
+        visualAnimState = visualAnimState,
+        colorOverlayState = colorOverlayState,
+        PUSH_FEEL_CFG = PUSH_FEEL_CFG,
+        PS = PS,
+        TIER_COLORS = TIER_COLORS,
+        TIER_GAUGE_INDEX = TIER_GAUGE_INDEX,
+        TIER_GAUGE_ALPHA = TIER_GAUGE_ALPHA,
+        DISPLAY_WIDTH = DISPLAY_WIDTH,
+        MIN_FILL_U = MIN_FILL_U,
+        CROP_TOP = CROP_TOP,
+        CROP_BOTTOM = CROP_BOTTOM,
+        FILL_HIDE_EPS = FILL_HIDE_EPS,
+        FILL_SHOW_EPS = FILL_SHOW_EPS,
+        FILL_FULL_EPSILON = FILL_FULL_EPSILON,
+        FILL_FULL_HOLD_SEC = FILL_FULL_HOLD_SEC,
+        FILL_SMOOTH_TAU_RISE = FILL_SMOOTH_TAU_RISE,
+        FILL_SMOOTH_TAU_FALL = FILL_SMOOTH_TAU_FALL,
+        OVERLAY_COLOR_TAU_IN = OVERLAY_COLOR_TAU_IN,
+        OVERLAY_COLOR_TAU_OUT = OVERLAY_COLOR_TAU_OUT,
+        SmoothAlpha = SmoothAlpha,
+        math_abs = math_abs,
+        math_exp = math_exp,
+        math_max = math_max,
+        math_min = math_min,
+        GetTime = GetTime,
+        getTierFillTarget = function(score, tier)
+            return PressureTierModel.GetTierFillTarget(score, tier)
+        end,
+    })
+
+    PressureVisualModel.SetGaugeTextureOffset(0, 0)
+    if frame.textures.colorOverlay then
+        frame.textures.colorOverlay:SetAlpha(1)
+    end
+    PressureVisualModel.SetColorOverlayFill(colorOverlayState.fillFrac)
+
+    ShammyTime.ApplyPressureTuningSettings = PressureTierModel.ApplyTuningSettings
+    PressureTierModel.ApplyTuningSettings()
 end
-
-local function GetPromoteThreshold(tier)
-    if tier <= 0 then return 0 end
-    return PS.tierThresholds[tier] or PS.tierThresholds[#PS.tierThresholds]
-end
-
-local function GetDemoteThreshold(tier)
-    if tier <= 0 then return -math.huge end
-    return GetPromoteThreshold(tier) - PS.tierHysteresis
-end
-
-local function GetTierFillTarget(score, tier)
-    local clampedTier = math_min(math_max(tier or 0, 0), 5)
-    if clampedTier >= 5 then
-        return 1
-    end
-
-    local lower
-    if clampedTier <= 0 then
-        lower = 0
-    else
-        lower = GetPromoteThreshold(clampedTier)
-    end
-    local upper = GetPromoteThreshold(clampedTier + 1)
-    local span = math_max(upper - lower, 0.001)
-
-    return math_min(math_max(((score or 0) - lower) / span, 0), 1)
-end
-
-local function GetTierSegmentProgress(score)
-    local s = score or 0
-    local lower = 0
-    for i = 1, #PS.tierThresholds do
-        local upper = PS.tierThresholds[i]
-        if s < upper then
-            local span = math_max(upper - lower, 0.001)
-            local frac = math_min(math_max((s - lower) / span, 0), 1)
-            return i - 1, frac
-        end
-        lower = upper
-    end
-    return #PS.tierThresholds, 1
-end
-
-local function GetTierResistanceAndSlip(score, now)
-    local segTier, segFrac = GetTierSegmentProgress(score)
-    if segTier >= #PS.tierThresholds then
-        return 0, 0
-    end
-
-    local resistance = (segFrac ^ PUSH_FEEL_CFG.tierPullBaseResistPower) * PUSH_FEEL_CFG.tierPullBaseResistMax
-
-    local edgeStart = math_min(math_max(PS.tierEdgeStartFrac or 0.50, 0.0), 0.95)
-    if segFrac > edgeStart then
-        local q = (segFrac - edgeStart) / math_max(1 - edgeStart, 0.001)
-        local concavityDepth = math_max(PS.tierConcavityDepth or 0, 0)
-        local power = math_max((PS.tierEdgePower or 1.0) + concavityDepth, 1.0)
-        local resistMax = math_max(PS.tierEdgeResistMax or 0, 0) * (1 + (concavityDepth * 0.75))
-        resistance = resistance + ((q ^ power) * resistMax)
-    end
-
-    if segFrac > PUSH_FEEL_CFG.tierPullEdgeStart then
-        local q = (segFrac - PUSH_FEEL_CFG.tierPullEdgeStart) / math_max(1 - PUSH_FEEL_CFG.tierPullEdgeStart, 0.001)
-        resistance = resistance + ((q ^ PUSH_FEEL_CFG.tierPullEdgeResistPower) * PUSH_FEEL_CFG.tierPullEdgeResistMax)
-    end
-
-    local slip = 0
-    local idleGrace = math_max(PS.tierMomentumIdleGrace or 0.70, 0)
-    if (now - (PS.lastDamageTime or 0)) > idleGrace then
-        local slipStart = math_min(math_max(PS.tierEdgeSlipStartFrac or 0.72, 0.0), 0.98)
-        if segFrac > slipStart then
-            local q = (segFrac - slipStart) / math_max(1 - slipStart, 0.001)
-            slip = (q ^ 1.25) * math_max(PS.tierEdgeSlipMax or 0, 0)
-        end
-    end
-
-    return resistance, slip
-end
-
-local function UpdateTierMomentumBonus(elapsed, now)
-    local target = 0
-    if (PS.currentTier or 0) >= 1 then
-        target = math_min(
-            math_max(PS.tierMomentumTierScalar or 0, 0) * PS.currentTier,
-            math_max(PS.tierMomentumMax or 0, 0)
-        )
-    end
-
-    local idleGrace = math_max(PS.tierMomentumIdleGrace or 0.70, 0)
-    local decayTau = (PS.tierMomentumDecayTau or 3.20)
-    if (now - (PS.lastDamageTime or 0)) > idleGrace then
-        decayTau = PS.tierMomentumIdleDecayTau or decayTau
-    end
-
-    PS.tierMomentumBoost = SmoothAlpha(
-        PS.tierMomentumBoost or 0,
-        target,
-        elapsed,
-        PS.tierMomentumBuildTau or 0.55,
-        decayTau
-    )
-end
-
-local function GetGateCappedTier(candidateTier, squeeze, activeSec)
-    local capped = candidateTier
-    local reason = "ok"
-    while capped > 0 do
-        local idx = capped + 1
-        local needSqueeze = PS.tierMinSqueeze[idx] or 0
-        local needTime = PS.tierMinActiveSec[idx] or 0
-        local hasSqueeze = squeeze >= needSqueeze
-        local hasTime = activeSec >= needTime
-        if hasSqueeze and hasTime then
-            break
-        end
-        if not hasSqueeze and not hasTime then
-            reason = string.format("sqz<%.2f&t<%.0f", needSqueeze, needTime)
-        elseif not hasSqueeze then
-            reason = string.format("sqz<%.2f", needSqueeze)
-        else
-            reason = string.format("t<%.0f", needTime)
-        end
-        capped = capped - 1
-    end
-    return capped, reason
-end
-
-local function BuildPressureTierThresholdsFromDB()
-    local thresholds = {
-        GetPressurePopupDBNumber("pressureTierDamageReq1", 1.50, 0.20, 10.0),
-        GetPressurePopupDBNumber("pressureTierDamageReq2", 1.85, 0.20, 10.0),
-        GetPressurePopupDBNumber("pressureTierDamageReq3", 2.32, 0.20, 10.0),
-        GetPressurePopupDBNumber("pressureTierDamageReq4", 3.05, 0.20, 10.0),
-        GetPressurePopupDBNumber("pressureTierDamageReq5", 3.90, 0.20, 10.0),
-    }
-    for i = 2, #thresholds do
-        local minNext = thresholds[i - 1] + 0.01
-        if thresholds[i] < minNext then
-            thresholds[i] = minNext
-        end
-    end
-    return thresholds
-end
-
-local function BuildPressureTierForceReqFromDB()
-    local req = {
-        GetPressurePopupDBNumber("pressureTierForceReq1", 0.00, 0.00, 1.00),
-        GetPressurePopupDBNumber("pressureTierForceReq2", 0.18, 0.00, 1.00),
-        GetPressurePopupDBNumber("pressureTierForceReq3", 0.35, 0.00, 1.00),
-        GetPressurePopupDBNumber("pressureTierForceReq4", 0.70, 0.00, 1.00),
-        GetPressurePopupDBNumber("pressureTierForceReq5", 0.92, 0.00, 1.00),
-    }
-    for i = 2, #req do
-        if req[i] < req[i - 1] then
-            req[i] = req[i - 1]
-        end
-    end
-    return req
-end
-
-local function ApplyPressureTuningSettings()
-    local thresholds = BuildPressureTierThresholdsFromDB()
-    PS.tierThresholds = thresholds
-
-    local forceReq = BuildPressureTierForceReqFromDB()
-    PS.tierMinSqueeze = { 0.00, forceReq[1], forceReq[2], forceReq[3], forceReq[4], forceReq[5] }
-
-    PS.tierMomentumOnPromote = GetPressurePopupDBNumber("pressureTierMomentumOnPromote", 0.08, 0.00, 1.00)
-    PS.tierMomentumTierScalar = GetPressurePopupDBNumber("pressureTierMomentumPerTier", 0.04, 0.00, 0.25)
-    PS.tierMomentumMax = GetPressurePopupDBNumber("pressureTierMomentumMax", 0.22, 0.00, 1.50)
-    PS.tierMomentumDecayTau = GetPressurePopupDBNumber("pressureTierMomentumDecayTau", 3.20, 0.20, 12.0)
-    PS.tierMomentumIdleDecayTau = GetPressurePopupDBNumber("pressureTierMomentumIdleDecayTau", 1.15, 0.10, 8.0)
-    PS.tierConcavityDepth = GetPressurePopupDBNumber("pressureTierConcavityDepth", 0.00, 0.00, 3.00)
-end
-
-ShammyTime.ApplyPressureTuningSettings = ApplyPressureTuningSettings
-ApplyPressureTuningSettings()
 
 local SUBEVENT_MAP = {
     SWING_DAMAGE = { amountIdx = 12, critIdx = 18 },
@@ -1774,15 +1556,17 @@ local function OnCombatLogPressure()
         PS.firstPressureAt = now
     end
 
+    -- Pressure is raw-damage driven: every hit contributes its real damage amount.
     local feedAmount = amount
-    if isCrit then
-        feedAmount = amount * PS.critBonusMult
-    end
 
     PS.fastCharge = PS.fastCharge + feedAmount
-    PS.slowCharge = PS.slowCharge + amount
+    PS.slowCharge = PS.slowCharge + feedAmount
     PS.recentHitImpulse = PS.recentHitImpulse + feedAmount
     PS.lastDamageTime = now
+    if PressureTierModel and PressureTierModel.RecordDamageEvent then
+        -- Overdrive is also based on raw hit size.
+        PressureTierModel.RecordDamageEvent(amount, now)
+    end
 
     spellId = info.spellIdIdx and arg12
     spellName = info.spellIdIdx and arg13
@@ -1847,117 +1631,13 @@ local function OnCombatLogPressure()
     end
 end
 
-local function UpdatePressureVisuals(elapsed, now)
-    local tier = PS.currentTier or 0
-    local tierColor = TIER_COLORS[tier + 1] or TIER_COLORS[1]
-
-    local scoreForProgress = PS.tierEvalScore or PS.tierScore or 0
-    local rawFillTarget = GetTierFillTarget(scoreForProgress, tier)
-    local fillTarget = ApplyProgressPullResistance(rawFillTarget)
-
-    if visualAnimState.promotionPending and (not visualAnimState.colorOverlayTransferActive) then
-        fillTarget = 1
-    end
-
-    if tier >= 5 then
-        fillTarget = 1
-        visualAnimState.colorOverlayTransferActive = false
-        visualAnimState.colorOverlayTransferTo = 1
-        colorOverlayFullHoldRemaining = 0
-    end
-
-    if visualAnimState.colorOverlayTransferActive then
-        local landingTarget = fillTarget
-        if tier >= 1 then
-            landingTarget = math_max(landingTarget, PUSH_FEEL_CFG.fillTransferLandingFloor)
-        end
-        visualAnimState.colorOverlayTransferTo = landingTarget
-        visualAnimState.colorOverlayTransferElapsed = visualAnimState.colorOverlayTransferElapsed + elapsed
-        local t = math_min(math_max(visualAnimState.colorOverlayTransferElapsed / math_max(PUSH_FEEL_CFG.fillTransferDropSec, 0.01), 0), 1)
-        local decay = math_exp(-math_max(PUSH_FEEL_CFG.fillTransferRubberDamping, 0.01) * t)
-        local omega = (math.pi * 2) * math_max(PUSH_FEEL_CFG.fillTransferRubberOscillations, 0.01)
-        local rubber = decay * (0.20 + (0.80 * math.cos(omega * t)))
-        local value = landingTarget + ((visualAnimState.colorOverlayTransferFrom - landingTarget) * rubber)
-        colorOverlayFillFrac = math_min(math_max(value, 0), 1)
-        if t >= 1 then
-            visualAnimState.colorOverlayTransferActive = false
-            colorOverlayFillFrac = visualAnimState.colorOverlayTransferTo
-        end
-    else
-        if tier < 5 then
-            if fillTarget >= FILL_FULL_EPSILON then
-                colorOverlayFullHoldRemaining = FILL_FULL_HOLD_SEC
-                fillTarget = 1
-            elseif colorOverlayFullHoldRemaining > 0 then
-                colorOverlayFullHoldRemaining = math_max(colorOverlayFullHoldRemaining - elapsed, 0)
-                fillTarget = 1
-            end
-        else
-            colorOverlayFullHoldRemaining = 0
-        end
-
-        local edgeProgress = 0
-        if fillTarget > PUSH_FEEL_CFG.fillPullResistStart then
-            edgeProgress = (fillTarget - PUSH_FEEL_CFG.fillPullResistStart) / math_max(1 - PUSH_FEEL_CFG.fillPullResistStart, 0.001)
-        end
-        local riseTau = FILL_SMOOTH_TAU_RISE * math_max(PUSH_FEEL_CFG.fillMass, 1) * (1 + (edgeProgress * edgeProgress * PUSH_FEEL_CFG.fillSmoothTauEdgeMult))
-        colorOverlayFillFrac = SmoothAlpha(
-            colorOverlayFillFrac,
-            fillTarget,
-            elapsed,
-            riseTau,
-            FILL_SMOOTH_TAU_FALL
-        )
-    end
-
-    local colorOverlay = frame.textures.colorOverlay
-    if colorOverlay then
-        colorOverlayCurrentColor[1] = SmoothAlpha(
-            colorOverlayCurrentColor[1], tierColor[1], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
-        )
-        colorOverlayCurrentColor[2] = SmoothAlpha(
-            colorOverlayCurrentColor[2], tierColor[2], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
-        )
-        colorOverlayCurrentColor[3] = SmoothAlpha(
-            colorOverlayCurrentColor[3], tierColor[3], elapsed, OVERLAY_COLOR_TAU_IN, OVERLAY_COLOR_TAU_OUT
-        )
-        colorOverlay:SetVertexColor(
-            colorOverlayCurrentColor[1],
-            colorOverlayCurrentColor[2],
-            colorOverlayCurrentColor[3]
-        )
-        colorOverlay:SetAlpha(1)
-    end
-    SetColorOverlayFill(colorOverlayFillFrac)
-
-    local activeGauge = TIER_GAUGE_INDEX[tier] or 1
-    for i, key in ipairs(gaugeKeys) do
-        local targetAlpha
-        if i == 1 then
-            -- Keep 0% gauge as a persistent base; higher gauges fade over it.
-            targetAlpha = 1
-        elseif i == activeGauge then
-            targetAlpha = TIER_GAUGE_ALPHA[tier] or 1
-        else
-            targetAlpha = 0
-        end
-        gaugeCurrentAlpha[i] = SmoothAlpha(gaugeCurrentAlpha[i], targetAlpha, elapsed, 0.05, 0.40)
-        local tex = frame.textures[key]
-        if tex then
-            tex:SetAlpha(gaugeCurrentAlpha[i])
-        end
-    end
-
-    UpdateGaugeShake(elapsed, now, rawFillTarget)
-end
-
 local function ClearPressureDebugFrame()
     debugBar:SetValue(0.0)
     debugBar:SetStatusBarColor(0.5, 0.5, 0.5)
     debugBarText:SetText("0.00x")
     debugBarTierText:SetText("T0")
     debugBarTierText:SetTextColor(0.6, 0.6, 0.6)
-    debugText:SetText("n:0.00 i:0.00 q:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 ok")
+    debugText:SetText("n:0.00 i:0.00 ts:0.00 te:0.00 m:0.00 hk:0.00 r:0% s:0% ok\ndelta push:+0% spring:+0% diff:+0% T5:+0% OD:+0% shake:+0%")
     for i = 1, NUM_WINDOWS do
         bucketStrings[i]:SetText("")
     end
@@ -1977,33 +1657,112 @@ local function UpdatePressureDebugFrame(hitKick)
     debugBarTierText:SetText(string.format("T%d", tier))
     debugBarTierText:SetTextColor(col[1], col[2], col[3])
 
-    debugText:SetText(string.format(
-        "n:%.2f i:%.2f q:%.2f ts:%.2f te:%.2f m:%.2f hk:%.2f %s",
-        PS.pressureRatio or 0,
-        PS.instantScore or 0,
-        PS.squeezeCharge or 0,
-        PS.tierScore or 0,
-        PS.tierEvalScore or 0,
-        PS.tierMomentumBoost or 0,
-        hitKick or 0,
-        PS.tierCapReason or "ok"
-    ))
+    local liveResPct = 0
+    local resistMax = math_max(PS.tierEdgeResistMax or 0.001, 0.001)
+    liveResPct = math_min(math_max(((PS.tierEdgeResistance or 0) / resistMax) * 100, 0), 999)
 
-    for wi = 1, NUM_WINDOWS do
-        local w = WINDOWS[wi]
-        bucketStrings[wi]:SetText(string.format(
-            "%3ds:  avg %.2fx  max %.2fx",
-            w, PS.pressureBucketAvg[wi] or 0, PS.pressureBucketMax[wi] or 0
+    local liveSlipPct = 0
+    local topTierScale = 1 + (5 * math_max(PS.simpleTierStepFrac or 0.10, 0.01))
+    local slipCap = 0.05 * math_max(PS.simpleRubberband or 1, 0) * topTierScale
+    if slipCap > 0 then
+        liveSlipPct = math_min(math_max(((PS.tierEdgeSlip or 0) / slipCap) * 100, 0), 999)
+    end
+
+    local tune = PS.debugTune
+    if tune then
+        debugText:SetText(string.format(
+            "n:%.2f i:%.2f ts:%.2f te:%.2f m:%.2f hk:%.2f r:%.0f%% s:%.0f%% %s\ndelta push:%+.0f%% spring:%+.0f%% diff:%+.0f%% T5:%+.0f%% OD:%+.0f%% shake:%+.0f%%",
+            PS.pressureRatio or 0,
+            PS.instantScore or 0,
+            PS.tierScore or 0,
+            PS.tierEvalScore or 0,
+            PS.tierMomentumBoost or 0,
+            hitKick or 0,
+            liveResPct,
+            liveSlipPct,
+            PS.tierCapReason or "ok",
+            tune.resistanceScalePct or 0,
+            tune.springinessPct or 0,
+            tune.difficultyPct or 0,
+            tune.t5Pct or 0,
+            tune.overdriveThresholdPct or 0,
+            tune.shakeCouplingPct or 0
         ))
+
+        bucketStrings[1]:SetText(string.format(
+            "K1 R %.2f  RB %.2f  Base %.2f  Step %.1f%%",
+            tune.resistance or 0,
+            tune.rubberband or 0,
+            tune.tierBase or 0,
+            tune.tierStepPct or 0
+        ))
+        bucketStrings[2]:SetText(string.format(
+            "K2 Help %.2f  Hold %.2fs  OD %.1f%% x%.2f  Shk %.2f x %.2f",
+            tune.tierHelp or 0,
+            tune.holdSec or 0,
+            tune.overdrivePercentile or 0,
+            tune.overdriveMultiplier or 0,
+            tune.shakeAmount or 0,
+            tune.shakeFromDamage or 0
+        ))
+        bucketStrings[3]:SetText(string.format(
+            "Req T1 %.2f(%+.0f%%)  T2 %.2f(%+.0f%%)",
+            tune.t1Req or 0, tune.t1Pct or 0,
+            tune.t2Req or 0, tune.t2Pct or 0
+        ))
+        bucketStrings[4]:SetText(string.format(
+            "Req T3 %.2f(%+.0f%%)  T4 %.2f(%+.0f%%)  T5 %.2f(%+.0f%%)",
+            tune.t3Req or 0, tune.t3Pct or 0,
+            tune.t4Req or 0, tune.t4Pct or 0,
+            tune.t5Req or 0, tune.t5Pct or 0
+        ))
+        bucketStrings[5]:SetText(string.format(
+            "Transfer %.2fs(%+.0f%%)  Damp %+.0f%%  Osc %+.0f%%  Help %+.0f%%",
+            tune.transferDropSec or 0,
+            tune.transferDropPct or 0,
+            tune.transferDampingPct or 0,
+            tune.transferOscPct or 0,
+            tune.helpMaxPct or 0
+        ))
+        if NUM_WINDOWS > 5 then
+            for wi = 6, NUM_WINDOWS do
+                bucketStrings[wi]:SetText("")
+            end
+        end
+    else
+        debugText:SetText(string.format(
+            "n:%.2f i:%.2f ts:%.2f te:%.2f m:%.2f hk:%.2f r:%.0f%% s:%.0f%% %s",
+            PS.pressureRatio or 0,
+            PS.instantScore or 0,
+            PS.tierScore or 0,
+            PS.tierEvalScore or 0,
+            PS.tierMomentumBoost or 0,
+            hitKick or 0,
+            liveResPct,
+            liveSlipPct,
+            PS.tierCapReason or "ok"
+        ))
+        for wi = 1, NUM_WINDOWS do
+            local w = WINDOWS[wi]
+            bucketStrings[wi]:SetText(string.format(
+                "%3ds:  avg %.2fx  max %.2fx",
+                w, PS.pressureBucketAvg[wi] or 0, PS.pressureBucketMax[wi] or 0
+            ))
+        end
     end
 end
 
 local function SetPressureDebugVisible(visible)
     if visible then
         debugFrame:Show()
+        UpdatePressureDebugFrame(0)
     else
         debugFrame:Hide()
     end
+end
+
+ShammyTime.RefreshPressureDebugMetrics = function()
+    UpdatePressureDebugFrame(0)
 end
 
 local function ResetPressureState()
@@ -2024,25 +1783,28 @@ local function ResetPressureState()
     PS.tierCapReason = "ok"
     PS.recentHitImpulse = 0
     PS.squeezeCharge = 0
+    if PressureTierModel and PressureTierModel.ResetRuntime then
+        PressureTierModel.ResetRuntime(true)
+    end
     PS.firstPressureAt = nil
     PS.lastDamageTime = 0
     PS.pressureElapsed = 0
-    ClearPressureSamples()
+    PressureSampleModel.Clear()
     PS.bucketStatsElapsed = 0
     for wi = 1, NUM_WINDOWS do
         PS.pressureBucketAvg[wi] = 0
         PS.pressureBucketMax[wi] = 0
     end
-    colorOverlayFillFrac = 0
-    colorOverlayFullHoldRemaining = 0
-    colorOverlayFillVisible = false
+    colorOverlayState.fillFrac = 0
+    colorOverlayState.fullHoldRemaining = 0
+    colorOverlayState.fillVisible = false
     visualAnimState.colorOverlayTransferActive = false
     visualAnimState.colorOverlayTransferElapsed = 0
     visualAnimState.colorOverlayTransferFrom = 0
     visualAnimState.colorOverlayTransferTo = 0
     visualAnimState.promotionPending = false
     visualAnimState.gaugeShakeStress = 0
-    SetGaugeTextureOffset(0, 0)
+    PressureVisualModel.SetGaugeTextureOffset(0, 0)
     for i, key in ipairs(gaugeKeys) do
         gaugeCurrentAlpha[i] = (i == 1) and 1 or 0
         local tex = frame.textures[key]
@@ -2050,18 +1812,18 @@ local function ResetPressureState()
             tex:SetAlpha(gaugeCurrentAlpha[i])
         end
     end
-    colorOverlayCurrentColor[1] = TIER_COLORS[1][1]
-    colorOverlayCurrentColor[2] = TIER_COLORS[1][2]
-    colorOverlayCurrentColor[3] = TIER_COLORS[1][3]
+    colorOverlayState.currentColor[1] = TIER_COLORS[1][1]
+    colorOverlayState.currentColor[2] = TIER_COLORS[1][2]
+    colorOverlayState.currentColor[3] = TIER_COLORS[1][3]
     if frame.textures.colorOverlay then
         frame.textures.colorOverlay:SetVertexColor(
-            colorOverlayCurrentColor[1],
-            colorOverlayCurrentColor[2],
-            colorOverlayCurrentColor[3]
+            colorOverlayState.currentColor[1],
+            colorOverlayState.currentColor[2],
+            colorOverlayState.currentColor[3]
         )
     end
     ResetDriverPopupState()
-    SetColorOverlayFill(colorOverlayFillFrac)
+    PressureVisualModel.SetColorOverlayFill(colorOverlayState.fillFrac)
     ClearPressureDebugFrame()
 end
 
@@ -2082,7 +1844,7 @@ local function HasResidualPressureVisual()
     if (PS.pressureDisplaySmoothed or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
     if (PS.squeezeCharge or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
     if (PS.pressureComposite or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
-    if colorOverlayFillVisible and (colorOverlayFillFrac or 0) > PRESSURE_VISUAL_CFG.visualOverlayEps then return true end
+    if colorOverlayState.fillVisible and (colorOverlayState.fillFrac or 0) > PRESSURE_VISUAL_CFG.visualOverlayEps then return true end
     for i = 2, #gaugeCurrentAlpha do
         if (gaugeCurrentAlpha[i] or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then
             return true
@@ -2108,15 +1870,18 @@ local function EnterPressureIdleState()
     PS.squeezeCharge = 0
     PS.recentHitImpulse = 0
     PS.tierCapReason = "ok"
+    if PressureTierModel and PressureTierModel.ResetRuntime then
+        PressureTierModel.ResetRuntime(false)
+    end
     PS.firstPressureAt = nil
-    ClearPressureSamples()
+    PressureSampleModel.Clear()
     visualAnimState.colorOverlayTransferActive = false
     visualAnimState.colorOverlayTransferElapsed = 0
     visualAnimState.colorOverlayTransferFrom = 0
     visualAnimState.colorOverlayTransferTo = 0
     visualAnimState.promotionPending = false
     visualAnimState.gaugeShakeStress = 0
-    SetGaugeTextureOffset(0, 0)
+    PressureVisualModel.SetGaugeTextureOffset(0, 0)
     PS.bucketStatsElapsed = 0
     for wi = 1, NUM_WINDOWS do
         PS.pressureBucketAvg[wi] = 0
@@ -2130,6 +1895,7 @@ local pressureTickRunning = false
 
 local function OnPressureTick(_, dt)
     local now = GetTime()
+    local visualElapsed = math_min(math_max(dt or 0, 0), 0.05)
     local hadPopupActivity = HasDriverPopupActivity()
 
     local recentDamage = false
@@ -2154,8 +1920,17 @@ local function OnPressureTick(_, dt)
     -- Only update popup state when there's potential activity.
     UpdateDriverPopupState(now)
 
+    local visualScale = PS.tauFast / math_max(PS.tauSlow, 0.001)
+    local visualSteadyDen = PS.slowCharge * visualScale
+    local visualDampedDen = (visualSteadyDen + (PS.fastCharge * PS.burstDamping)) / (1 + PS.burstDamping)
+    visualDampedDen = math_max(visualDampedDen, PS.denominatorFloor)
+    local visualImpulsePressure = PS.recentHitImpulse / math_max(visualDampedDen, PS.epsilon)
+
     PS.pressureElapsed = PS.pressureElapsed + dt
-    if PS.pressureElapsed < PS.pressureTick then return end
+    if PS.pressureElapsed < PS.pressureTick then
+        PressureVisualModel.Update(visualElapsed, now, visualImpulsePressure)
+        return
+    end
     local elapsed = PS.pressureElapsed
     PS.pressureElapsed = 0
 
@@ -2169,145 +1944,59 @@ local function OnPressureTick(_, dt)
     local dampedDen = (steadyDen + (PS.fastCharge * PS.burstDamping)) / (1 + PS.burstDamping)
     dampedDen = math_max(dampedDen, PS.denominatorFloor)
     PS.pressureRatio = PS.fastCharge / math_max(dampedDen, PS.epsilon)
-
-    local sampleMaxCount = math_max(PS.pressureSampleMaxCount or 7000, 64)
-    local nextTail = (PS.pressureSampleTail or 0) + 1
-    if nextTail > sampleMaxCount then
-        nextTail = 1
-    end
-    PS.pressureSampleTail = nextTail
-    PS.pressureSamples[nextTail] = now
-    PS.pressureSampleValues[nextTail] = PS.pressureRatio
-    if (PS.pressureSampleCount or 0) >= sampleMaxCount then
-        local newHead = (PS.pressureSampleHead or 1) + 1
-        if newHead > sampleMaxCount then
-            newHead = 1
-        end
-        PS.pressureSampleHead = newHead
-    else
-        PS.pressureSampleCount = (PS.pressureSampleCount or 0) + 1
-        if PS.pressureSampleCount == 1 then
-            PS.pressureSampleHead = nextTail
-        end
-    end
-
-    local sampleCutoff = now - PS.pressureSampleRetention
-    while (PS.pressureSampleCount or 0) > 0 do
-        local headIdx = PS.pressureSampleHead or 1
-        local headTime = PS.pressureSamples[headIdx]
-        if not headTime or headTime < sampleCutoff then
-            PS.pressureSamples[headIdx] = nil
-            PS.pressureSampleValues[headIdx] = nil
-            local newHead = headIdx + 1
-            if newHead > sampleMaxCount then
-                newHead = 1
-            end
-            PS.pressureSampleHead = newHead
-            PS.pressureSampleCount = (PS.pressureSampleCount or 0) - 1
-        else
-            break
-        end
-    end
-    if (PS.pressureSampleCount or 0) <= 0 then
-        PS.pressureSampleHead = 1
-        PS.pressureSampleTail = 0
-    end
-
-    PS.bucketStatsElapsed = PS.bucketStatsElapsed + elapsed
-    if PS.bucketStatsElapsed >= PS.bucketStatsInterval then
-        PS.bucketStatsElapsed = 0
-        for wi = 1, NUM_WINDOWS do
-            PS.pressureBucketAvg[wi] = 0
-            PS.pressureBucketMax[wi] = 0
-        end
-        local bucketCount = { 0, 0, 0, 0, 0 }
-        local sampleCount = PS.pressureSampleCount or 0
-        local sampleIdx = PS.pressureSampleHead or 1
-        for _ = 1, sampleCount do
-            local sampleTime = PS.pressureSamples[sampleIdx]
-            local samplePressure = PS.pressureSampleValues[sampleIdx]
-            if sampleTime and samplePressure then
-                local age = now - sampleTime
-                for wi = 1, NUM_WINDOWS do
-                    if age <= WINDOWS[wi] then
-                        PS.pressureBucketAvg[wi] = PS.pressureBucketAvg[wi] + samplePressure
-                        bucketCount[wi] = bucketCount[wi] + 1
-                        if samplePressure > PS.pressureBucketMax[wi] then
-                            PS.pressureBucketMax[wi] = samplePressure
-                        end
-                    end
-                end
-            end
-            sampleIdx = sampleIdx + 1
-            if sampleIdx > sampleMaxCount then
-                sampleIdx = 1
-            end
-        end
-        for wi = 1, NUM_WINDOWS do
-            if bucketCount[wi] > 0 then
-                PS.pressureBucketAvg[wi] = PS.pressureBucketAvg[wi] / bucketCount[wi]
-            end
-        end
-    end
+    PressureSampleModel.Update(now, elapsed, PS.pressureRatio)
 
     local targetDisplay = PS.pressureRatio * PS.displayGain
     local smoothingTau = (targetDisplay > PS.pressureDisplaySmoothed) and PS.displayTauRise or PS.displayTau
     local displayAlpha = 1 - math_exp(-elapsed / math_max(smoothingTau, 0.01))
     PS.pressureDisplaySmoothed = PS.pressureDisplaySmoothed + (targetDisplay - PS.pressureDisplaySmoothed) * displayAlpha
 
-    local overBaseline = math_max(PS.pressureDisplaySmoothed - PS.squeezeBuildBaseline, 0.0)
-    local inCombat = UnitAffectingCombat("player")
-    local decayTau = PS.squeezeDecayTau
-    if (not inCombat) and ((now - PS.lastDamageTime) > 3.0) then
-        decayTau = PS.squeezeDecayTau * PS.squeezeIdleDecayMult
-    end
-    PS.squeezeCharge = PS.squeezeCharge * math_exp(-elapsed / math_max(decayTau, 0.1))
-    PS.squeezeCharge = PS.squeezeCharge + ((overBaseline ^ PS.squeezeBuildPower) * PS.squeezeBuildRate * elapsed)
-    PS.squeezeCharge = math_min(math_max(PS.squeezeCharge, 0.0), 1.0)
-
-    PS.pressureComposite = PS.pressureDisplaySmoothed + (PS.squeezeCharge * PS.squeezeBonusMax)
+    PS.squeezeCharge = 0
+    PS.pressureComposite = PS.pressureDisplaySmoothed
     PS.instantScore = PS.pressureDisplaySmoothed
-    PS.squeezeScore = PS.squeezeCharge * PS.squeezeBonusMax
-    PS.tierScore = (PS.instantScore * PS.tierInstantWeight) + (PS.squeezeScore * PS.tierSqueezeWeight)
-    UpdateTierMomentumBonus(elapsed, now)
-    local edgeResistance, edgeSlip = GetTierResistanceAndSlip(PS.tierScore, now)
+    PS.squeezeScore = 0
+    PS.tierScore = PS.instantScore
+    PressureTierModel.UpdateTierMomentumBonus(elapsed, now)
+    local edgeResistance, edgeSlip = PressureTierModel.GetTierResistanceAndSlip(PS.tierScore, now)
     PS.tierEdgeResistance = edgeResistance
     PS.tierEdgeSlip = edgeSlip
     PS.tierEvalScore = PS.tierScore - edgeResistance - edgeSlip + (PS.tierMomentumBoost or 0)
 
     PS.recentHitImpulse = PS.recentHitImpulse * math_exp(-elapsed / math_max(PS.hitImpulseTau, 0.1))
-    local hitKick = math_min((PS.recentHitImpulse / math_max(dampedDen, PS.epsilon)) * 0.25, 1.0)
+    local impulsePressure = PS.recentHitImpulse / math_max(dampedDen, PS.epsilon)
+    local hitKick = math_min(impulsePressure * 0.25, 1.0)
 
-    local activeSec = PS.firstPressureAt and (now - PS.firstPressureAt) or 0
-    local candidateTier = GetTier(PS.tierEvalScore)
-
-    if PS.currentTier < 5 then
-        local nextTier = PS.currentTier + 1
-        local nextThreshold = GetPromoteThreshold(nextTier)
-        if nextThreshold > 0 then
-            local progress = PS.tierEvalScore / nextThreshold
-            if progress >= PS.nearTierProgressFrac and hitKick >= PS.nearTierKickMin then
-                local promotionScore = PS.tierEvalScore + (hitKick * PS.nearTierKickWeight)
-                local promotedTier = GetTier(promotionScore)
-                candidateTier = math_max(candidateTier, math_min(promotedTier, nextTier))
-            end
-        end
-    end
-
-    local gatedTier
-    gatedTier, PS.tierCapReason = GetGateCappedTier(candidateTier, PS.squeezeCharge, activeSec)
+    local candidateTier = PressureTierModel.GetTier(PS.tierEvalScore)
+    local gatedTier = candidateTier
+    PS.tierCapReason = "ok"
     local canPromoteNow = (now - (PS.lastTierChangeAt or 0)) >= PUSH_FEEL_CFG.tierPromotionStepLockSec
     visualAnimState.promotionPending = false
+    local overdriveTierBoost = 0
+    if PressureTierModel and PressureTierModel.ConsumeOverdriveTierBoost then
+        overdriveTierBoost = math_max(PressureTierModel.ConsumeOverdriveTierBoost() or 0, 0)
+    end
 
-    if gatedTier > PS.currentTier then
-        local currentTierFillRaw = GetTierFillTarget(PS.tierEvalScore or PS.tierScore or 0, PS.currentTier)
+    if overdriveTierBoost > 0 and PS.currentTier < 5 then
+        local overdriveTarget = math_min(PS.currentTier + overdriveTierBoost, 5)
+        if overdriveTarget > PS.currentTier then
+            PS.currentTier = overdriveTarget
+            PS.lastTierChangeAt = now
+            PS.tierMomentumBoost = math_min(
+                (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
+                math_max(PS.tierMomentumMax or 0, 0)
+            )
+            colorOverlayState.fillFrac = 1
+            PressureVisualModel.StartColorOverlayTransferDrop(1)
+            visualAnimState.promotionPending = false
+        end
+    elseif gatedTier > PS.currentTier then
+        local currentTierFillRaw = PressureTierModel.GetTierFillTarget(PS.tierEvalScore or PS.tierScore or 0, PS.currentTier)
         local scoreReadyForPromotion = currentTierFillRaw >= FILL_FULL_EPSILON
         if scoreReadyForPromotion then
             visualAnimState.promotionPending = true
         end
 
-        local visualReadyForPromotion = colorOverlayFillFrac >= PUSH_FEEL_CFG.promotionVisualFullEpsilon
-        if canPromoteNow and visualAnimState.promotionPending and visualReadyForPromotion and (not visualAnimState.colorOverlayTransferActive) then
+        if canPromoteNow and visualAnimState.promotionPending then
             local previousTier = PS.currentTier
             PS.currentTier = math_min(gatedTier, PS.currentTier + 1)
             PS.lastTierChangeAt = now
@@ -2316,24 +2005,21 @@ local function OnPressureTick(_, dt)
                 math_max(PS.tierMomentumMax or 0, 0)
             )
             if PS.currentTier > previousTier then
-                StartColorOverlayTransferDrop(1)
+                PressureVisualModel.StartColorOverlayTransferDrop(1)
             end
             visualAnimState.promotionPending = false
         end
     elseif gatedTier < PS.currentTier then
-        local currentIdx = PS.currentTier + 1
-        local gateFailsCurrentTier = (PS.squeezeCharge < (PS.tierMinSqueeze[currentIdx] or 0))
-                                  or (activeSec < (PS.tierMinActiveSec[currentIdx] or 0))
-        local demoteThreshold = GetDemoteThreshold(PS.currentTier)
+        local demoteThreshold = PressureTierModel.GetDemoteThreshold(PS.currentTier)
         local scoreWantsDemote = PS.tierEvalScore <= demoteThreshold
         local holdElapsed = now - PS.lastTierChangeAt
-        if holdElapsed >= PS.tierHoldMinSec and (gateFailsCurrentTier or scoreWantsDemote) then
+        if holdElapsed >= PS.tierHoldMinSec and scoreWantsDemote then
             PS.currentTier = math_max(gatedTier, PS.currentTier - 1)
             PS.lastTierChangeAt = now
         end
     end
 
-    UpdatePressureVisuals(elapsed, now)
+    PressureVisualModel.Update(visualElapsed, now, impulsePressure)
     UpdatePressureDebugFrame(hitKick)
     ExportPressureState()
 end
@@ -2409,9 +2095,6 @@ local function PrintPressureHelp()
     print("  /st pressure gain N")
     print("  /st pressure damp N")
     print("  /st pressure smoothtau N")
-    print("  /st pressure squeezetau N")
-    print("  /st pressure squeezebuild N")
-    print("  /st pressure hysteresis N")
     print("  /stpressure ... (same commands)")
 end
 
@@ -2445,15 +2128,15 @@ local function HandlePressureSlash(msg)
     end
     if cmd == "status" then
         print(ADDON_PREFIX .. string.format(
-            " n=%.3f i=%.3f q=%.2f ts=%.3f te=%.3f m=%.3f r=%.3f s=%.3f tier=T%d cap=%s",
-            PS.pressureRatio, PS.instantScore, PS.squeezeCharge, PS.tierScore,
+            " n=%.3f i=%.3f ts=%.3f te=%.3f m=%.3f r=%.3f s=%.3f tier=T%d cap=%s",
+            PS.pressureRatio, PS.instantScore, PS.tierScore,
             PS.tierEvalScore or 0, PS.tierMomentumBoost or 0, PS.tierEdgeResistance or 0, PS.tierEdgeSlip or 0,
             PS.currentTier or 0, PS.tierCapReason or "ok"
         ))
         print(ADDON_PREFIX .. string.format(
-            " tauFast=%.2f tauSlow=%.2f gain=%.2f damp=%.2f smoothTau=%.2f squeezeTau=%.1f squeezeBuild=%.2f hyst=%.2f",
+            " tauFast=%.2f tauSlow=%.2f gain=%.2f damp=%.2f smoothTau=%.2f",
             PS.tauFast, PS.tauSlow, PS.displayGain, PS.burstDamping,
-            PS.displayTau, PS.squeezeDecayTau, PS.squeezeBuildRate, PS.tierHysteresis
+            PS.displayTau
         ))
         return
     end
@@ -2504,34 +2187,6 @@ local function HandlePressureSlash(msg)
         end
         return
     end
-    if cmd == "squeezetau" then
-        if n and n >= 3 and n <= 60 then
-            PS.squeezeDecayTau = n
-            print(ADDON_PREFIX .. " squeezeDecayTau set to " .. string.format("%.1f", n) .. "s")
-        else
-            print(ADDON_PREFIX .. " usage: /st pressure squeezetau 3-60")
-        end
-        return
-    end
-    if cmd == "squeezebuild" then
-        if n and n >= 0.05 and n <= 3 then
-            PS.squeezeBuildRate = n
-            print(ADDON_PREFIX .. " squeezeBuildRate set to " .. string.format("%.2f", n))
-        else
-            print(ADDON_PREFIX .. " usage: /st pressure squeezebuild 0.05-3")
-        end
-        return
-    end
-    if cmd == "hysteresis" then
-        if n and n >= 0 and n <= 1 then
-            PS.tierHysteresis = n
-            print(ADDON_PREFIX .. " tierHysteresis set to " .. string.format("%.2f", n))
-        else
-            print(ADDON_PREFIX .. " usage: /st pressure hysteresis 0-1")
-        end
-        return
-    end
-
     PrintPressureHelp()
 end
 

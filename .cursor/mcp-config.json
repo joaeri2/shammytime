@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "screenshot": {
+      "command": "node",
+      "args": ["./mcp-screenshot-server/src/index.js"],
+      "env": {}
+    }
+  }
+}

@@ -1,6 +1,59 @@
 # ShammyTime Pressure System — In-Game Feel & Tuning Guide
 
-This guide explains **how damage drives the pressure model** and **how tuning the main knobs changes how it feels in-game** (speed, weight, stickiness, and feedback). It is written so you can predict: *“If I change X, Y, and Z, the bar and tiers will feel more like this.”*
+This guide explains **how damage drives the pressure model** and **how tuning the main knobs changes how it feels in-game** (speed, weight, stickiness, and feedback). It is written so you can predict: *"If I change X, Y, and Z, the bar and tiers will feel more like this."*
+
+**Related docs:** `docs/PRESSURE_PLAN.md` (design, reasoning, findings). Detail: `docs/PRESSURE_VALIDATION_AND_RESEARCH.md`, `docs/PRESSURE_CRIT_SPELL_WEIGHTING.md`, `docs/PRESSURE_BASELINE_TIME_VS_EVENTS.md`, `docs/PRESSURE_STARTUP_OVERDRIVE_WARMUP.md`.
+
+---
+
+## 0. Target Feel & Tuning Targets (Design Spec)
+
+This section defines **what we want the gauge to feel like** and gives **concrete tuning targets** to aim for. Use it to judge whether the current tuning is "right" and to decide which knobs to change.
+
+### 0.1 Purpose of the gauge
+
+- The bar represents **how well you're doing damage right now** compared to *your own* recent baseline.
+- It should feel **rewarding** when you perform above that baseline and **slightly challenging** when you push for higher tiers.
+- It is driven by **your recent performance**, not fixed global numbers.
+
+### 0.2 Tier meanings (T0–T5)
+
+| Tier | Target feel |
+|------|-------------|
+| **T0** | Baseline. White hits and normal activity **move the bar** (you see response), but the **meaningful climb** comes from sustained or burst damage above your average. |
+| **T1–T2** | "Sustained average" to "a bit above average." The bar should sit here during **steady rotation** without big cooldowns. **Target:** casual sustained DPS lands around T2. |
+| **T3** | Clearly above average. Reached when you're **pushing** (good uptime, some burst). **Target:** engaged play without cooldowns can reach and hold T3. |
+| **T4–T5** | "Burst" and "peak." Reached when **damage spikes** (cooldowns, crits, big hits). **Target:** bar should reach T4 during real burst windows; T5 is rare and earned. |
+
+**Design rule:** **Bursts should have a larger effect than average damage.** So a short burst (e.g. cooldown window) should move the bar up more per second than the same DPS spread evenly. The ratio (fastCharge vs slow baseline) and overdrive are there to make that true.
+
+### 0.3 When the bar should sit where
+
+- **At fight start:** After the short startup seed (~2.4 s), the bar should reflect current damage. It can sit in T0–T2 until you build pressure.
+- **During sustained rotation:** Bar **around T2** (maybe dipping to T1, touching T3 when you're doing well). Not stuck at T0; not constantly at T4.
+- **After a burst:** Bar **rises toward T4 (or T5)** during the burst, then **drops back** over a few seconds toward T2–T3. It should not snap to T0 unless you actually stop DPS.
+- **After you stop DPS:** Bar **drops** over a few seconds (not instant). Tier may demote after a short hold (tier help). Target: noticeable drop within ~3–5 s, full "cooldown" over ~10–15 s depending on tauSlow and tier hold.
+
+### 0.4 Target speeds (concrete tuning goals)
+
+Use these as **targets** when tuning; measure in-game and adjust knobs until you're in range.
+
+| What | Target | Main levers |
+|------|--------|-------------|
+| **Rise after burst** | Bar and tier react within **~0.5–1.5 s** of damage spike; tier-up feels **snappy** but not twitchy. | tauFast, displayTauRise, resistance |
+| **Drop after stopping** | Bar fill starts dropping within **~1–2 s**; tier demotion after **~3–6 s** (with tier help). | tauFast, tierHelp, tierHoldSec, edge slip |
+| **Sustained "rest" tier** | Steady rotation (no cooldowns) → bar **around T2** (ratio roughly in **1.0–1.3** range after smoothing). | tierBase, tierStepPct, displayGain, resistance |
+| **Burst tier** | Real burst window → bar reaches **T4** (or T5 for big spikes). Ratio in **1.5–2.5+** during burst. | Same + overdrive for single big hits |
+| **Tier hold** | Once in a tier, **hold 4–8 s** before demoting on damage dip (so brief gaps don't punish). | tierHelp, tierHoldSec |
+| **T0 shows activity** | White hits and small damage **move the bar** (visible fill change); real **climb** needs sustained or burst damage. | tierBase (T0 low), displayGain, resistance not so high that T0 is stuck) |
+
+### 0.5 Ratio and score ranges (design intent)
+
+- **pressureRatio ~1.0:** At baseline (fast and slow in balance). Bar in lower part of T0 / T1.
+- **pressureRatio ~1.2–1.4:** Above baseline. Bar in T2–T3 range (sustained above average).
+- **pressureRatio ~1.5–2.0+:** Burst. Bar in T4; with overdrive or very high ratio, T5.
+
+Tuning **tierBase**, **tierStepPct**, **displayGain**, and **resistance** should be chosen so that these ratio bands line up with the tier meanings in 0.2. If the bar sits at T4 during normal rotation, thresholds are too low; if it never leaves T0–T1 during burst, they're too high or rise is too slow.
 
 ---
 

@@ -1286,7 +1286,7 @@ debugFrame:EnableMouse(true)
 debugFrame:RegisterForDrag("LeftButton")
 debugFrame:SetScript("OnDragStart", debugFrame.StartMoving)
 debugFrame:SetScript("OnDragStop", debugFrame.StopMovingOrSizing)
-debugFrame:Show()
+debugFrame:Hide()
 
 local debugTitle = debugFrame:CreateFontString(nil, "OVERLAY")
 debugTitle:SetFont(FONT_PATH, 12, "OUTLINE")

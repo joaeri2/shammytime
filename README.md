@@ -115,6 +115,29 @@ You can use **/shammytime** instead of **/st**.
 
 ---
 
+## Development Tools
+
+### WoW Auto-Screenshot System (In Development)
+
+We're building an automated screenshot capture system for World of Warcraft on macOS. This will enable Cursor agents to "see" the game state by reading screenshots from a designated folder.
+
+**Status**: Research complete, ready for implementation
+
+**Documentation**: See [`docs/BUI-11-INDEX.md`](docs/BUI-11-INDEX.md) for complete details
+
+**Key Features** (when complete):
+- Automatic periodic screenshot capture of WoW window
+- Works across virtual desktops (Spaces)
+- Background daemon for hands-free operation
+- Cursor agent integration for AI-assisted gameplay analysis
+
+**Quick Links**:
+- [Project Summary](docs/BUI-11-SUMMARY.md) - Executive overview
+- [Quick Reference](docs/BUI-11-quick-reference.md) - Implementation guide
+- [Sub-Tasks](docs/BUI-11-subtasks.md) - Detailed specifications
+
+---
+
 ## License
 
 MIT License. Use and modify as you like; no warranty. If you publish a fork, credit the original. See **LICENSE** in this folder for the full text.

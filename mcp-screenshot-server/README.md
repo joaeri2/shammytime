@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server that enables Cursor agents to capture screenshots of application windows on macOS.
 
+> **⚠️ Important**: This is a **standalone tool** that should be installed **outside** any project directory (e.g., `~/mcp-screenshot-server`). This allows you to use it globally across all your Cursor projects. See [INSTALLATION.md](INSTALLATION.md) for details.
+
 ## Features
 
 - **On-Demand Screenshot Capture**: Capture screenshots exactly when needed, not on a schedule
@@ -20,10 +22,33 @@ A Model Context Protocol (MCP) server that enables Cursor agents to capture scre
 - Screen Recording permission (macOS will prompt on first use)
 - Accessibility permission (macOS will prompt on first use)
 
-### Install Dependencies
+### Install as Standalone Tool
+
+**Important**: This MCP server should be installed **outside** any specific project directory so it can be used globally with Cursor.
+
+#### Option 1: Clone Repository (Recommended)
 
 ```bash
-cd mcp-screenshot-server
+# Clone to a permanent location
+git clone <repository-url> ~/mcp-screenshot-server
+cd ~/mcp-screenshot-server
+npm install
+```
+
+#### Option 2: Copy from ShammyTime
+
+```bash
+# If you found this in the ShammyTime repo, copy it out
+cp -r /path/to/shammytime/mcp-screenshot-server ~/mcp-screenshot-server
+cd ~/mcp-screenshot-server
+npm install
+```
+
+#### Option 3: Download Release
+
+```bash
+# Download and extract to ~/mcp-screenshot-server
+cd ~/mcp-screenshot-server
 npm install
 ```
 
@@ -31,18 +56,29 @@ npm install
 
 ### As MCP Server (with Cursor)
 
-Add to your Cursor MCP configuration (`.cursor/mcp-config.json` or similar):
+Add to your **global** Cursor MCP configuration:
+
+**macOS/Linux**: `~/.cursor/mcp-config.json`  
+**Windows**: `%APPDATA%\.cursor\mcp-config.json`
+
+Or via Cursor Settings → MCP Servers
 
 ```json
 {
   "mcpServers": {
     "screenshot": {
       "command": "node",
-      "args": ["/path/to/mcp-screenshot-server/src/index.js"]
+      "args": ["/Users/YOUR_USERNAME/mcp-screenshot-server/src/index.js"],
+      "env": {}
     }
   }
 }
 ```
+
+**Important**: 
+- Use the **absolute path** to where you installed the server
+- This is a **global configuration**, not project-specific
+- The server will be available in all your Cursor projects
 
 ### Standalone Testing
 

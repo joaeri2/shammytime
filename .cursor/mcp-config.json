@@ -1,9 +1,14 @@
 {
+  "_comment": "This is an EXAMPLE configuration. Do NOT use this file directly.",
+  "_comment2": "Install mcp-screenshot-server to ~/mcp-screenshot-server and configure globally.",
+  "_comment3": "See mcp-screenshot-server/CURSOR_SETUP.md for instructions.",
+  
   "mcpServers": {
     "screenshot": {
       "command": "node",
-      "args": ["./mcp-screenshot-server/src/index.js"],
-      "env": {}
+      "args": ["/Users/YOUR_USERNAME/mcp-screenshot-server/src/index.js"],
+      "env": {},
+      "_note": "Replace /Users/YOUR_USERNAME/ with your actual home directory"
     }
   }
 }

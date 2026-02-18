@@ -2,36 +2,54 @@
 
 This guide explains how to integrate the MCP Screenshot Server with Cursor.
 
+## Important: Global Installation
+
+**This MCP server should be installed globally**, not in a project directory. This allows you to use it across all your Cursor projects (WoW, other games, any application).
+
 ## Quick Setup
 
-### Step 1: Install Dependencies
+### Step 1: Install to Permanent Location
 
 ```bash
-cd mcp-screenshot-server
+# Install to home directory (recommended)
+cp -r mcp-screenshot-server ~/mcp-screenshot-server
+
+# Or clone if separate repo
+# git clone <repo-url> ~/mcp-screenshot-server
+
+cd ~/mcp-screenshot-server
 npm install
 ```
 
-### Step 2: Configure Cursor
+### Step 2: Configure Cursor Globally
 
-Create or edit your Cursor MCP configuration file. The location depends on your setup:
+Add to your **global** Cursor MCP configuration:
 
-**Option A: Workspace Configuration** (recommended)
-Create `.cursor/mcp-config.json` in your workspace root:
+**macOS/Linux**: `~/.cursor/mcp-config.json`  
+**Windows**: `%APPDATA%\.cursor\mcp-config.json`
+
+Or via: **Cursor Settings** → **Features** → **MCP Servers**
 
 ```json
 {
   "mcpServers": {
     "screenshot": {
       "command": "node",
-      "args": ["/absolute/path/to/mcp-screenshot-server/src/index.js"],
+      "args": ["/Users/YOUR_USERNAME/mcp-screenshot-server/src/index.js"],
       "env": {}
     }
   }
 }
 ```
 
-**Option B: Global Configuration**
-Edit your global Cursor settings (location varies by OS).
+**Replace `/Users/YOUR_USERNAME/` with your actual home directory path.**
+
+### Why Global Configuration?
+
+- ✅ Available in **all** Cursor projects
+- ✅ Not tied to ShammyTime addon
+- ✅ Can capture **any** application window
+- ✅ Single installation, multiple uses
 
 ### Step 3: Grant Permissions
 

@@ -9,12 +9,22 @@ I've created an **MCP screenshot tool** for Cursor instead of a background daemo
 - ✅ Direct Cursor integration
 - ✅ Simpler to use and maintain
 
+## Important: Separate Installation
+
+**The MCP server should be installed outside this addon directory** so you can use it for any project, not just ShammyTime.
+
 ## 5-Minute Setup
 
-### 1. Install Dependencies
+### 1. Extract and Install
 
 ```bash
-cd mcp-screenshot-server
+# Copy the MCP server to a standalone location
+cp -r mcp-screenshot-server ~/mcp-screenshot-server
+
+# Or clone it separately if it has its own repo
+# git clone <mcp-screenshot-repo-url> ~/mcp-screenshot-server
+
+cd ~/mcp-screenshot-server
 npm install
 ```
 
@@ -31,18 +41,23 @@ If permissions are missing:
 
 ### 3. Configure Cursor
 
-The configuration file is already created at `.cursor/mcp-config.json`:
+Add to your **global** Cursor MCP configuration (not project-specific):
+
+**Location**: `~/.cursor/mcp-config.json` or Cursor Settings → MCP Servers
 
 ```json
 {
   "mcpServers": {
     "screenshot": {
       "command": "node",
-      "args": ["./mcp-screenshot-server/src/index.js"]
+      "args": ["/Users/YOUR_USERNAME/mcp-screenshot-server/src/index.js"],
+      "env": {}
     }
   }
 }
 ```
+
+**Important**: Use the absolute path to where you installed the MCP server.
 
 ### 4. Restart Cursor
 

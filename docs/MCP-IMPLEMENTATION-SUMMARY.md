@@ -106,11 +106,16 @@ A complete Node.js MCP server with three tools:
 
 ## How to Use
 
+### Important: Standalone Installation
+
+**The MCP server should be installed outside this addon directory** so it can be used globally across all your Cursor projects, not just ShammyTime.
+
 ### Setup (5 minutes)
 
-1. **Install dependencies**:
+1. **Copy to permanent location**:
    ```bash
-   cd mcp-screenshot-server
+   cp -r mcp-screenshot-server ~/mcp-screenshot-server
+   cd ~/mcp-screenshot-server
    npm install
    ```
 
@@ -121,8 +126,18 @@ A complete Node.js MCP server with three tools:
    - Grant Screen Recording permission in System Preferences
    - Grant Accessibility permission in System Preferences
 
-3. **Configure Cursor**:
-   The `.cursor/mcp-config.json` file is already created and ready to use.
+3. **Configure Cursor globally**:
+   Add to `~/.cursor/mcp-config.json`:
+   ```json
+   {
+     "mcpServers": {
+       "screenshot": {
+         "command": "node",
+         "args": ["/Users/YOUR_USERNAME/mcp-screenshot-server/src/index.js"]
+       }
+     }
+   }
+   ```
 
 4. **Restart Cursor**
 

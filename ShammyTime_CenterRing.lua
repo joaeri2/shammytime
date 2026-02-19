@@ -692,7 +692,7 @@ local function CreateWindfuryTotemBarFrame()
     -- Totem bar art is 512×512 but only the middle band has art.
     -- Crop top/bottom via SetTexCoord; frame height = barW * visible fraction.
     local barW = 286
-    local CROP_TOP = 0.35     -- skip top 30% of texture (empty)
+    local CROP_TOP = 0.33     -- skip top 30% of texture (empty)
     local CROP_BOTTOM = 0.65  -- skip bottom 30% of texture (empty)
     local barH = math.floor(barW * (CROP_BOTTOM - CROP_TOP) + 0.5)
     local f = CreateFrame("Frame", "ShammyTimeWindfuryTotemBarFrame", UIParent)

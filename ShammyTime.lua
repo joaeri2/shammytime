@@ -356,12 +356,17 @@ local wfPopupTimer = nil
 -- Pending WF Totem proc for the player (when no WF Weapon imbue, totem procs
 -- fire as SPELL_EXTRA_ATTACKS 8516 + SWING_DAMAGE instead of SPELL_DAMAGE 25584).
 local pendingTotemWF = nil  -- { count = N, expiresAt = t } or nil
-local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
-local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
-local wfRadialHoverFadeInTimers = {}  -- staggered fade-in timers (must be cancelable to avoid flicker)
-local wfRadialHoverHoldTimer = nil  -- hold time before hover-triggered fade-out
-local wfRadialHoverInside = false   -- true while cursor is considered inside radial (debounced)
-local wfRadialHoverFadeNotBefore = 0  -- absolute GetTime() guard for fade-out start
+local wfRadialLeaveDebounceTimer = nil  -- hover leave debounce timer
+local wfRadialDeadlineTimer = nil  -- single fade deadline timer (state-machine owned)
+local wfRadialHoverAnims = {}  -- active fade-in animation groups keyed by frame
+local wfRadialHoverFadeInTimers = {}  -- staggered fade-in timers keyed by order index
+local wfRadialTextState = {
+    state = "hidden",  -- hidden | visible | fading_out
+    token = 0,  -- generation id; invalidates stale timer callbacks
+    hovered = false,
+    procActive = false,
+    fadeDeadline = nil,  -- absolute GetTime() when fade-out may start
+}
 local wfTestTimer = nil  -- /st test: global test (circle + Windfury + Shamanistic Focus); one proc immediately, then every 10s
 local lastWfProcEndTime = 0  -- GetTime() when last Windfury proc animation ended; used for "fade when not procced" grace
 local FADE_GRACE_AFTER_PROC = 15  -- seconds after proc end we still consider radial "procced" for fade logic (other elements)
@@ -380,7 +385,7 @@ local imbueFadeHoldUntil = nil  -- GetTime() deadline: hold imbue bar at full al
 local imbueWasActiveLastCheck = false  -- track imbue state transitions (no-imbue → has-imbue)
 local IMBUE_APPLY_HOLD_SEC = 2  -- seconds to hold imbue bar visible after imbue is applied
 local circleFadeOutStarted = false  -- true once circle has started fading out; don't restore to 1 until next proc (avoids blink)
-ShammyTime.circleHovered = false  -- true while mouse is over center ring; pauses fade-out (no revive from 0)
+ShammyTime.circleHovered = false  -- true while mouse is over the radial wrapper; pauses fade-out (no revive from 0)
 ShammyTime.radialNumbersVisible = false  -- true when radial numbers should be shown (prevents late re-show after fade)
 
 -- Per-character position for Windfury radial (center ring + totem bar placed separately)
@@ -414,10 +419,14 @@ function ShammyTime:OnResetAll()
     imbueFadeHoldUntil = nil
     imbueWasActiveLastCheck = false
     if wfTestTimer then wfTestTimer:Cancel(); wfTestTimer = nil end
-    if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel(); wfRadialHideNumbersTimer = nil end
-    if wfRadialHoverHoldTimer then wfRadialHoverHoldTimer:Cancel(); wfRadialHoverHoldTimer = nil end
-    wfRadialHoverInside = false
-    wfRadialHoverFadeNotBefore = 0
+    if wfRadialLeaveDebounceTimer then wfRadialLeaveDebounceTimer:Cancel(); wfRadialLeaveDebounceTimer = nil end
+    if wfRadialDeadlineTimer then wfRadialDeadlineTimer:Cancel(); wfRadialDeadlineTimer = nil end
+    wfRadialTextState.state = "hidden"
+    wfRadialTextState.token = 0
+    wfRadialTextState.hovered = false
+    wfRadialTextState.procActive = false
+    wfRadialTextState.fadeDeadline = nil
+    ShammyTime.circleHovered = false
     for i, t in pairs(wfRadialHoverFadeInTimers) do
         if t then t:Cancel() end
         wfRadialHoverFadeInTimers[i] = nil
@@ -659,19 +668,22 @@ local function HideWindfuryRadial()
     if ShammyTime.HideAllSatellites then ShammyTime.HideAllSatellites() end
 end
 
--- Hover: smooth fade-in left-to-right (satellites then center), fade-out uses same animation as after-hold
+-- Hover/proc text controller: one state machine + one fade deadline timer.
 local HOVER_FADE_IN_DURATION = 0.22
-local HOVER_STAGGER = 0.07  -- delay between starting each element (left-to-right)
-local HOVER_HOLD_BEFORE_FADE = 3.0
-local HOVER_HOLD_RECHECK = 0.15
-local HOVER_REENTER_FADE_DELAY = 1.0
+local HOVER_STAGGER = 0.07
+local RADIAL_LEAVE_DEBOUNCE = 0.15
+local RADIAL_HOVER_HOLD_SEC = 3.0
+local RADIAL_PROC_HOLD_SEC = 2.0
 
-local function BumpHoverFadeNotBefore(delay)
-    local now = GetTime()
-    local d = delay or HOVER_REENTER_FADE_DELAY
-    local target = now + d
-    if target > wfRadialHoverFadeNotBefore then
-        wfRadialHoverFadeNotBefore = target
+local function BumpRadialTextToken()
+    wfRadialTextState.token = wfRadialTextState.token + 1
+    return wfRadialTextState.token
+end
+
+local function CancelRadialDeadlineTimer()
+    if wfRadialDeadlineTimer then
+        wfRadialDeadlineTimer:Cancel()
+        wfRadialDeadlineTimer = nil
     end
 end
 
@@ -694,22 +706,10 @@ local function CancelHoverFadeIn()
     CancelHoverFadeInAnims()
 end
 
-local function CancelRadialHoverCycleTimers()
-    if wfRadialHideNumbersTimer then
-        wfRadialHideNumbersTimer:Cancel()
-        wfRadialHideNumbersTimer = nil
-    end
-    if wfRadialHoverHoldTimer then
-        wfRadialHoverHoldTimer:Cancel()
-        wfRadialHoverHoldTimer = nil
-    end
-    wfRadialHoverFadeNotBefore = 0
-end
-
 local function IsMouseOverWindfuryRadial()
     local wrapper = _G.ShammyTimeWindfuryRadial
     if not wrapper or not wrapper:IsShown() then return false end
-    -- Treat the entire radial wrapper as one hover object (single signal).
+    -- Treat the whole radial wrapper as one hover target.
     local left, right = wrapper:GetLeft(), wrapper:GetRight()
     local bottom, top = wrapper:GetBottom(), wrapper:GetTop()
     if not left or not right or not bottom or not top then return false end
@@ -717,11 +717,10 @@ local function IsMouseOverWindfuryRadial()
     if not uiScale or uiScale <= 0 then uiScale = 1 end
     local cx, cy = GetCursorPosition()
     cx, cy = cx / uiScale, cy / uiScale
-    if cx >= left and cx <= right and cy >= bottom and cy <= top then return true end
-    return false
+    return (cx >= left and cx <= right and cy >= bottom and cy <= top)
 end
 
--- Animate one frame's alpha from startAlpha -> 1 over duration (startAlpha defaults to 0; use current alpha to avoid blink on re-enter)
+-- Animate one text frame from current alpha -> 1.
 local function FadeInFrame(frame, duration, startAlpha)
     if not frame or not frame.CreateAnimationGroup then return end
     startAlpha = (startAlpha == nil or startAlpha < 0) and 0 or math.min(1, startAlpha)
@@ -743,39 +742,36 @@ local function FadeInFrame(frame, duration, startAlpha)
     ag:Play()
 end
 
--- Show numbers with smooth fade-in: satellites left-to-right, then Windfury/total in center
--- If all numbers already visible (mouse kept over), do nothing. If a frame is already fading in, don't restart.
--- When re-entering after leave stopped anims, fade from current alpha to 1 (no reset to 0 = no blink).
-local function StartRadialNumbersFadeIn(keepAutoFadeTimers)
-    ShammyTime.radialNumbersVisible = true
-    local center = _G.ShammyTimeCenterRing
-    if not center or not center:IsShown() then return end
-    CancelHoverFadeInTimers()
-    if not keepAutoFadeTimers and ShammyTime.CancelSatelliteTextChainFade then
-        ShammyTime.CancelSatelliteTextChainFade()
-    end
-    if center.textFrame and center.textFrame.fadeOutAnim then center.textFrame.fadeOutAnim:Stop() end
-    if center.textFrame then
-        if not center.textFrame:IsShown() then
-            center.textFrame:SetAlpha(0)
-        end
-        center.textFrame:Show()
-    end
-    local config = ShammyTime.SATELLITE_CONFIG or {}
+local function CollectRadialTextElements()
     local elements = {}
+    local center = _G.ShammyTimeCenterRing
+    if not center or not center:IsShown() or not center.textFrame then return elements end
+    local config = ShammyTime.SATELLITE_CONFIG or {}
     for _, cfg in ipairs(config) do
         local f = ShammyTime.GetSatelliteFrame and ShammyTime.GetSatelliteFrame(cfg.name)
         if f and f:IsShown() and f.textFrame and f.currentValue and f.currentValue ~= "" and f.currentValue ~= "0" and f.currentValue ~= "0%" and f.currentValue ~= "–" then
-            if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
-            if not f.textFrame:IsShown() then
-                f.textFrame:SetAlpha(0)
-            end
-            f.textFrame:Show()
             elements[#elements + 1] = f.textFrame
         end
     end
     elements[#elements + 1] = center.textFrame
-    -- If mouse is kept over and all numbers already visible, don't start any animation
+    return elements
+end
+
+local function StartRadialNumbersFadeIn(token)
+    local center = _G.ShammyTimeCenterRing
+    if not center or not center:IsShown() or not center.textFrame then return end
+    local db = GetDB()
+    if db.wfAlwaysShowNumbers then
+        ShammyTime.radialNumbersVisible = true
+    end
+    ShammyTime.radialNumbersVisible = true
+    wfRadialTextState.state = "visible"
+    CancelHoverFadeIn()
+    if center.textFrame.fadeOutAnim then center.textFrame.fadeOutAnim:Stop() end
+    if ShammyTime.CancelSatelliteTextChainFade then ShammyTime.CancelSatelliteTextChainFade() end
+    if ShammyTime.StopSatelliteTextFadeOutAnims then ShammyTime.StopSatelliteTextFadeOutAnims() end
+    local elements = CollectRadialTextElements()
+    if #elements == 0 then return end
     local allVisible = true
     for _, textFrame in ipairs(elements) do
         if textFrame and textFrame.GetAlpha and textFrame:GetAlpha() < 0.99 then
@@ -783,29 +779,41 @@ local function StartRadialNumbersFadeIn(keepAutoFadeTimers)
             break
         end
     end
-    if allVisible then return end
+    if allVisible then
+        for _, textFrame in ipairs(elements) do
+            if textFrame then
+                textFrame:SetAlpha(1)
+                textFrame:Show()
+            end
+        end
+        return
+    end
     for i, textFrame in ipairs(elements) do
         wfRadialHoverFadeInTimers[i] = C_Timer.NewTimer((i - 1) * HOVER_STAGGER, function()
             wfRadialHoverFadeInTimers[i] = nil
+            if token ~= wfRadialTextState.token then return end
             if not ShammyTime.radialNumbersVisible then return end
             if not textFrame or not textFrame.SetAlpha then return end
-            -- If this frame is already fading in, don't restart (prevents blink)
+            if textFrame.fadeOutAnim then textFrame.fadeOutAnim:Stop() end
+            textFrame:Show()
             local ag = wfRadialHoverAnims[textFrame]
             if ag and ag.IsPlaying and ag:IsPlaying() then return end
-            -- If already fully visible, nothing to do
-            if textFrame:GetAlpha() >= 0.99 then return end
-            -- Fade from current alpha to 1 so re-entering after leave doesn't reset to 0 and blink
-            local fromAlpha = textFrame:GetAlpha()
-            FadeInFrame(textFrame, HOVER_FADE_IN_DURATION, fromAlpha)
+            if textFrame:GetAlpha() >= 0.99 then
+                textFrame:SetAlpha(1)
+                return
+            end
+            FadeInFrame(textFrame, HOVER_FADE_IN_DURATION, textFrame:GetAlpha())
         end)
     end
 end
 
--- Fade out numbers (same as after-hold: center fade + satellite chain)
-local function StartRadialNumbersFadeOut()
+local function StartRadialNumbersFadeOut(token)
+    if token and token ~= wfRadialTextState.token then return end
     local db = GetDB()
-    if db.wfAlwaysShowNumbers then return end
+    if db.wfAlwaysShowNumbers or wfRadialTextState.hovered or wfRadialTextState.procActive then return end
+    wfRadialTextState.state = "fading_out"
     ShammyTime.radialNumbersVisible = false
+    CancelHoverFadeIn()
     local center = _G.ShammyTimeCenterRing
     if center and center.textFrame and center.textFrame:IsShown() and center.textFrame.fadeOutAnim then
         center.textFrame.fadeOutAnim:Stop()
@@ -815,72 +823,106 @@ local function StartRadialNumbersFadeOut()
     if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
 end
 
-local StartRadialHoverHoldTimer
-StartRadialHoverHoldTimer = function(delay)
-    wfRadialHoverHoldTimer = C_Timer.NewTimer(delay or HOVER_HOLD_BEFORE_FADE, function()
-        wfRadialHoverHoldTimer = nil
-        -- Keep numbers visible while cursor is still over the radial.
-        if IsMouseOverWindfuryRadial() then
-            StartRadialHoverHoldTimer(HOVER_HOLD_RECHECK)
-            return
-        end
-        local now = GetTime()
-        if now < wfRadialHoverFadeNotBefore then
-            StartRadialHoverHoldTimer(math.max(HOVER_HOLD_RECHECK, wfRadialHoverFadeNotBefore - now))
-            return
-        end
-        StartRadialNumbersFadeOut()
+local function RescheduleRadialTextFade()
+    CancelRadialDeadlineTimer()
+    local db = GetDB()
+    local token = wfRadialTextState.token
+    if db.wfAlwaysShowNumbers then
+        wfRadialTextState.fadeDeadline = nil
+        StartRadialNumbersFadeIn(token)
+        return
+    end
+    if wfRadialTextState.hovered or wfRadialTextState.procActive then
+        wfRadialTextState.fadeDeadline = nil
+        StartRadialNumbersFadeIn(token)
+        return
+    end
+    local deadline = wfRadialTextState.fadeDeadline
+    if not deadline then return end
+    local delay = deadline - GetTime()
+    if delay <= 0 then
+        StartRadialNumbersFadeOut(token)
+        if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
+        return
+    end
+    wfRadialDeadlineTimer = C_Timer.NewTimer(delay, function()
+        wfRadialDeadlineTimer = nil
+        if token ~= wfRadialTextState.token then return end
+        local db2 = GetDB()
+        if db2.wfAlwaysShowNumbers or wfRadialTextState.hovered or wfRadialTextState.procActive then return end
+        StartRadialNumbersFadeOut(token)
         if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
     end)
 end
 
+function ShammyTime.RequestRadialTextFadeAfter(delay)
+    local db = GetDB()
+    if db.wfAlwaysShowNumbers then return end
+    local d = tonumber(delay) or RADIAL_PROC_HOLD_SEC
+    if d < 0 then d = 0 end
+    BumpRadialTextToken()
+    wfRadialTextState.procActive = false
+    if wfRadialTextState.hovered then
+        wfRadialTextState.fadeDeadline = nil
+    else
+        wfRadialTextState.fadeDeadline = GetTime() + d
+    end
+    RescheduleRadialTextFade()
+end
+
+function ShammyTime.OnRadialProcStarted()
+    BumpRadialTextToken()
+    wfRadialTextState.procActive = true
+    wfRadialTextState.fadeDeadline = nil
+    RescheduleRadialTextFade()
+end
+
+function ShammyTime.OnRadialProcEnded()
+    local db = GetDB()
+    BumpRadialTextToken()
+    wfRadialTextState.procActive = false
+    if db.wfAlwaysShowNumbers or wfRadialTextState.hovered then
+        wfRadialTextState.fadeDeadline = nil
+    else
+        wfRadialTextState.fadeDeadline = GetTime() + RADIAL_PROC_HOLD_SEC
+    end
+    RescheduleRadialTextFade()
+end
+
 function ShammyTime.OnRadialHoverEnter()
-    if wfRadialHideNumbersTimer then
-        wfRadialHideNumbersTimer:Cancel()
-        wfRadialHideNumbersTimer = nil
+    if wfRadialLeaveDebounceTimer then
+        wfRadialLeaveDebounceTimer:Cancel()
+        wfRadialLeaveDebounceTimer = nil
     end
-    -- Any hover-enter extends fade-out by a short grace window.
-    BumpHoverFadeNotBefore(HOVER_REENTER_FADE_DELAY)
-    -- Ignore repeated enter events while moving between center/satellite subframes.
-    if wfRadialHoverInside then return end
-    if wfRadialHoverHoldTimer then
-        wfRadialHoverHoldTimer:Cancel()
-        wfRadialHoverHoldTimer = nil
-    end
-    wfRadialHoverInside = true
-    -- Start one full hover cycle: fade-in, hold for 3s, then fade-out.
-    local center = _G.ShammyTimeCenterRing
-    if center then
-        if center.wfTextFadeTimer then
-            center.wfTextFadeTimer:Cancel()
-            center.wfTextFadeTimer = nil
-        end
-        if center.wfFadeDelayTimer then
-            center.wfFadeDelayTimer:Cancel()
-            center.wfFadeDelayTimer = nil
-        end
-    end
-    if ShammyTime.CancelSatelliteTextChainFade then ShammyTime.CancelSatelliteTextChainFade() end
-    StartRadialNumbersFadeIn(false)
-    StartRadialHoverHoldTimer(HOVER_HOLD_BEFORE_FADE)
-    -- Immediately re-evaluate fade so the circle returns to full opacity while hovered
+    if wfRadialTextState.hovered then return end
+    ShammyTime.circleHovered = true
+    wfRadialTextState.hovered = true
+    BumpRadialTextToken()
+    wfRadialTextState.fadeDeadline = nil
+    RescheduleRadialTextFade()
     if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
 end
 
 function ShammyTime.OnRadialHoverLeave()
-    if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel() end
-    wfRadialHideNumbersTimer = C_Timer.NewTimer(0.15, function()
-        wfRadialHideNumbersTimer = nil
-        -- Ignore transient leave events when moving between radial sub-frames.
+    if wfRadialLeaveDebounceTimer then wfRadialLeaveDebounceTimer:Cancel() end
+    wfRadialLeaveDebounceTimer = C_Timer.NewTimer(RADIAL_LEAVE_DEBOUNCE, function()
+        wfRadialLeaveDebounceTimer = nil
         if IsMouseOverWindfuryRadial() then return end
-        wfRadialHoverInside = false
+        if not wfRadialTextState.hovered then return end
+        ShammyTime.circleHovered = false
+        wfRadialTextState.hovered = false
+        BumpRadialTextToken()
+        wfRadialTextState.fadeDeadline = GetTime() + RADIAL_HOVER_HOLD_SEC
+        RescheduleRadialTextFade()
         if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
     end)
 end
 
 function ShammyTime.CancelRadialHoverSequence()
-    CancelRadialHoverCycleTimers()
-    wfRadialHoverInside = false
+    if wfRadialLeaveDebounceTimer then
+        wfRadialLeaveDebounceTimer:Cancel()
+        wfRadialLeaveDebounceTimer = nil
+    end
 end
 
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
@@ -1583,6 +1625,9 @@ end
 function ShammyTime.NotifyWindfuryProcStarted()
     lastWfProcEndTime = GetTime()
     circleFadeOutStarted = false
+    if ShammyTime.OnRadialProcStarted then
+        ShammyTime.OnRadialProcStarted()
+    end
 end
 
 -- Request a one-shot fade refresh (used by Focus to start frame fade after on->off transition)
@@ -1600,6 +1645,9 @@ end
 
 function ShammyTime.OnWindfuryProcAnimEnd()
     lastWfProcEndTime = GetTime()
+    if ShammyTime.OnRadialProcEnded then
+        ShammyTime.OnRadialProcEnded()
+    end
     if fadeGraceTimer then fadeGraceTimer:Cancel(); fadeGraceTimer = nil end
     fadeGraceTimer = C_Timer.NewTimer(FADE_GRACE_AFTER_PROC, function()
         fadeGraceTimer = nil

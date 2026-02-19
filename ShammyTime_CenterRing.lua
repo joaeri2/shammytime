@@ -15,41 +15,8 @@ local radialWrapper    -- single scalable container for center + satellites (cre
 local totemBarFrame    -- separate draggable totem bar frame (created once)
 
 -- ========== Timing constants ==========
--- How long satellite numbers (MIN, AVG, MAX, etc.) stay visible after a proc before they start fading out.
+-- Hold time used only when restoring a previously shown radial after reload.
 local WF_NUMBERS_HOLD_BEFORE_FADE = 2
--- How long the center "Windfury!" + "TOTAL: xxx" text stays fully visible after the proc animation ends, before it fades.
-local WF_TEXT_HOLD_BEFORE_FADE = 1
-
-local function ScheduleWindfuryAutoNumberFade(center, db)
-    if not center then return end
-    db = db or (ShammyTime.GetDB and ShammyTime.GetDB() or {})
-    if db.wfAlwaysShowNumbers then return end
-
-    -- Center text: hold briefly, then fade.
-    if center.textFrame and center.textFrame.fadeOutAnim then
-        center.textFrame.fadeOutAnim:Stop()
-        center.textFrame:SetAlpha(1)
-        if center.wfTextFadeTimer then center.wfTextFadeTimer:Cancel() end
-        center.wfTextFadeTimer = C_Timer.NewTimer(WF_TEXT_HOLD_BEFORE_FADE, function()
-            center.wfTextFadeTimer = nil
-            if not center or not center.textFrame or not center.textFrame:IsShown() or not center.textFrame.fadeOutAnim then return end
-            center.textFrame.fadeOutAnim:Stop()
-            center.textFrame:SetAlpha(1)
-            center.textFrame.fadeOutAnim:Play()
-        end)
-    end
-
-    -- Satellite text: longer hold, then circular chain fade.
-    if center.wfFadeDelayTimer then
-        center.wfFadeDelayTimer:Cancel()
-        center.wfFadeDelayTimer = nil
-    end
-    center.wfFadeDelayTimer = C_Timer.NewTimer(WF_NUMBERS_HOLD_BEFORE_FADE, function()
-        center.wfFadeDelayTimer = nil
-        if not center or not center:IsShown() then return end
-        if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
-    end)
-end
 
 -- ========== Lightning pulse constants (energy layer only) ==========
 -- Delay in seconds after the main "BOOM" proc animation before the first lightning blink.
@@ -264,11 +231,9 @@ local function CreateCenterRingFrame()
     end)
     -- Hover: show numbers (quick-peek). Reset hint is in the addon start message in chat.
     f:SetScript("OnEnter", function(self)
-        ShammyTime.circleHovered = true
         if ShammyTime.OnRadialHoverEnter then ShammyTime.OnRadialHoverEnter() end
     end)
     f:SetScript("OnLeave", function()
-        ShammyTime.circleHovered = false
         if ShammyTime.OnRadialHoverLeave then ShammyTime.OnRadialHoverLeave() end
     end)
     -- Right-click: reset Windfury stats (session/pull), clear "CRITICAL", set TOTAL to 0, refresh satellite numbers.
@@ -446,7 +411,6 @@ local function CreateCenterRingFrame()
             if ShammyTime.OnWindfuryProcAnimEnd then ShammyTime.OnWindfuryProcAnimEnd() end
             return
         end
-        ScheduleWindfuryAutoNumberFade(center, db)
         center.wfProcAnimPlaying = false  -- animation done; fade logic can apply now
         if ShammyTime.OnWindfuryProcAnimEnd then ShammyTime.OnWindfuryProcAnimEnd() end
     end
@@ -637,15 +601,9 @@ local function CreateCenterRingFrame()
             if ShammyTime.UpdateSatelliteValues then ShammyTime.UpdateSatelliteValues(stats) end
             local db2 = ShammyTime.GetDB and ShammyTime.GetDB()
             if not db2 or db2.wfAlwaysShowNumbers then return end
-            C_Timer.After(WF_NUMBERS_HOLD_BEFORE_FADE, function()
-                if not f or not f:IsShown() then return end
-                if f.textFrame and f.textFrame:IsShown() and f.textFrame.fadeOutAnim then
-                    f.textFrame.fadeOutAnim:Stop()
-                    f.textFrame:SetAlpha(1)
-                    f.textFrame.fadeOutAnim:Play()
-                end
-                if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
-            end)
+            if ShammyTime.RequestRadialTextFadeAfter then
+                ShammyTime.RequestRadialTextFadeAfter(WF_NUMBERS_HOLD_BEFORE_FADE)
+            end
         end)
     end
     return f
@@ -884,26 +842,17 @@ end
 function ShammyTime.PlayCenterRingProc(procTotal, forceShow)
     local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
     if not forceShow and not db.wfRadialEnabled then return end
-    -- Mark proc as recent so UpdateAllElementsFadeState (fade when not procced) gives the circle alpha 1 when it runs below.
-    if ShammyTime.NotifyWindfuryProcStarted then ShammyTime.NotifyWindfuryProcStarted() end
     local f = CreateCenterRingFrame()
     if ShammyTime.CancelRadialHoverSequence then ShammyTime.CancelRadialHoverSequence() end
     -- Keep center at saved position (stops demo/proc from shifting the bubbles)
     if ShammyTime.ApplyCenterRingPosition then ShammyTime.ApplyCenterRingPosition() end
     f.wfProcAnimPlaying = true  -- block fade-out until animation finishes (circle stays visible in/out of combat)
     f:Show()
-    -- Cancel any pending text/satellite fade timers so this proc gets a full hold period
-    if f.wfFadeDelayTimer then
-        f.wfFadeDelayTimer:Cancel()
-        f.wfFadeDelayTimer = nil
-    end
-    if f.wfTextFadeTimer then
-        f.wfTextFadeTimer:Cancel()
-        f.wfTextFadeTimer = nil
-    end
     if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
     f.textFrame:SetAlpha(1)
     f.textFrame:Show()
+    -- Mark proc as recent and trigger radial text controller only after center/text are shown.
+    if ShammyTime.NotifyWindfuryProcStarted then ShammyTime.NotifyWindfuryProcStarted() end
     local barFrame = ShammyTime.EnsureWindfuryTotemBarFrame and ShammyTime.EnsureWindfuryTotemBarFrame()
     if barFrame then barFrame:Show() end
     if db.wfRadialShown == nil then db.wfRadialShown = false end
@@ -1038,12 +987,6 @@ end
 function ShammyTime.IsWindfuryProcAnimationPlaying()
     local c = _G.ShammyTimeCenterRing
     return c and c.wfProcAnimPlaying
-end
-
-function ShammyTime.ScheduleWindfuryAutoNumberFade()
-    local center = _G.ShammyTimeCenterRing
-    local db = ShammyTime.GetDB and ShammyTime.GetDB() or {}
-    ScheduleWindfuryAutoNumberFade(center, db)
 end
 
 -- Update just the "TOTAL: xxx" text without replaying the proc animation. Used when damage is calculated after the instant show.

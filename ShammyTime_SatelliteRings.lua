@@ -344,21 +344,13 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         self:FlashText()
     end
 
-    -- Show satellite (ring always; text only if value is non-empty)
+    -- Show satellite ring only. Text visibility is controlled by the radial text controller.
     function f:ShowSatellite()
         self:Show()
-        local val = self.currentValue
-        local empty = (val == nil or val == "" or val == "0" or val == "0%" or val == "–")
-        local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
-        local showText = not empty and (db.wfAlwaysShowNumbers or ShammyTime.radialNumbersVisible)
-        if showText then
-            self.textFrame:Show()
-        else
-            self.textFrame:Hide()
-        end
         if self.diffuseOverlay then
-            local target = showText and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
-            local duration = showText and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
+            local textShown = self.textFrame and self.textFrame:IsShown()
+            local target = textShown and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
+            local duration = textShown and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
             AnimateDiffuseOverlayAlpha(self, target, duration)
         end
     end
@@ -372,35 +364,24 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         end
     end
 
-    -- Set value text; if 0 or empty, hide text so satellite shows ring only (no numbers)
+    -- Set value text only. Visibility timing is handled by the radial text controller.
     function f:SetValue(val)
         self.currentValue = val
-        local chainFading = ShammyTime and ShammyTime.satelliteTextChainFading
         local empty = (val == nil or val == "" or val == "0" or val == "0%" or val == "–")
-        if empty then
-            self.textFrame:Hide()
-            if self.diffuseOverlay then
-                AnimateDiffuseOverlayAlpha(self, 0, SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION)
-            end
-        else
-            self.value:SetText(val)
-            local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
-            local showText = (db.wfAlwaysShowNumbers or ShammyTime.radialNumbersVisible)
-            if showText and self:IsShown() then
-                self.textFrame:Show()
-            else
-                if not (chainFading and self.textFrame and self.textFrame:IsShown()) then
-                    self.textFrame:Hide()
-                end
-            end
-            if self.diffuseOverlay then
-                -- During chain fade, overlay fade-out is controlled by the chain animation; don't snap it via value refresh.
-                if not (chainFading and not showText and self.textFrame and self.textFrame:IsShown()) then
-                    local target = (showText and self:IsShown()) and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
-                    local duration = (target > 0) and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
-                    AnimateDiffuseOverlayAlpha(self, target, duration)
-                end
-            end
+        local display = (val == nil or val == "") and "–" or val
+        self.value:SetText(display)
+        local chainFading = ShammyTime and ShammyTime.satelliteTextChainFading
+        local shouldShow = (not empty) and self:IsShown() and ShammyTime and ShammyTime.radialNumbersVisible and not chainFading
+        if shouldShow and self.textFrame then
+            if self.textFrame.fadeOutAnim then self.textFrame.fadeOutAnim:Stop() end
+            self.textFrame:SetAlpha(1)
+            self.textFrame:Show()
+        end
+        if self.diffuseOverlay and not chainFading then
+            local textShown = self.textFrame and self.textFrame:IsShown()
+            local target = (textShown and self:IsShown()) and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
+            local duration = (target > 0) and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
+            AnimateDiffuseOverlayAlpha(self, target, duration)
         end
     end
 
@@ -571,8 +552,22 @@ local SATELLITE_FADE_DURATION = 0.7
 local SATELLITE_FADE_STAGGER = 0.2  -- next starts when previous has 500ms left
 local satelliteTextChainTimers = {}
 local satelliteTextChainFinalizeTimer = nil
+local satelliteTextChainToken = 0
+
+local function StopSatelliteTextFadeOutAnims()
+    for _, cfg in ipairs(SATELLITE_CONFIG) do
+        local f = satelliteFrames[cfg.name]
+        if f and f.textFrame and f.textFrame.fadeOutAnim then
+            f.textFrame.fadeOutAnim:Stop()
+            if f.textFrame:IsShown() then
+                f.textFrame:SetAlpha(1)
+            end
+        end
+    end
+end
 
 local function CancelSatelliteTextChainTimers()
+    satelliteTextChainToken = satelliteTextChainToken + 1
     for i, t in pairs(satelliteTextChainTimers) do
         if t then t:Cancel() end
         satelliteTextChainTimers[i] = nil
@@ -581,11 +576,13 @@ local function CancelSatelliteTextChainTimers()
         satelliteTextChainFinalizeTimer:Cancel()
         satelliteTextChainFinalizeTimer = nil
     end
+    StopSatelliteTextFadeOutAnims()
     ShammyTime.satelliteTextChainFading = false
 end
 
 function ShammyTime.StartSatelliteTextChainFade()
     CancelSatelliteTextChainTimers()
+    local myToken = satelliteTextChainToken
     ShammyTime.satelliteTextChainFading = true
     ShammyTime.radialNumbersVisible = false
     EnsureAllSatellites()
@@ -596,6 +593,7 @@ function ShammyTime.StartSatelliteTextChainFade()
             local delay = (i - 1) * SATELLITE_FADE_STAGGER
             satelliteTextChainTimers[i] = C_Timer.NewTimer(delay, function()
                 satelliteTextChainTimers[i] = nil
+                if myToken ~= satelliteTextChainToken then return end
                 local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
                 if db.wfAlwaysShowNumbers or ShammyTime.radialNumbersVisible then return end
                 if not f or not f.textFrame or not f.textFrame.fadeOutAnim then return end
@@ -613,6 +611,7 @@ function ShammyTime.StartSatelliteTextChainFade()
     local chainDuration = (count - 1) * SATELLITE_FADE_STAGGER + SATELLITE_FADE_DURATION
     satelliteTextChainFinalizeTimer = C_Timer.NewTimer(chainDuration + 0.1, function()
         satelliteTextChainFinalizeTimer = nil
+        if myToken ~= satelliteTextChainToken then return end
         local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
         -- Safety net: if a concurrent update re-showed text during chain fade, force-hide here
         -- unless numbers are meant to remain visible.
@@ -670,6 +669,10 @@ end
 
 function ShammyTime.CancelSatelliteTextChainFade()
     CancelSatelliteTextChainTimers()
+end
+
+function ShammyTime.StopSatelliteTextFadeOutAnims()
+    StopSatelliteTextFadeOutAnims()
 end
 
 -- Ring proc peak scale (must match CenterRing pop) for satellite "pop out" scaling

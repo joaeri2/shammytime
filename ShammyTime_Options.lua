@@ -9,15 +9,15 @@ local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local ShammyTime = _G.ShammyTime
 if not ShammyTime then return end
 
--- Satellite bubble names (for per-bubble text position overrides)
-local SATELLITE_NAMES = { "air", "stone", "fire", "grass", "water", "grass_2" }
+-- Satellite bubble names (match v2 texture file positions: middle_right, upper_right, etc.)
+local SATELLITE_NAMES = { "middle_right", "upper_right", "upper_left", "middle_left", "bottom_left", "bottom_right" }
 local SATELLITE_LABELS = {
-    air = "MIN (Air)",
-    stone = "MAX (Stone)",
-    fire = "AVG (Fire)",
-    grass = "PROCS (Grass)",
-    water = "PROC% (Water)",
-    grass_2 = "CRIT% (Grass 2)",
+    middle_right  = "Middle right (MIN)",
+    upper_right   = "Upper right (MAX)",
+    upper_left    = "Upper left (AVG)",
+    middle_left   = "Middle left (PROCS)",
+    bottom_left   = "Bottom left (PROC%)",
+    bottom_right  = "Bottom right (CRIT%)",
 }
 
 --------------------------------------------------------------------------------
@@ -2186,12 +2186,12 @@ function ShammyTime:SetupOptions()
                         name = "Set per-bubble text positions. Values of 0 use the global setting above.\n",
                         order = 41,
                     },
-                    air = CreateSatelliteGroup("air", SATELLITE_LABELS.air, 42),
-                    stone = CreateSatelliteGroup("stone", SATELLITE_LABELS.stone, 43),
-                    fire = CreateSatelliteGroup("fire", SATELLITE_LABELS.fire, 44),
-                    grass = CreateSatelliteGroup("grass", SATELLITE_LABELS.grass, 45),
-                    water = CreateSatelliteGroup("water", SATELLITE_LABELS.water, 46),
-                    grass_2 = CreateSatelliteGroup("grass_2", SATELLITE_LABELS.grass_2, 47),
+                    middle_right  = CreateSatelliteGroup("middle_right",  SATELLITE_LABELS.middle_right,  42),
+                    upper_right   = CreateSatelliteGroup("upper_right",   SATELLITE_LABELS.upper_right,   43),
+                    upper_left    = CreateSatelliteGroup("upper_left",   SATELLITE_LABELS.upper_left,    44),
+                    middle_left   = CreateSatelliteGroup("middle_left",  SATELLITE_LABELS.middle_left,   45),
+                    bottom_left   = CreateSatelliteGroup("bottom_left",  SATELLITE_LABELS.bottom_left,  46),
+                    bottom_right  = CreateSatelliteGroup("bottom_right", SATELLITE_LABELS.bottom_right,  47),
                     ---------------------------------------------------------
                     -- Other Dev Settings
                     ---------------------------------------------------------

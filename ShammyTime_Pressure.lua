@@ -309,21 +309,6 @@ local function FormatCompactDamage(value)
     return (short:gsub("%.0m", "m"))
 end
 
-local gaugeDpsText = frame:CreateFontString(nil, "OVERLAY")
-gaugeDpsText:SetFont(FONT_PATH, 28, "OUTLINE")
-gaugeDpsText:SetPoint("CENTER", frame, "CENTER", 0, 58)
-local GAUGE_DPS_COLOR_R = 1
-local GAUGE_DPS_COLOR_G = 0.97
-local GAUGE_DPS_COLOR_B = 0.70
-local DPS_POST_COMBAT_LOCK_SEC = 10.0
-local DPS_POST_COMBAT_FADE_SEC = 1.25
-local dpsPostCombatHoldUntil = 0
-local dpsPostCombatFadeUntil = 0
-gaugeDpsText:SetTextColor(GAUGE_DPS_COLOR_R, GAUGE_DPS_COLOR_G, GAUGE_DPS_COLOR_B, 1)
-gaugeDpsText:SetShadowColor(0, 0, 0, 1)
-gaugeDpsText:SetShadowOffset(1, -1)
-gaugeDpsText:SetText("")
-
 local function SpellNameEquals(spellName, expected)
     return spellName and expected and spellName == expected
 end
@@ -341,42 +326,7 @@ local function BuildPopupText(amount, hadCrit)
     return text
 end
 
-local function ArmPostCombatDpsFade(now)
-    local tNow = now or GetTime()
-    dpsPostCombatHoldUntil = tNow + DPS_POST_COMBAT_LOCK_SEC
-    dpsPostCombatFadeUntil = dpsPostCombatHoldUntil + DPS_POST_COMBAT_FADE_SEC
-end
-
-local function ClearPostCombatDpsFade()
-    dpsPostCombatHoldUntil = 0
-    dpsPostCombatFadeUntil = 0
-end
-
-local function UpdateGaugeDpsText(now)
-    if not gaugeDpsText then return end
-    local tNow = now or GetTime()
-    local fightDps = tonumber(PS and PS.debugFightDps) or 0
-    local liveDps = tonumber(PS and PS.debugCurrentDps) or 0
-    -- Center number should be live by default (requested behavior),
-    -- with fight DPS only as fallback when live has no signal yet.
-    local shownDps = (liveDps > 0) and liveDps or fightDps
-    local alpha = 1
-    if dpsPostCombatHoldUntil > 0 and dpsPostCombatFadeUntil > dpsPostCombatHoldUntil and tNow >= dpsPostCombatHoldUntil then
-        if tNow >= dpsPostCombatFadeUntil then
-            alpha = 0
-        else
-            alpha = 1 - ((tNow - dpsPostCombatHoldUntil) / (dpsPostCombatFadeUntil - dpsPostCombatHoldUntil))
-        end
-    end
-
-    gaugeDpsText:SetTextColor(GAUGE_DPS_COLOR_R, GAUGE_DPS_COLOR_G, GAUGE_DPS_COLOR_B, alpha)
-    gaugeDpsText:SetShadowColor(0, 0, 0, alpha)
-    if shownDps <= 0.5 or alpha <= 0.01 then
-        gaugeDpsText:SetText("")
-        return
-    end
-    gaugeDpsText:SetText(FormatCompactDamage(shownDps))
-end
+local DAMAGE_METER_POST_COMBAT_SEC = 11.25  -- duration passed to Tier model on combat end (no overlay)
 
 local SLOT_TEXT_NORMAL = { 1.00, 1.00, 0.00 }
 local SLOT_TEXT_CRIT = { 1.00, 1.00, 0.00 }
@@ -1910,8 +1860,6 @@ local function ResetPressureState()
     ResetDriverPopupState()
     PressureVisualModel.SetColorOverlayFill(colorOverlayState.fillFrac)
     ClearPressureDebugFrame()
-    ClearPostCombatDpsFade()
-    UpdateGaugeDpsText()
 end
 
 ShammyTime.ResetPressureState = ResetPressureState
@@ -1928,7 +1876,6 @@ end
 
 local function HasResidualPressureVisual()
     local now = GetTime()
-    if dpsPostCombatFadeUntil > 0 and now < dpsPostCombatFadeUntil then return true end
     if (PS.currentTier or 0) > 0 then return true end
     if (PS.pressureDisplaySmoothed or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
     if (PS.squeezeCharge or 0) > PRESSURE_VISUAL_CFG.visualActivityEps then return true end
@@ -1977,8 +1924,6 @@ local function EnterPressureIdleState()
         PS.pressureBucketAvg[wi] = 0
         PS.pressureBucketMax[wi] = 0
     end
-    ClearPostCombatDpsFade()
-    UpdateGaugeDpsText()
 end
 
 local pressureMathIdle = false
@@ -2005,7 +1950,6 @@ local function OnPressureTick(_, dt)
             pressureTickFrame:SetScript("OnUpdate", nil)
             pressureTickRunning = false
         end
-        UpdateGaugeDpsText()
         return
     end
     pressureMathIdle = false
@@ -2034,7 +1978,6 @@ local function OnPressureTick(_, dt)
 
     PS.pressureElapsed = PS.pressureElapsed + dt
     if PS.pressureElapsed < PS.pressureTick then
-        UpdateGaugeDpsText()
         PressureVisualModel.Update(visualElapsed, now, visualImpulsePressure)
         return
     end
@@ -2081,7 +2024,6 @@ local function OnPressureTick(_, dt)
     if PressureTierModel and PressureTierModel.UpdateDebugTelemetry then
         PressureTierModel.UpdateDebugTelemetry(now)
     end
-    UpdateGaugeDpsText()
     local edgeResistance, edgeSlip = PressureTierModel.GetTierResistanceAndSlip(PS.tierScore, now)
     PS.tierEdgeResistance = edgeResistance
     PS.tierEdgeSlip = edgeSlip
@@ -2174,25 +2116,21 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
     end
     if event == "PLAYER_REGEN_DISABLED" then
         local now = GetTime()
-        ClearPostCombatDpsFade()
         if PressureTierModel and PressureTierModel.StartCombatDamageMeter then
             PressureTierModel.StartCombatDamageMeter(now)
         elseif PressureTierModel and PressureTierModel.ResetRuntime then
             PressureTierModel.ResetRuntime(false)
         end
-        UpdateGaugeDpsText(now)
         UpdatePressureDebugFrame(0)
         return
     end
     if event == "PLAYER_REGEN_ENABLED" then
         local now = GetTime()
         if PressureTierModel and PressureTierModel.EndCombatDamageMeter then
-            PressureTierModel.EndCombatDamageMeter(now, DPS_POST_COMBAT_LOCK_SEC + DPS_POST_COMBAT_FADE_SEC)
+            PressureTierModel.EndCombatDamageMeter(now, DAMAGE_METER_POST_COMBAT_SEC)
         elseif PressureTierModel and PressureTierModel.ResetRuntime then
             PressureTierModel.ResetRuntime(false)
         end
-        ArmPostCombatDpsFade(now)
-        UpdateGaugeDpsText(now)
         UpdatePressureDebugFrame(0)
         return
     end

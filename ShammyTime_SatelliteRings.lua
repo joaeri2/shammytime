@@ -51,6 +51,50 @@ local SATELLITE_FONT = {
     valueY = 0,
 }
 
+-- Text palette tuned for blue-heavy bubble backgrounds: muted-gold labels + ivory values.
+-- Hex refs: label=#E6C06A, value=#F2E7C9, shadow=#000000 (55% alpha).
+local SATELLITE_LABEL_REST_COLOR = {0.902, 0.753, 0.416}
+local SATELLITE_LABEL_FLASH_COLOR = {0.957, 0.847, 0.573}
+local SATELLITE_VALUE_REST_COLOR = {0.949, 0.906, 0.788}
+local SATELLITE_VALUE_FLASH_COLOR = {1.000, 0.957, 0.851}
+local SATELLITE_TEXT_SHADOW_COLOR = {0, 0, 0, 0.55}
+local SATELLITE_TEXT_SHADOW_X, SATELLITE_TEXT_SHADOW_Y = 1, -1
+local SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA = 0.7
+local SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION = 0.06
+local SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION = 0.12
+
+local function AnimateDiffuseOverlayAlpha(f, targetAlpha, duration)
+    if not f or not f.diffuseOverlay then return end
+    local overlay = f.diffuseOverlay
+    if overlay._stDiffuseAg then
+        overlay._stDiffuseAg:Stop()
+        overlay._stDiffuseAg = nil
+    end
+    duration = duration or 0
+    if duration <= 0 then
+        overlay:SetAlpha(targetAlpha or 0)
+        return
+    end
+    local from = overlay:GetAlpha() or 0
+    local to = targetAlpha or 0
+    if math.abs(from - to) < 0.01 then
+        overlay:SetAlpha(to)
+        return
+    end
+    local ag = overlay:CreateAnimationGroup()
+    local a = ag:CreateAnimation("Alpha")
+    a:SetFromAlpha(from)
+    a:SetToAlpha(to)
+    a:SetDuration(duration)
+    a:SetSmoothing("OUT")
+    ag:SetScript("OnFinished", function()
+        overlay:SetAlpha(to)
+        overlay._stDiffuseAg = nil
+    end)
+    overlay._stDiffuseAg = ag
+    ag:Play()
+end
+
 -- Effective text options for a satellite (global DB + per-bubble override). Returns labelSize, valueSize, labelX, labelY, valueX, valueY.
 function ShammyTime.GetSatelliteTextOptions(bubbleName)
     local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
@@ -65,14 +109,14 @@ function ShammyTime.GetSatelliteTextOptions(bubbleName)
 end
 
 -- Positions: 6 satellites evenly around the circle (60° apart). 0° = 3 o'clock (right), angles counter-clockwise.
--- Layout: top-right=MAX(stone), mid-right=MIN(air), down-right=CRIT%(grass_2), down-left=PROC%(water), mid-left=PROCS(grass), upper-left=AVG(fire).
+-- Layout: middle_right(0°), upper_right(60°), upper_left(120°), middle_left(180°), bottom_left(240°), bottom_right(300°).
 local SATELLITE_POSITIONS = {
-    MIN    = 0,     -- mid-right   — air
-    MAX    = 60,    -- top-right   — stone
-    AVG    = 120,   -- upper-left  — fire
-    PROCS  = 180,   -- mid-left    — grass
-    PROCPCT = 240,  -- down-left   — water
-    CRIT   = 300,   -- down-right  — grass_2
+    middle_right  = 0,    -- mid-right   (MIN)
+    upper_right   = 60,   -- top-right   (MAX)
+    upper_left    = 120,  -- upper-left  (AVG)
+    middle_left   = 180,  -- mid-left    (PROCS)
+    bottom_left   = 240,  -- down-left   (PROC%)
+    bottom_right  = 300,  -- down-right  (CRIT%)
 }
 
 -- Storage for satellite frames
@@ -157,6 +201,15 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         f.border:SetAlpha(1)
     end
 
+    -- Optional diffuse overlay (per-bubble): fades in when this bubble's text is shown.
+    if textures.diffuseOverlay then
+        f.diffuseOverlay = f:CreateTexture(nil, "ARTWORK", nil, 2)
+        f.diffuseOverlay:SetAllPoints(f)
+        f.diffuseOverlay:SetTexture(textures.diffuseOverlay)
+        f.diffuseOverlay:SetBlendMode("BLEND")
+        f.diffuseOverlay:SetAlpha(0)
+    end
+
     -- Text as child of satellite so it scales with the ring when radial is resized
     local textFrame = CreateFrame("Frame", "ShammyTimeSatelliteText_" .. name, f)
     textFrame:SetFrameStrata("LOW")
@@ -193,18 +246,22 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
     f.label = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     f.label:SetPoint("CENTER", lx, ly)
     f.label:SetText(label or "")
-    f.label:SetTextColor(0.9, 0.85, 0.7)
+    f.label:SetTextColor(unpack(SATELLITE_LABEL_REST_COLOR))
     f.label:SetFont(SATELLITE_FONT.path, labelSize, SATELLITE_FONT.outline or "")
-    f.labelRestColor = {0.9, 0.85, 0.7}
-    f.labelFlashColor = {1, 1, 1}
+    f.label:SetShadowColor(unpack(SATELLITE_TEXT_SHADOW_COLOR))
+    f.label:SetShadowOffset(SATELLITE_TEXT_SHADOW_X, SATELLITE_TEXT_SHADOW_Y)
+    f.labelRestColor = {unpack(SATELLITE_LABEL_REST_COLOR)}
+    f.labelFlashColor = {unpack(SATELLITE_LABEL_FLASH_COLOR)}
 
     f.value = textFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     f.value:SetPoint("CENTER", vx, vy)
     f.value:SetText("0")
-    f.value:SetTextColor(1, 1, 1)
+    f.value:SetTextColor(unpack(SATELLITE_VALUE_REST_COLOR))
     f.value:SetFont(SATELLITE_FONT.path, valueSize, SATELLITE_FONT.outline or "")
-    f.valueRestColor = {1, 1, 1}
-    f.valueFlashColor = {1, 1, 0.5}
+    f.value:SetShadowColor(unpack(SATELLITE_TEXT_SHADOW_COLOR))
+    f.value:SetShadowOffset(SATELLITE_TEXT_SHADOW_X, SATELLITE_TEXT_SHADOW_Y)
+    f.valueRestColor = {unpack(SATELLITE_VALUE_REST_COLOR)}
+    f.valueFlashColor = {unpack(SATELLITE_VALUE_FLASH_COLOR)}
     f.currentValue = nil  -- used to hide text when 0/empty
 
     -- Proc pulse animation (same style as center ring)
@@ -299,20 +356,32 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
         else
             self.textFrame:Hide()
         end
+        if self.diffuseOverlay then
+            local target = showText and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
+            local duration = showText and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
+            AnimateDiffuseOverlayAlpha(self, target, duration)
+        end
     end
 
     -- Hide satellite
     function f:HideSatellite()
         self:Hide()
         self.textFrame:Hide()
+        if self.diffuseOverlay then
+            AnimateDiffuseOverlayAlpha(self, 0, 0)
+        end
     end
 
     -- Set value text; if 0 or empty, hide text so satellite shows ring only (no numbers)
     function f:SetValue(val)
         self.currentValue = val
+        local chainFading = ShammyTime and ShammyTime.satelliteTextChainFading
         local empty = (val == nil or val == "" or val == "0" or val == "0%" or val == "–")
         if empty then
             self.textFrame:Hide()
+            if self.diffuseOverlay then
+                AnimateDiffuseOverlayAlpha(self, 0, SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION)
+            end
         else
             self.value:SetText(val)
             local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
@@ -320,7 +389,17 @@ local function CreateSatelliteRing(name, textures, label, position, parentFrame,
             if showText and self:IsShown() then
                 self.textFrame:Show()
             else
-                self.textFrame:Hide()
+                if not (chainFading and self.textFrame and self.textFrame:IsShown()) then
+                    self.textFrame:Hide()
+                end
+            end
+            if self.diffuseOverlay then
+                -- During chain fade, overlay fade-out is controlled by the chain animation; don't snap it via value refresh.
+                if not (chainFading and not showText and self.textFrame and self.textFrame:IsShown()) then
+                    local target = (showText and self:IsShown()) and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
+                    local duration = (target > 0) and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
+                    AnimateDiffuseOverlayAlpha(self, target, duration)
+                end
             end
         end
     end
@@ -373,16 +452,15 @@ end
 -- - textLabelX / textLabelY, textValueX / textValueY:
 --   - Pixel offsets of label/value relative to the ring center.
 --   - If you want “no override”, set to 0 (which effectively uses the base placement plus 0 offset).
--- Layout: top-right=MAX(stone), mid-right=MIN(air), down-right=CRIT%(grass_2), down-left=PROC%(water), mid-left=PROCS(grass), upper-left=AVG(fire).
--- 0°=mid-right, 60°=top-right, 120°=upper-left, 180°=mid-left, 240°=down-left, 300°=down-right.
+-- Layout: 0°=middle_right(MIN), 60°=upper_right(MAX), 120°=upper_left(AVG), 180°=middle_left(PROCS), 240°=bottom_left(PROC%), 300°=bottom_right(CRIT%).
 -- Text positions reset to 0 - adjust via Developer panel in /st options, then export settings.
 local SATELLITE_CONFIG = {
-    { name = "air",     position = 0,   tex = "AIR_FULL",          label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
-    { name = "stone",   position = 60,  tex = "AVG",               label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
-    { name = "fire",    position = 120, tex = "PROCS",             label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
-    { name = "grass",   position = 180, tex = "GRASS_UPPER_RIGHT", label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
-    { name = "water",   position = 240, tex = "PROCPCT",           label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
-    { name = "grass_2", position = 300, tex = "GRASS_FULL",        label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "middle_right",  position = 0,   tex = "SATELLITE_MIDDLE_RIGHT", label = "MIN",   statName = "MIN",     value = "455",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "upper_right",   position = 60,  tex = "SATELLITE_UPPER_RIGHT",  label = "MAX",   statName = "MAX",     value = "1278", offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "upper_left",    position = 120, tex = "SATELLITE_UPPER_LEFT",   label = "AVG",   statName = "AVG",     value = "689",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "middle_left",   position = 180, tex = "SATELLITE_MIDDLE_LEFT",  label = "PROCS", statName = "PROCS",   value = "12",   offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "bottom_left",   position = 240, tex = "SATELLITE_BOTTOM_LEFT",  label = "PROC%", statName = "PROCPCT", value = "38%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
+    { name = "bottom_right",  position = 300, tex = "SATELLITE_BOTTOM_RIGHT", label = "CRIT%", statName = "CRIT",    value = "42%",  offsetX = 0, offsetY = 0,  textLabelX = 0, textLabelY = 0, textValueX = 0, textValueY = 0 },
 }
 
 local function GetMaxSatelliteNudge()
@@ -413,14 +491,22 @@ end
 local function GetSatelliteTextureSet(texKey)
     -- Full-design (single texture): AIR_FULL, GRASS_FULL
     if TEX[texKey] then
-        return { full = TEX[texKey] }
+        local t = { full = TEX[texKey] }
+        if texKey == "SATELLITE_UPPER_RIGHT" then
+            t.diffuseOverlay = TEX.SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY
+        end
+        return t
     end
-    return {
+    local t = {
         bg     = TEX[texKey .. "_BG"],
         border = TEX[texKey .. "_BORDER"],
         glow   = TEX[texKey .. "_GLOW"],
         shadow = TEX[texKey .. "_SHADOW"],
     }
+    if texKey == "SATELLITE_UPPER_RIGHT" then
+        t.diffuseOverlay = TEX.SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY
+    end
+    return t
 end
 
 -- Create a single satellite by name (parent = main center so we can move them with ring scale)
@@ -439,9 +525,9 @@ local function GetSatellite(name)
     return nil
 end
 
--- Ring that displays CRIT% (grass_2 = wf_magic_gras / GRASS_FULL art)
+-- Ring that displays CRIT% (bottom_right position).
 local function GetCritRing()
-    return GetSatellite("grass_2")
+    return GetSatellite("bottom_right")
 end
 
 -- Create all 6 satellite rings (call once to ensure all exist)
@@ -483,8 +569,24 @@ end
 -- Next satellite starts when previous has 500ms left (stagger = 700 - 500 = 200ms)
 local SATELLITE_FADE_DURATION = 0.7
 local SATELLITE_FADE_STAGGER = 0.2  -- next starts when previous has 500ms left
+local satelliteTextChainTimers = {}
+local satelliteTextChainFinalizeTimer = nil
+
+local function CancelSatelliteTextChainTimers()
+    for i, t in pairs(satelliteTextChainTimers) do
+        if t then t:Cancel() end
+        satelliteTextChainTimers[i] = nil
+    end
+    if satelliteTextChainFinalizeTimer then
+        satelliteTextChainFinalizeTimer:Cancel()
+        satelliteTextChainFinalizeTimer = nil
+    end
+    ShammyTime.satelliteTextChainFading = false
+end
 
 function ShammyTime.StartSatelliteTextChainFade()
+    CancelSatelliteTextChainTimers()
+    ShammyTime.satelliteTextChainFading = true
     ShammyTime.radialNumbersVisible = false
     EnsureAllSatellites()
     local count = #SATELLITE_CONFIG
@@ -492,24 +594,49 @@ function ShammyTime.StartSatelliteTextChainFade()
         local f = satelliteFrames[cfg.name]
         if f and f.textFrame and f.textFrame:IsShown() and f.textFrame.fadeOutAnim then
             local delay = (i - 1) * SATELLITE_FADE_STAGGER
-            C_Timer.After(delay, function()
+            satelliteTextChainTimers[i] = C_Timer.NewTimer(delay, function()
+                satelliteTextChainTimers[i] = nil
+                local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+                if db.wfAlwaysShowNumbers or ShammyTime.radialNumbersVisible then return end
                 if not f or not f.textFrame or not f.textFrame.fadeOutAnim then return end
                 f.textFrame.fadeOutAnim:Stop()
                 f.textFrame:SetAlpha(1)
                 f.textFrame.fadeOutAnim:Play()
+                if f.diffuseOverlay then
+                    AnimateDiffuseOverlayAlpha(f, 0, SATELLITE_FADE_DURATION)
+                end
             end)
         end
     end
     -- After the last satellite text has faded, re-evaluate fade state so the circle fades out
     -- promptly instead of waiting for the 15-second grace timer.
     local chainDuration = (count - 1) * SATELLITE_FADE_STAGGER + SATELLITE_FADE_DURATION
-    C_Timer.After(chainDuration + 0.1, function()
+    satelliteTextChainFinalizeTimer = C_Timer.NewTimer(chainDuration + 0.1, function()
+        satelliteTextChainFinalizeTimer = nil
+        local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB() or {}
+        -- Safety net: if a concurrent update re-showed text during chain fade, force-hide here
+        -- unless numbers are meant to remain visible.
+        if not db.wfAlwaysShowNumbers and not ShammyTime.radialNumbersVisible then
+            for _, cfg2 in ipairs(SATELLITE_CONFIG) do
+                local f2 = satelliteFrames[cfg2.name]
+                if f2 and f2.textFrame then
+                    if f2.textFrame.fadeOutAnim then f2.textFrame.fadeOutAnim:Stop() end
+                    f2.textFrame:SetAlpha(1)
+                    f2.textFrame:Hide()
+                    if f2.diffuseOverlay then
+                        AnimateDiffuseOverlayAlpha(f2, 0, SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION)
+                    end
+                end
+            end
+        end
+        ShammyTime.satelliteTextChainFading = false
         if ShammyTime.UpdateAllElementsFadeState then ShammyTime.UpdateAllElementsFadeState() end
     end)
 end
 
 -- Show all satellite text frames (for hover quick-peek)
 function ShammyTime.ShowAllSatelliteTexts()
+    CancelSatelliteTextChainTimers()
     ShammyTime.radialNumbersVisible = true
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
@@ -517,12 +644,16 @@ function ShammyTime.ShowAllSatelliteTexts()
             if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
             f.textFrame:SetAlpha(1)
             f.textFrame:Show()
+            if f.diffuseOverlay and f.currentValue and f.currentValue ~= "" and f.currentValue ~= "0" and f.currentValue ~= "0%" and f.currentValue ~= "–" then
+                AnimateDiffuseOverlayAlpha(f, SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA, SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION)
+            end
         end
     end
 end
 
 -- Hide all satellite text frames (after hover leave or chain fade)
 function ShammyTime.HideAllSatelliteTexts()
+    CancelSatelliteTextChainTimers()
     ShammyTime.radialNumbersVisible = false
     for _, cfg in ipairs(SATELLITE_CONFIG) do
         local f = satelliteFrames[cfg.name]
@@ -530,27 +661,107 @@ function ShammyTime.HideAllSatelliteTexts()
             if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
             f.textFrame:SetAlpha(1)
             f.textFrame:Hide()
+            if f.diffuseOverlay then
+                AnimateDiffuseOverlayAlpha(f, 0, SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION)
+            end
         end
     end
+end
+
+function ShammyTime.CancelSatelliteTextChainFade()
+    CancelSatelliteTextChainTimers()
 end
 
 -- Ring proc peak scale (must match CenterRing pop) for satellite "pop out" scaling
 local PROC_POP_SCALE = 1.18
 
--- Called every frame during center ring proc: move satellites outward + scale up 10% (rubber-band + pop toward player)
+-- Subtle impact motion during proc pop: a small outward surge plus a short earthquake-style shake.
+local SATELLITE_IMPACT_EXTRA_PUSH = 0.035
+local SATELLITE_IMPACT_SHAKE_MAX_PX = 1.9
+local SATELLITE_IMPACT_SHAKE_FREQ_X = 52
+local SATELLITE_IMPACT_SHAKE_FREQ_Y = 43
+local SATELLITE_IMPACT_SHAKE_DECAY = 4.2
+local SATELLITE_IMPACT_PUSH_SCALE_MIN, SATELLITE_IMPACT_PUSH_SCALE_MAX = 0.82, 1.28
+local SATELLITE_IMPACT_SHAKE_AMP_SCALE_MIN, SATELLITE_IMPACT_SHAKE_AMP_SCALE_MAX = 0.82, 1.22
+local SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MIN, SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MAX = 0.85, 1.20
+local SATELLITE_IMPACT_SHAKE_DECAY_SCALE_MIN, SATELLITE_IMPACT_SHAKE_DECAY_SCALE_MAX = 0.82, 1.22
+local SATELLITE_IMPACT_SHAKE_Y_RATIO_MIN, SATELLITE_IMPACT_SHAKE_Y_RATIO_MAX = 0.72, 0.96
+local SATELLITE_IMPACT_SHAKE_HARMONIC_CHANCE = 0.45
+local satelliteImpactShake = {
+    active = false,
+    startedAt = 0,
+    phaseX = 0,
+    phaseY = 0,
+    ampScale = 1,
+    freqX = SATELLITE_IMPACT_SHAKE_FREQ_X,
+    freqY = SATELLITE_IMPACT_SHAKE_FREQ_Y,
+    decay = SATELLITE_IMPACT_SHAKE_DECAY,
+    yRatio = 0.85,
+    pushScale = 1,
+    harmonicMul = nil,
+    harmonicMix = 0,
+}
+
+function ShammyTime.StartSatelliteImpactShake()
+    satelliteImpactShake.active = true
+    satelliteImpactShake.startedAt = GetTime()
+    satelliteImpactShake.phaseX = math.random() * (math.pi * 2)
+    satelliteImpactShake.phaseY = math.random() * (math.pi * 2)
+    satelliteImpactShake.ampScale = SATELLITE_IMPACT_SHAKE_AMP_SCALE_MIN + math.random() * (SATELLITE_IMPACT_SHAKE_AMP_SCALE_MAX - SATELLITE_IMPACT_SHAKE_AMP_SCALE_MIN)
+    satelliteImpactShake.freqX = SATELLITE_IMPACT_SHAKE_FREQ_X * (SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MIN + math.random() * (SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MAX - SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MIN))
+    satelliteImpactShake.freqY = SATELLITE_IMPACT_SHAKE_FREQ_Y * (SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MIN + math.random() * (SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MAX - SATELLITE_IMPACT_SHAKE_FREQ_SCALE_MIN))
+    satelliteImpactShake.decay = SATELLITE_IMPACT_SHAKE_DECAY * (SATELLITE_IMPACT_SHAKE_DECAY_SCALE_MIN + math.random() * (SATELLITE_IMPACT_SHAKE_DECAY_SCALE_MAX - SATELLITE_IMPACT_SHAKE_DECAY_SCALE_MIN))
+    satelliteImpactShake.yRatio = SATELLITE_IMPACT_SHAKE_Y_RATIO_MIN + math.random() * (SATELLITE_IMPACT_SHAKE_Y_RATIO_MAX - SATELLITE_IMPACT_SHAKE_Y_RATIO_MIN)
+    satelliteImpactShake.pushScale = SATELLITE_IMPACT_PUSH_SCALE_MIN + math.random() * (SATELLITE_IMPACT_PUSH_SCALE_MAX - SATELLITE_IMPACT_PUSH_SCALE_MIN)
+    if math.random() < SATELLITE_IMPACT_SHAKE_HARMONIC_CHANCE then
+        satelliteImpactShake.harmonicMul = 1.55 + math.random() * 0.85
+        satelliteImpactShake.harmonicMix = 0.12 + math.random() * 0.12
+    else
+        satelliteImpactShake.harmonicMul = nil
+        satelliteImpactShake.harmonicMix = 0
+    end
+end
+
+-- Called every frame during center ring proc: move satellites outward + scale up + subtle impact shake.
 function ShammyTime.OnRingProcScaleUpdate(scale)
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
     local centerScale = centerFrame:GetScale()
     if not centerScale or centerScale <= 0 then centerScale = 1 end
+    local procNorm = (PROC_POP_SCALE > 1) and ((scale - 1) / (PROC_POP_SCALE - 1)) or 0
+    if procNorm < 0 then procNorm = 0 elseif procNorm > 1 then procNorm = 1 end
+    local impactPush = SATELLITE_IMPACT_EXTRA_PUSH * (satelliteImpactShake.pushScale or 1)
+    local pushScale = scale + (impactPush * procNorm)
+    local quakeX, quakeY = 0, 0
+    if satelliteImpactShake.active then
+        local elapsed = GetTime() - satelliteImpactShake.startedAt
+        if elapsed < 0 then elapsed = 0 end
+        local decay = math.exp(-elapsed * (satelliteImpactShake.decay or SATELLITE_IMPACT_SHAKE_DECAY))
+        local amp = SATELLITE_IMPACT_SHAKE_MAX_PX * (satelliteImpactShake.ampScale or 1) * procNorm * decay
+        if amp <= 0.02 then
+            satelliteImpactShake.active = false
+        else
+            local x = math.sin((elapsed * (satelliteImpactShake.freqX or SATELLITE_IMPACT_SHAKE_FREQ_X)) + satelliteImpactShake.phaseX)
+            local y = math.cos((elapsed * (satelliteImpactShake.freqY or SATELLITE_IMPACT_SHAKE_FREQ_Y)) + satelliteImpactShake.phaseY)
+            if satelliteImpactShake.harmonicMul then
+                local hm = satelliteImpactShake.harmonicMul
+                local mix = satelliteImpactShake.harmonicMix or 0
+                x = x + (math.sin((elapsed * (satelliteImpactShake.freqX or SATELLITE_IMPACT_SHAKE_FREQ_X) * hm) + satelliteImpactShake.phaseX * 1.7) * mix)
+                y = y + (math.cos((elapsed * (satelliteImpactShake.freqY or SATELLITE_IMPACT_SHAKE_FREQ_Y) * (hm * 0.95)) + satelliteImpactShake.phaseY * 1.6) * mix)
+            end
+            quakeX = x * amp
+            quakeY = y * amp * (satelliteImpactShake.yRatio or 0.85)
+        end
+    end
     -- Satellite visual scale: base at rest, 10% bigger at proc peak (pop toward player)
-    local scaleFactor = 1 + 0.1 * (scale - 1) / (PROC_POP_SCALE - 1)
+    local popDenom = (PROC_POP_SCALE > 1) and (PROC_POP_SCALE - 1) or 0.18
+    local scaleFactor = 1 + 0.1 * (pushScale - 1) / popDenom
     local satelliteScale = GetSatelliteBubbleScale() * scaleFactor
     for _, f in pairs(satelliteFrames) do
         if f and f.baseOffsetX then
             -- Rest position is baseOffset/centerScale; during proc expand by scale
-            local x = (f.baseOffsetX / centerScale) * scale
-            local y = (f.baseOffsetY / centerScale) * scale
+            local x = ((f.baseOffsetX / centerScale) * pushScale) + quakeX
+            local y = ((f.baseOffsetY / centerScale) * pushScale) + quakeY
             f:SetPoint("CENTER", centerFrame, "CENTER", x, y)
             f:SetScale(satelliteScale)
         end
@@ -559,6 +770,7 @@ end
 
 -- Reset satellite positions and scale to base when proc animation finishes or stops
 function ShammyTime.ResetSatellitePositions()
+    satelliteImpactShake.active = false
     local centerFrame = GetCenterFrame()
     if not centerFrame then return end
     local centerScale = centerFrame and centerFrame:GetScale() or 1

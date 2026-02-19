@@ -9,10 +9,8 @@ M.ADDON_NAME = ADDON or "ShammyTime"
 M.MEDIA = "Interface\\AddOns\\" .. M.ADDON_NAME .. "\\Media\\"
 
 M.TEX = {
-    -- Center ring (512×512, layered)
-    CENTER_BG     = M.MEDIA .. "wf_center_bg.tga",
-    CENTER_BORDER = M.MEDIA .. "wf_center_border.tga",
-    CENTER_RUNES  = M.MEDIA .. "wf_center_runes.tga",
+    -- Center ring (512×512): bg, energy, shadow only.
+    CENTER_BG     = M.MEDIA .. "v2_wf_bubbles_center_512x512.tga",
     CENTER_ENERGY = M.MEDIA .. "wf_center_energy.tga",
     CENTER_SHADOW = M.MEDIA .. "wf_center_shadow.tga",
     -- Totem bar (layered: back, icons, front, text) 512×512
@@ -51,10 +49,18 @@ M.TEX = {
     PROCPCT_BORDER = M.MEDIA .. "wf_sat_border.tga",
     PROCPCT_GLOW   = M.MEDIA .. "wf_sat_glow.tga",
     PROCPCT_SHADOW = M.MEDIA .. "wf_sat_shadow.tga",
-    -- Full-design satellites (single texture, not layered)
+    -- Windfury satellite bubbles (v2, 256×256 single texture per position)
+    SATELLITE_MIDDLE_RIGHT = M.MEDIA .. "v2_wf_bubbles_middle_right_256x256.tga",   -- 0° mid-right  (MIN)
+    SATELLITE_UPPER_RIGHT  = M.MEDIA .. "v2_wf_bubbles_upper_right_256x256.tga",    -- 60° top-right (MAX)
+    SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_upper_right_diffuse_overlay_256x256.tga", -- optional text readability overlay (MAX)
+    SATELLITE_UPPER_LEFT   = M.MEDIA .. "v2_wf_bubbles_upper_left_256x256.tga",    -- 120° upper-left (AVG)
+    SATELLITE_MIDDLE_LEFT  = M.MEDIA .. "v2_wf_bubbles_middle_left_256x256.tga",   -- 180° mid-left (PROCS)
+    SATELLITE_BOTTOM_LEFT  = M.MEDIA .. "v2_wf_bubbles_bottom_left_256x256.tga",   -- 240° down-left (PROC%)
+    SATELLITE_BOTTOM_RIGHT = M.MEDIA .. "v2_wf_bubbles_bottom_right_256x256.tga",  -- 300° down-right (CRIT%)
+    -- Legacy full-design satellites (single texture, kept for reference)
     AIR_FULL   = M.MEDIA .. "wf_air_full_256.tga",
     GRASS_FULL = M.MEDIA .. "wf_magic_gras_256.tga",
-    GRASS_UPPER_RIGHT = M.MEDIA .. "wf_grass_upper_right.tga",  -- upper right (CRIT% slot)
+    GRASS_UPPER_RIGHT = M.MEDIA .. "wf_grass_upper_right.tga",
     -- Orb set (satellites / totems)
     ORB_BG     = M.MEDIA .. "orb_bg.tga",
     ORB_BORDER = M.MEDIA .. "orb_border.tga",

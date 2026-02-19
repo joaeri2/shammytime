@@ -20,8 +20,14 @@ local WF_ICD_DURATION       = 3.0    -- seconds of internal cooldown after a pro
 local ICD_FADE_IN_DURATION  = 0.15   -- off→on transition (snappy)
 local ICD_FADE_OUT_DURATION = 0.15   -- on→off transition (snappy)
 local COUNTDOWN_TICK        = 0.05   -- update interval for countdown text (smooth decimal)
+local STORMSTRIKE_TEXT_GAP  = 4      -- spacing between SS icon and cooldown text
+local STORMSTRIKE_TEXT_WIDTH = 24    -- fixed width keeps icon+text centered without jitter
+local STORMSTRIKE_Y_OFFSET = -3      -- slight upward nudge from previous position
+local STORMSTRIKE_PAIR_X_OFFSET = -((STORMSTRIKE_TEXT_GAP + STORMSTRIKE_TEXT_WIDTH) * 0.5)
 local WINDFURY_ATTACK_SPELL_ID = 25584  -- personal Windfury Weapon proc
 local WF_TOTEM_SPELL_ID       = 8516   -- Windfury Totem proc
+local STORMSTRIKE_SPELL_ID    = 17364  -- Stormstrike
+local GCD_THRESHOLD            = 1.5    -- ignore short GCD-only cooldowns
 
 --------------------------------------------------------------------------------
 -- State
@@ -31,6 +37,7 @@ local icdActive = false       -- true while 3s ICD is running
 local icdStartTime = 0        -- GetTime() when ICD started
 local icdCountdownTicker = nil
 local icdAlphaTicker = nil
+local stormstrikeCooldownTicker = nil
 local icdTestActive = false
 local icdTestTimer = nil
 local icdTestFadeTimer = nil
@@ -102,6 +109,46 @@ end
 
 -- Expose for fade system context
 ShammyTime.HasWindfuryAvailable = HasWindfuryAvailable
+
+--------------------------------------------------------------------------------
+-- Stormstrike cooldown overlay
+--------------------------------------------------------------------------------
+local UpdateStormstrikeOverlay
+
+local function StopStormstrikeCooldownTicker()
+    if stormstrikeCooldownTicker then
+        stormstrikeCooldownTicker:Cancel()
+        stormstrikeCooldownTicker = nil
+    end
+end
+
+local function StartStormstrikeCooldownTicker()
+    if stormstrikeCooldownTicker then return end
+    stormstrikeCooldownTicker = C_Timer.NewTicker(COUNTDOWN_TICK, function()
+        if UpdateStormstrikeOverlay then
+            UpdateStormstrikeOverlay()
+        end
+    end)
+end
+
+local function GetStormstrikeCooldownState()
+    if not GetSpellInfo or not GetSpellCooldown then
+        return false, 0, 0, 0, nil
+    end
+    local spellName, _, iconTexture = GetSpellInfo(STORMSTRIKE_SPELL_ID)
+    if not spellName then
+        return false, 0, 0, 0, nil
+    end
+    local start, duration, enabled = GetSpellCooldown(spellName)
+    if not start or not duration or enabled == 0 then
+        return false, 0, 0, 0, iconTexture
+    end
+    local remaining = (start + duration) - GetTime()
+    if duration <= GCD_THRESHOLD or remaining <= 0 then
+        return false, start, duration, 0, iconTexture
+    end
+    return true, start, duration, remaining, iconTexture
+end
 
 --------------------------------------------------------------------------------
 -- Alpha animation helpers (same pattern as ShamanisticFocus)
@@ -273,8 +320,71 @@ local function CreateICDFrame()
     countdownText:Hide()
     f.countdownText = countdownText
 
+    -- Overlay icon: compact Stormstrike marker at the top of the WF ICD lamp
+    local stormstrikeIcon = f:CreateTexture(nil, "OVERLAY")
+    stormstrikeIcon:SetSize(20, 20)
+    stormstrikeIcon:SetPoint("BOTTOM", icdOff, "TOP", STORMSTRIKE_PAIR_X_OFFSET, STORMSTRIKE_Y_OFFSET)
+    stormstrikeIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    stormstrikeIcon:SetAlpha(1)
+    stormstrikeIcon:Hide()
+    f.stormstrikeIcon = stormstrikeIcon
+
+    local stormstrikeCooldown = CreateFrame("Cooldown", nil, f)
+    stormstrikeCooldown:SetAllPoints(stormstrikeIcon)
+    if stormstrikeCooldown.SetDrawEdge then stormstrikeCooldown:SetDrawEdge(false) end
+    if stormstrikeCooldown.SetDrawBling then stormstrikeCooldown:SetDrawBling(false) end
+    if stormstrikeCooldown.SetHideCountdownNumbers then
+        stormstrikeCooldown:SetHideCountdownNumbers(true)
+    end
+    stormstrikeCooldown:Hide()
+    f.stormstrikeCooldown = stormstrikeCooldown
+
+    local stormstrikeCountdownText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    stormstrikeCountdownText:SetPoint("LEFT", stormstrikeIcon, "RIGHT", STORMSTRIKE_TEXT_GAP, 0)
+    stormstrikeCountdownText:SetWidth(STORMSTRIKE_TEXT_WIDTH)
+    stormstrikeCountdownText:SetJustifyH("LEFT")
+    stormstrikeCountdownText:SetFont(stormstrikeCountdownText:GetFont(), 13, "OUTLINE")
+    stormstrikeCountdownText:SetTextColor(1, 1, 1, 1)
+    stormstrikeCountdownText:SetText("")
+    stormstrikeCountdownText:Hide()
+    f.stormstrikeCountdownText = stormstrikeCountdownText
+
     icdFrame = f
     return f
+end
+
+UpdateStormstrikeOverlay = function()
+    if not icdFrame then return end
+    local icon = icdFrame.stormstrikeIcon
+    local cooldown = icdFrame.stormstrikeCooldown
+    local text = icdFrame.stormstrikeCountdownText
+    if not icon or not cooldown or not text then return end
+
+    local onCooldown, start, duration, remaining, iconTexture = GetStormstrikeCooldownState()
+    if iconTexture then
+        icon:SetTexture(iconTexture)
+    end
+
+    if onCooldown then
+        icon:Show()
+        cooldown:Show()
+        if cooldown._lastStart ~= start or cooldown._lastDuration ~= duration then
+            cooldown:SetCooldown(start, duration)
+            cooldown._lastStart = start
+            cooldown._lastDuration = duration
+        end
+        text:SetText(remaining >= 10 and ("%.0f"):format(remaining) or ("%.1f"):format(remaining))
+        text:Show()
+        StartStormstrikeCooldownTicker()
+        return
+    end
+
+    icon:Hide()
+    cooldown:Hide()
+    cooldown._lastStart = nil
+    cooldown._lastDuration = nil
+    text:Hide()
+    StopStormstrikeCooldownTicker()
 end
 
 --------------------------------------------------------------------------------
@@ -283,6 +393,8 @@ end
 local function UpdateICDVisual()
     local f = CreateICDFrame()
     if not f then return end
+
+    UpdateStormstrikeOverlay()
 
     -- If ICD is active, the countdown ticker handles the visual state
     if icdActive then
@@ -331,6 +443,7 @@ function ShammyTime.StartWindfuryICDTest()
     icdTestActive = true
     local f = CreateICDFrame()
     f:Show()
+    UpdateStormstrikeOverlay()
     -- Reset to "on" state
     StopAlphaTicker()
     StopCountdownTicker()
@@ -441,6 +554,8 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 eventFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
+eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == "ShammyTime" then
         eventFrame:UnregisterEvent("ADDON_LOADED")
@@ -459,10 +574,15 @@ eventFrame:SetScript("OnEvent", function(_, event, arg1)
             icdFrame:Hide()
         end
         UpdateICDVisual()
+        UpdateStormstrikeOverlay()
         return
     end
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
         OnCombatLog()
+        return
+    end
+    if event == "SPELL_UPDATE_COOLDOWN" or event == "PLAYER_ENTERING_WORLD" then
+        UpdateStormstrikeOverlay()
         return
     end
     -- Re-check windfury availability when totems change or weapons change

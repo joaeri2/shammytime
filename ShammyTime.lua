@@ -358,6 +358,10 @@ local wfPopupTimer = nil
 local pendingTotemWF = nil  -- { count = N, expiresAt = t } or nil
 local wfRadialHideNumbersTimer = nil  -- delay before hiding numbers on hover leave
 local wfRadialHoverAnims = {}  -- cancel these when hover leave (fade-in animation groups)
+local wfRadialHoverFadeInTimers = {}  -- staggered fade-in timers (must be cancelable to avoid flicker)
+local wfRadialHoverHoldTimer = nil  -- hold time before hover-triggered fade-out
+local wfRadialHoverInside = false   -- true while cursor is considered inside radial (debounced)
+local wfRadialHoverFadeNotBefore = 0  -- absolute GetTime() guard for fade-out start
 local wfTestTimer = nil  -- /st test: global test (circle + Windfury + Shamanistic Focus); one proc immediately, then every 10s
 local lastWfProcEndTime = 0  -- GetTime() when last Windfury proc animation ended; used for "fade when not procced" grace
 local FADE_GRACE_AFTER_PROC = 15  -- seconds after proc end we still consider radial "procced" for fade logic (other elements)
@@ -411,6 +415,17 @@ function ShammyTime:OnResetAll()
     imbueWasActiveLastCheck = false
     if wfTestTimer then wfTestTimer:Cancel(); wfTestTimer = nil end
     if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel(); wfRadialHideNumbersTimer = nil end
+    if wfRadialHoverHoldTimer then wfRadialHoverHoldTimer:Cancel(); wfRadialHoverHoldTimer = nil end
+    wfRadialHoverInside = false
+    wfRadialHoverFadeNotBefore = 0
+    for i, t in pairs(wfRadialHoverFadeInTimers) do
+        if t then t:Cancel() end
+        wfRadialHoverFadeInTimers[i] = nil
+    end
+    for frame, ag in pairs(wfRadialHoverAnims) do
+        if ag and ag.Stop then ag:Stop() end
+        wfRadialHoverAnims[frame] = nil
+    end
 end
 
 -- Reset all settings (delegate to Core AceDB reset + ApplyAllConfigs, which calls OnResetAll).
@@ -647,12 +662,63 @@ end
 -- Hover: smooth fade-in left-to-right (satellites then center), fade-out uses same animation as after-hold
 local HOVER_FADE_IN_DURATION = 0.22
 local HOVER_STAGGER = 0.07  -- delay between starting each element (left-to-right)
+local HOVER_HOLD_BEFORE_FADE = 3.0
+local HOVER_HOLD_RECHECK = 0.15
+local HOVER_REENTER_FADE_DELAY = 1.0
 
-local function CancelHoverFadeIn()
+local function BumpHoverFadeNotBefore(delay)
+    local now = GetTime()
+    local d = delay or HOVER_REENTER_FADE_DELAY
+    local target = now + d
+    if target > wfRadialHoverFadeNotBefore then
+        wfRadialHoverFadeNotBefore = target
+    end
+end
+
+local function CancelHoverFadeInTimers()
+    for i, t in pairs(wfRadialHoverFadeInTimers) do
+        if t then t:Cancel() end
+        wfRadialHoverFadeInTimers[i] = nil
+    end
+end
+
+local function CancelHoverFadeInAnims()
     for _, ag in pairs(wfRadialHoverAnims) do
         if ag and ag.Stop then ag:Stop() end
     end
     wfRadialHoverAnims = {}
+end
+
+local function CancelHoverFadeIn()
+    CancelHoverFadeInTimers()
+    CancelHoverFadeInAnims()
+end
+
+local function CancelRadialHoverCycleTimers()
+    if wfRadialHideNumbersTimer then
+        wfRadialHideNumbersTimer:Cancel()
+        wfRadialHideNumbersTimer = nil
+    end
+    if wfRadialHoverHoldTimer then
+        wfRadialHoverHoldTimer:Cancel()
+        wfRadialHoverHoldTimer = nil
+    end
+    wfRadialHoverFadeNotBefore = 0
+end
+
+local function IsMouseOverWindfuryRadial()
+    local wrapper = _G.ShammyTimeWindfuryRadial
+    if not wrapper or not wrapper:IsShown() then return false end
+    -- Treat the entire radial wrapper as one hover object (single signal).
+    local left, right = wrapper:GetLeft(), wrapper:GetRight()
+    local bottom, top = wrapper:GetBottom(), wrapper:GetTop()
+    if not left or not right or not bottom or not top then return false end
+    local uiScale = UIParent and UIParent:GetEffectiveScale() or 1
+    if not uiScale or uiScale <= 0 then uiScale = 1 end
+    local cx, cy = GetCursorPosition()
+    cx, cy = cx / uiScale, cy / uiScale
+    if cx >= left and cx <= right and cy >= bottom and cy <= top then return true end
+    return false
 end
 
 -- Animate one frame's alpha from startAlpha -> 1 over duration (startAlpha defaults to 0; use current alpha to avoid blink on re-enter)
@@ -680,18 +746,30 @@ end
 -- Show numbers with smooth fade-in: satellites left-to-right, then Windfury/total in center
 -- If all numbers already visible (mouse kept over), do nothing. If a frame is already fading in, don't restart.
 -- When re-entering after leave stopped anims, fade from current alpha to 1 (no reset to 0 = no blink).
-local function StartRadialNumbersFadeIn()
+local function StartRadialNumbersFadeIn(keepAutoFadeTimers)
     ShammyTime.radialNumbersVisible = true
     local center = _G.ShammyTimeCenterRing
     if not center or not center:IsShown() then return end
+    CancelHoverFadeInTimers()
+    if not keepAutoFadeTimers and ShammyTime.CancelSatelliteTextChainFade then
+        ShammyTime.CancelSatelliteTextChainFade()
+    end
     if center.textFrame and center.textFrame.fadeOutAnim then center.textFrame.fadeOutAnim:Stop() end
-    if center.textFrame then center.textFrame:Show() end
+    if center.textFrame then
+        if not center.textFrame:IsShown() then
+            center.textFrame:SetAlpha(0)
+        end
+        center.textFrame:Show()
+    end
     local config = ShammyTime.SATELLITE_CONFIG or {}
     local elements = {}
     for _, cfg in ipairs(config) do
         local f = ShammyTime.GetSatelliteFrame and ShammyTime.GetSatelliteFrame(cfg.name)
         if f and f:IsShown() and f.textFrame and f.currentValue and f.currentValue ~= "" and f.currentValue ~= "0" and f.currentValue ~= "0%" and f.currentValue ~= "–" then
             if f.textFrame.fadeOutAnim then f.textFrame.fadeOutAnim:Stop() end
+            if not f.textFrame:IsShown() then
+                f.textFrame:SetAlpha(0)
+            end
             f.textFrame:Show()
             elements[#elements + 1] = f.textFrame
         end
@@ -707,7 +785,9 @@ local function StartRadialNumbersFadeIn()
     end
     if allVisible then return end
     for i, textFrame in ipairs(elements) do
-        C_Timer.After((i - 1) * HOVER_STAGGER, function()
+        wfRadialHoverFadeInTimers[i] = C_Timer.NewTimer((i - 1) * HOVER_STAGGER, function()
+            wfRadialHoverFadeInTimers[i] = nil
+            if not ShammyTime.radialNumbersVisible then return end
             if not textFrame or not textFrame.SetAlpha then return end
             -- If this frame is already fading in, don't restart (prevents blink)
             local ag = wfRadialHoverAnims[textFrame]
@@ -735,12 +815,40 @@ local function StartRadialNumbersFadeOut()
     if ShammyTime.StartSatelliteTextChainFade then ShammyTime.StartSatelliteTextChainFade() end
 end
 
+local StartRadialHoverHoldTimer
+StartRadialHoverHoldTimer = function(delay)
+    wfRadialHoverHoldTimer = C_Timer.NewTimer(delay or HOVER_HOLD_BEFORE_FADE, function()
+        wfRadialHoverHoldTimer = nil
+        -- Keep numbers visible while cursor is still over the radial.
+        if IsMouseOverWindfuryRadial() then
+            StartRadialHoverHoldTimer(HOVER_HOLD_RECHECK)
+            return
+        end
+        local now = GetTime()
+        if now < wfRadialHoverFadeNotBefore then
+            StartRadialHoverHoldTimer(math.max(HOVER_HOLD_RECHECK, wfRadialHoverFadeNotBefore - now))
+            return
+        end
+        StartRadialNumbersFadeOut()
+        if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
+    end)
+end
+
 function ShammyTime.OnRadialHoverEnter()
     if wfRadialHideNumbersTimer then
         wfRadialHideNumbersTimer:Cancel()
         wfRadialHideNumbersTimer = nil
     end
-    -- Cancel proc-based fade timers so numbers don't disappear while hovering
+    -- Any hover-enter extends fade-out by a short grace window.
+    BumpHoverFadeNotBefore(HOVER_REENTER_FADE_DELAY)
+    -- Ignore repeated enter events while moving between center/satellite subframes.
+    if wfRadialHoverInside then return end
+    if wfRadialHoverHoldTimer then
+        wfRadialHoverHoldTimer:Cancel()
+        wfRadialHoverHoldTimer = nil
+    end
+    wfRadialHoverInside = true
+    -- Start one full hover cycle: fade-in, hold for 3s, then fade-out.
     local center = _G.ShammyTimeCenterRing
     if center then
         if center.wfTextFadeTimer then
@@ -752,20 +860,27 @@ function ShammyTime.OnRadialHoverEnter()
             center.wfFadeDelayTimer = nil
         end
     end
-    StartRadialNumbersFadeIn()
+    if ShammyTime.CancelSatelliteTextChainFade then ShammyTime.CancelSatelliteTextChainFade() end
+    StartRadialNumbersFadeIn(false)
+    StartRadialHoverHoldTimer(HOVER_HOLD_BEFORE_FADE)
     -- Immediately re-evaluate fade so the circle returns to full opacity while hovered
     if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
 end
 
 function ShammyTime.OnRadialHoverLeave()
     if wfRadialHideNumbersTimer then wfRadialHideNumbersTimer:Cancel() end
-    CancelHoverFadeIn()
     wfRadialHideNumbersTimer = C_Timer.NewTimer(0.15, function()
         wfRadialHideNumbersTimer = nil
-        StartRadialNumbersFadeOut()
+        -- Ignore transient leave events when moving between radial sub-frames.
+        if IsMouseOverWindfuryRadial() then return end
+        wfRadialHoverInside = false
+        if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
     end)
-    -- Immediately re-evaluate fade so the circle fades back to its target alpha
-    if UpdateAllElementsFadeState then UpdateAllElementsFadeState() end
+end
+
+function ShammyTime.CancelRadialHoverSequence()
+    CancelRadialHoverCycleTimers()
+    wfRadialHoverInside = false
 end
 
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua
@@ -3148,13 +3263,13 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
         local sub1, rest = arg:match("^(%S+)%s*(.*)$")
         sub1 = sub1 and sub1:lower() or ""
         rest = rest and rest:gsub("^%s+", ""):gsub("%s+$", "") or ""
-        local BUBBLE_NAMES = { air = true, stone = true, fire = true, grass = true, water = true, grass_2 = true }
+        local BUBBLE_NAMES = { middle_right = true, upper_right = true, upper_left = true, middle_left = true, bottom_left = true, bottom_right = true }
         local function PrintBubblesHelp()
             print("")
             print(C.green .. "ShammyTime — Bubbles (" .. C.gold .. "/st bubbles" .. C.r .. C.green .. ")" .. C.r)
             print(C.gray .. "  Windfury statistic circles (center + 6 outer). Not totem/imbue bars." .. C.r)
             print(C.gray .. "  " .. C.gold .. "center" .. C.r .. C.gray .. "  — Center circle: size, text (title/total/critical), font (title/total/critical)" .. C.r)
-            print(C.gray .. "  " .. C.gold .. "outer" .. C.r .. C.gray .. "   — Outer circles: gap, font label/value, pos label/value, or per-circle (air, stone, fire, grass, water, grass_2)" .. C.r)
+            print(C.gray .. "  " .. C.gold .. "outer" .. C.r .. C.gray .. "   — Outer circles: gap, font label/value, pos label/value, or per-circle (middle_right, upper_right, upper_left, middle_left, bottom_left, bottom_right)" .. C.r)
             print("")
         end
         local function PrintBubblesCenterHelp()
@@ -3177,7 +3292,7 @@ SlashCmdList["SHAMMYTIME"] = function(msg)
             print(C.gray .. "  font value 13" .. C.r .. C.gray .. "  — Value font size (e.g. \"35\")" .. C.r)
             print(C.gray .. "  pos label 0 8" .. C.r .. C.gray .. "  — Move the label (e.g. \"CRIT%\") inside each small circle. Two numbers: horizontal then vertical, in pixels from the circle center. Right = positive X, Left = negative X. Up = positive Y, Down = negative Y. Example: 0 8 = 8 px above center." .. C.r)
             print(C.gray .. "  pos value 0 -6" .. C.r .. C.gray .. "  — Same for the number (e.g. \"42\"). Example: 0 -6 = 6 px below center." .. C.r)
-            print(C.gray .. "  <name> font label 8" .. C.r .. C.gray .. "  — Override one circle (name: air, stone, fire, grass, water, grass_2)" .. C.r)
+            print(C.gray .. "  <name> font label 8" .. C.r .. C.gray .. "  — Override one circle (name: middle_right, upper_right, upper_left, middle_left, bottom_left, bottom_right)" .. C.r)
             print(C.gray .. "  <name> pos label 0 8" .. C.r .. C.gray .. "  — Override position for one circle" .. C.r)
             print("")
         end

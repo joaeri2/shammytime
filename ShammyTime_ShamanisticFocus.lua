@@ -14,6 +14,10 @@ local FOCUSED_BUFF_SPELL_ID = 43339  -- "Focused" (Shamanistic Focus proc), TBC
 local FOCUS_FADE_IN_DURATION = 0.3   -- off→on transition (~300ms so change is visible but quick)
 local FOCUS_FADE_OUT_DURATION = 0.6
 local FOCUS_HOLD_AFTER_OFF = 3.0  -- seconds to hold "on" art after proc ends before fading to off
+local FOCUS_CD_TEXT_GAP = 4
+local FOCUS_CD_TEXT_WIDTH = 24
+local FOCUS_CD_Y_OFFSET = -8
+local FOCUS_CD_PAIR_X_OFFSET = -((FOCUS_CD_TEXT_GAP + FOCUS_CD_TEXT_WIDTH) * 0.5)
 
 local focusFrame
 local lastFocusedActive = false
@@ -100,6 +104,25 @@ local function AreShocksReady()
     end
     -- No shock spell found in spellbook — assume ready
     return true
+end
+
+-- Returns cooldown state for the first known shock spell (all shocks share the same cooldown in TBC).
+local function GetShockCooldownState()
+    for _, spellName in ipairs(SHOCK_SPELLS) do
+        local iconTexture = nil
+        if GetSpellInfo then
+            local _, _, tex = GetSpellInfo(spellName)
+            iconTexture = tex
+        end
+        local start, duration, enabled = GetSpellCooldown(spellName)
+        if start then
+            local remaining = (start + (duration or 0)) - GetTime()
+            local onCooldown = enabled ~= 0 and duration and duration > GCD_THRESHOLD and remaining > 0
+            if not onCooldown then remaining = 0 end
+            return onCooldown and true or false, start or 0, duration or 0, remaining or 0, iconTexture
+        end
+    end
+    return false, 0, 0, 0, nil
 end
 
 -- Forward-declare UpdateFocus so the poll timer can call it (defined later).
@@ -197,6 +220,35 @@ local function CreateFocusFrame()
     focusOn:Show()
     f.focusOn = focusOn
 
+    -- Shock cooldown marker (same compact top placement as WF ICD SS overlay).
+    local shockCooldownIcon = f:CreateTexture(nil, "OVERLAY")
+    shockCooldownIcon:SetSize(20, 20)
+    shockCooldownIcon:SetPoint("BOTTOM", focusOff, "TOP", FOCUS_CD_PAIR_X_OFFSET, FOCUS_CD_Y_OFFSET)
+    shockCooldownIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    shockCooldownIcon:SetAlpha(1)
+    shockCooldownIcon:Hide()
+    f.shockCooldownIcon = shockCooldownIcon
+
+    local shockCooldownSwipe = CreateFrame("Cooldown", nil, f)
+    shockCooldownSwipe:SetAllPoints(shockCooldownIcon)
+    if shockCooldownSwipe.SetDrawEdge then shockCooldownSwipe:SetDrawEdge(false) end
+    if shockCooldownSwipe.SetDrawBling then shockCooldownSwipe:SetDrawBling(false) end
+    if shockCooldownSwipe.SetHideCountdownNumbers then
+        shockCooldownSwipe:SetHideCountdownNumbers(true)
+    end
+    shockCooldownSwipe:Hide()
+    f.shockCooldownSwipe = shockCooldownSwipe
+
+    local shockCooldownText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    shockCooldownText:SetPoint("LEFT", shockCooldownIcon, "RIGHT", FOCUS_CD_TEXT_GAP, 0)
+    shockCooldownText:SetWidth(FOCUS_CD_TEXT_WIDTH)
+    shockCooldownText:SetJustifyH("LEFT")
+    shockCooldownText:SetFont(shockCooldownText:GetFont(), 13, "OUTLINE")
+    shockCooldownText:SetTextColor(1, 1, 1, 1)
+    shockCooldownText:SetText("")
+    shockCooldownText:Hide()
+    f.shockCooldownText = shockCooldownText
+
     -- Manual alpha ticker (more reliable than AnimationGroup on some clients)
     f.focusAlphaTicker = nil
     local function stopAlphaTicker()
@@ -264,6 +316,39 @@ local function CreateFocusFrame()
     return f
 end
 
+local function UpdateShockCooldownOverlay(hasFocusedBuff)
+    local f = CreateFocusFrame()
+    if not f then return end
+    local icon = f.shockCooldownIcon
+    local swipe = f.shockCooldownSwipe
+    local text = f.shockCooldownText
+    if not icon or not swipe or not text then return end
+
+    local onCooldown, start, duration, remaining, iconTexture = GetShockCooldownState()
+    if iconTexture then
+        icon:SetTexture(iconTexture)
+    end
+
+    if hasFocusedBuff and onCooldown then
+        icon:Show()
+        swipe:Show()
+        if swipe._lastStart ~= start or swipe._lastDuration ~= duration then
+            swipe:SetCooldown(start, duration)
+            swipe._lastStart = start
+            swipe._lastDuration = duration
+        end
+        text:SetText(remaining >= 10 and ("%.0f"):format(remaining) or ("%.1f"):format(remaining))
+        text:Show()
+        return
+    end
+
+    icon:Hide()
+    swipe:Hide()
+    swipe._lastStart = nil
+    swipe._lastDuration = nil
+    text:Hide()
+end
+
 -- Simple light logic: ON when buff is on AND shocks off CD, OFF otherwise, with smooth animations.
 -- hasBuffOverride: hint from main addon, but we always verify with HasFocusedBuff() for ground truth.
 UpdateFocus = function(hasBuffOverride)
@@ -277,6 +362,8 @@ UpdateFocus = function(hasBuffOverride)
     if hasBuffOverride == true and not buffIsOn and not focusOverlayFadingOff then
         buffIsOn = true
     end
+
+    local hasFocusedBuff = buffIsOn
     
     -- Even with the Focused buff active, only glow when shocks are off cooldown.
     -- This makes the lamp signal "you can use your cheap shock RIGHT NOW."
@@ -288,6 +375,8 @@ UpdateFocus = function(hasBuffOverride)
         -- Either buff is off or shocks are ready; no need to poll.
         StopShockCDPoll()
     end
+
+    UpdateShockCooldownOverlay(hasFocusedBuff)
     
     local currentAlpha = f.focusOn:GetAlpha() or 0
     
@@ -367,6 +456,7 @@ function ShammyTime.StartShamanisticFocusTest()
     focusTestActive = true
     local f = CreateFocusFrame()
     f:Show()
+    UpdateShockCooldownOverlay(false)
     f.stopAlphaTicker()
     f.focusOn:SetAlpha(0)
     lastFocusedActive = false

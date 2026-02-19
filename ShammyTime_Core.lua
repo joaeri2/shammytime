@@ -142,7 +142,7 @@ local DEFAULTS = {
         },
         -- Per-module (spec)
         modules = {
-            windfuryBubbles = moduleDefaults(false, 0.65, 1.0),
+            windfuryBubbles = moduleDefaults(true, 0.65, 1.0),
             shieldIndicator = moduleDefaults(true, 0.36, 1.0),
             shamanisticFocus = moduleDefaults(true, 1.17, 1.0),
             totemBar = moduleDefaults(true, 1.2, 1.0),
@@ -209,8 +209,8 @@ local DEFAULTS = {
         wfSatelliteValueX = 0,
         wfSatelliteValueY = 0,
         wfSatelliteOverrides = {
-            air = { labelY = 14, valueY = -5 },
-            grass = { labelY = 14, valueY = -5 },
+            middle_right = { labelY = 14, valueY = -5 },
+            middle_left  = { labelY = 14, valueY = -5 },
         },
         -- WF Impact (Windfury Totem party damage feed)
         wfImpactEnabled = true,

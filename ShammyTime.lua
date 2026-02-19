@@ -923,6 +923,11 @@ function ShammyTime.CancelRadialHoverSequence()
         wfRadialLeaveDebounceTimer:Cancel()
         wfRadialLeaveDebounceTimer = nil
     end
+    -- Clear stale hover latch when proc start cancels pending leave debounce.
+    -- If cursor is truly still over the radial, preserve hover=true.
+    local hoveredNow = IsMouseOverWindfuryRadial()
+    wfRadialTextState.hovered = hoveredNow and true or false
+    ShammyTime.circleHovered = hoveredNow and true or false
 end
 
 -- API for ShammyTime_Windfury.lua (radial UI), CenterRing, and AssetTest.lua

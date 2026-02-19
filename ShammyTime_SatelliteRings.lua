@@ -470,12 +470,12 @@ function ShammyTime.GetWindfuryRadialWrapperSize()
 end
 
 local function GetSatelliteTextureSet(texKey)
+    local overlayKey = texKey .. "_DIFFUSE_OVERLAY"
+    local overlay = TEX[overlayKey]
     -- Full-design (single texture): AIR_FULL, GRASS_FULL
     if TEX[texKey] then
         local t = { full = TEX[texKey] }
-        if texKey == "SATELLITE_UPPER_RIGHT" then
-            t.diffuseOverlay = TEX.SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY
-        end
+        if overlay then t.diffuseOverlay = overlay end
         return t
     end
     local t = {
@@ -484,9 +484,7 @@ local function GetSatelliteTextureSet(texKey)
         glow   = TEX[texKey .. "_GLOW"],
         shadow = TEX[texKey .. "_SHADOW"],
     }
-    if texKey == "SATELLITE_UPPER_RIGHT" then
-        t.diffuseOverlay = TEX.SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY
-    end
+    if overlay then t.diffuseOverlay = overlay end
     return t
 end
 
@@ -673,6 +671,18 @@ end
 
 function ShammyTime.StopSatelliteTextFadeOutAnims()
     StopSatelliteTextFadeOutAnims()
+end
+
+function ShammyTime.UpdateSatelliteDiffuseOverlayForTextFrame(textFrame, shown, duration)
+    if not textFrame or not textFrame.GetParent then return end
+    local f = textFrame:GetParent()
+    if not f or not f.diffuseOverlay then return end
+    local target = shown and SATELLITE_DIFFUSE_OVERLAY_TARGET_ALPHA or 0
+    local d = duration
+    if d == nil then
+        d = shown and SATELLITE_DIFFUSE_OVERLAY_FADE_IN_DURATION or SATELLITE_DIFFUSE_OVERLAY_FADE_OUT_DURATION
+    end
+    AnimateDiffuseOverlayAlpha(f, target, d)
 end
 
 -- Ring proc peak scale (must match CenterRing pop) for satellite "pop out" scaling

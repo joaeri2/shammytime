@@ -784,6 +784,9 @@ local function StartRadialNumbersFadeIn(token)
             if textFrame then
                 textFrame:SetAlpha(1)
                 textFrame:Show()
+                if ShammyTime.UpdateSatelliteDiffuseOverlayForTextFrame then
+                    ShammyTime.UpdateSatelliteDiffuseOverlayForTextFrame(textFrame, true)
+                end
             end
         end
         return
@@ -796,6 +799,9 @@ local function StartRadialNumbersFadeIn(token)
             if not textFrame or not textFrame.SetAlpha then return end
             if textFrame.fadeOutAnim then textFrame.fadeOutAnim:Stop() end
             textFrame:Show()
+            if ShammyTime.UpdateSatelliteDiffuseOverlayForTextFrame then
+                ShammyTime.UpdateSatelliteDiffuseOverlayForTextFrame(textFrame, true)
+            end
             local ag = wfRadialHoverAnims[textFrame]
             if ag and ag.IsPlaying and ag:IsPlaying() then return end
             if textFrame:GetAlpha() >= 0.99 then

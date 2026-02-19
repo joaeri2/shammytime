@@ -51,12 +51,17 @@ M.TEX = {
     PROCPCT_SHADOW = M.MEDIA .. "wf_sat_shadow.tga",
     -- Windfury satellite bubbles (v2, 256×256 single texture per position)
     SATELLITE_MIDDLE_RIGHT = M.MEDIA .. "v2_wf_bubbles_middle_right_256x256.tga",   -- 0° mid-right  (MIN)
+    SATELLITE_MIDDLE_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_middle_right_diffuse_overlay_256x256.tga",
     SATELLITE_UPPER_RIGHT  = M.MEDIA .. "v2_wf_bubbles_upper_right_256x256.tga",    -- 60° top-right (MAX)
-    SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_upper_right_diffuse_overlay_256x256.tga", -- optional text readability overlay (MAX)
+    SATELLITE_UPPER_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_upper_right_diffuse_overlay_256x256.tga",
     SATELLITE_UPPER_LEFT   = M.MEDIA .. "v2_wf_bubbles_upper_left_256x256.tga",    -- 120° upper-left (AVG)
+    SATELLITE_UPPER_LEFT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_upper_left_diffuse_overlay_256x256.tga",
     SATELLITE_MIDDLE_LEFT  = M.MEDIA .. "v2_wf_bubbles_middle_left_256x256.tga",   -- 180° mid-left (PROCS)
+    SATELLITE_MIDDLE_LEFT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_middle_left_diffuse_overlay_256x256.tga",
     SATELLITE_BOTTOM_LEFT  = M.MEDIA .. "v2_wf_bubbles_bottom_left_256x256.tga",   -- 240° down-left (PROC%)
+    SATELLITE_BOTTOM_LEFT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_bottom_left_diffuse_overlay_256x256.tga",
     SATELLITE_BOTTOM_RIGHT = M.MEDIA .. "v2_wf_bubbles_bottom_right_256x256.tga",  -- 300° down-right (CRIT%)
+    SATELLITE_BOTTOM_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_bottom_right_diffuse_overlay_256x256.tga",
     -- Legacy full-design satellites (single texture, kept for reference)
     AIR_FULL   = M.MEDIA .. "wf_air_full_256.tga",
     GRASS_FULL = M.MEDIA .. "wf_magic_gras_256.tga",

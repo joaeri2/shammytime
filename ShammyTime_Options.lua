@@ -1609,11 +1609,15 @@ function ShammyTime:SetupOptions()
                                            "Gold = perfect stagger (MH first, OH lands within 0.5s).\n" ..
                                            "White = not perfect (OH-first, same-time, or drifting).\n\n" ..
                                            "When to press your macro:\n" ..
-                                           "Only press while OH is in |cffffff0050%-60%|r.\n" ..
+                                           "Only press when OH is |cffffff00>=50%|r (with a +5% click buffer) and MH is in the |cffffff00dynamic time window|r.\n" ..
+                                           "The |cff33ff33dynamic marker|r shows the next valid click spot (usually green; yellow in hold mode).\n" ..
+                                           "The red OH overlay shows where you should not click on this pass.\n" ..
+                                           "Click timing is latency-compensated (ping + tiny safety buffer).\n" ..
+                                           "Haste changes re-time the bars immediately mid-swing.\n" ..
                                            "OH-first: press once.\n" ..
-                                           "Same-time (0.00): press once.\n" ..
-                                           "Drifting (MH first, gap too wide): press while OH stays in 50%-60%, then stop when it turns gold.\n\n" ..
-                                           "If OH is below 50%, pressing does nothing.",
+                                           "Same-time (0.00): wait for marker, then press once.\n" ..
+                                           "If OH is below 50%, pressing does nothing.\n\n" ..
+                                           "Example: MH 10% / OH 40% -> wait until OH reaches ~80%, then click.",
                                     order = 2,
                                     width = "full",
                                 },
@@ -1758,6 +1762,15 @@ function ShammyTime:SetupOptions()
                                 if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
                             end,
                         },
+                        staggerFightScoreEnabled = {
+                            type = "toggle",
+                            name = "Show Fight Score %",
+                            desc = "Show yellow 0-100% stagger correctness on the right side of the stagger bar for the current fight. Resets at the start of the next fight.",
+                            width = "full",
+                            order = 5.35,
+                            get = function() return getFlatDB("staggerFightScoreEnabled", true) end,
+                            set = function(_, v) setFlatDB("staggerFightScoreEnabled", v) end,
+                        },
                         helperHeader = {
                             type = "header",
                             name = "Helper Text",
@@ -1829,7 +1842,7 @@ function ShammyTime:SetupOptions()
                         staggerCooldownDuration = {
                             type = "range",
                             name = "Observe Duration (seconds)",
-                            desc = "After the 50%-60% tap window closes, how long to show \"Observe...\" before the next resync prompt. Also ends early after 2 swing events.",
+                            desc = "After the dynamic click window closes, how long to show \"Observe...\" before the next resync prompt. Also ends early after 2 swing events.",
                             min = 0.5, max = 5.0, step = 0.5,
                             order = 5.87,
                             disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,

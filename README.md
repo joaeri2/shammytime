@@ -72,6 +72,17 @@ Use it to time shocks cleaner and know exactly when your next big Windfury momen
 Dual MH/OH swing bars with color feedback and resync cues.
 Use it to keep cleaner stagger timing and squeeze more consistent DPS from your swing rhythm.
 
+Quick way to use it:
+
+- Gold bars = stagger is good, do nothing.
+- White bars = stagger needs help.
+- Red OH zones = do not click there.
+- Dynamic marker = best click point for this pass (green normally, yellow in hold mode).
+- `Click!` = press your resync macro once now.
+- `Click Multiple Times!` = OH is too far ahead, tap the macro repeatedly to hold OH back.
+- If OH is below 50%, clicking does not move OH yet.
+- Timing is dynamic from your live weapon speeds/haste and aims for MH first with OH within ~0.5s (with ping buffer).
+
 ![Stagger Yellow](<Screenshots/Example Stagger Bar Yellow color.png>)
 ![Stagger Gray](<Screenshots/Example Stagger Bar Gray Color.png>)
 ![Stagger White](<Screenshots/Example Stagger bar White color.png>)

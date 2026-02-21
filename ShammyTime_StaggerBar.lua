@@ -24,11 +24,27 @@ local GOOD_THRESHOLD       = 0.5       -- MH first and <= 0.5s is the target win
 local SAME_TIME_THRESHOLD  = 0.01      -- below this counts as same-time (0.00), not staggered
 local OVERDUE_GRACE        = 0.45      -- tolerate normal event jitter before overdue/resync
 local OVERDUE_CONFIRM_TIME = 0.08      -- require brief persistence to avoid single-frame false positives
+local PARRY_HASTE_HIGH     = 0.60      -- >60% remaining: subtract 40% weapon speed
+local PARRY_HASTE_LOW      = 0.20      -- <=20% remaining: no parry-haste change
+
+-- Dynamic resync click model:
+-- macro can only affect OH at >=50%; click guidance adds a small OH buffer beyond that.
+local RESYNC_OH_ARM         = 0.50     -- OH must be at least this progressed
+local RESYNC_CLICK_BUFFER_PROGRESS = 0.05 -- require a small OH buffer above arm point before "Click!"
+local RESYNC_LOOKAHEAD_CYCLES = 3.0    -- search horizon for next click marker
+local RESYNC_FIXED_BUFFER_SEC = 0.008  -- tiny fixed safety margin (8ms)
+local RESYNC_MAX_LAG_COMP_SEC = 0.200  -- cap compensation to avoid huge ping spikes
 
 -- Colors: { r, g, b }
 local COLOR_GOLD   = { 1.00, 0.84, 0.00 }
 local COLOR_WHITE  = { 1.00, 1.00, 1.00 }
 local COLOR_DELTA  = { 1.00, 0.82, 0.00 }  -- fixed WoW-like yellow for delta readout
+local COLOR_NO_CLICK = { 1.00, 0.18, 0.12 }  -- OH "do not click" overlay (red)
+local ZONE50_LINE_WIDTH = 6              -- thicker fixed arm line for readability
+local ZONE_DYNAMIC_LINE_WIDTH = 6        -- dynamic click marker width
+local HOLD_TEXT_ANCHOR_PROGRESS = 0.75   -- 0.75 = centered between 50% and 100%
+local HOLD_TEXT_X_OFFSET = -8             -- hold text horizontal adjust (pixels)
+local HOLD_TEXT_Y_OFFSET = -8             -- hold text vertical adjust (pixels; base is below bars)
 
 -- Action cue colors
 local COLOR_CUE_CLICK = { 0.20, 1.00, 0.20 }   -- bright green "Click!"
@@ -38,6 +54,7 @@ local STORMSTRIKE_ID = 17364
 
 -- Swing timer update throttle (seconds)
 local UPDATE_INTERVAL = 0.016  -- ~60 fps
+local RESYNC_READY_EPSILON = UPDATE_INTERVAL * 1.5
 
 -- Tooltip: resync guide (source: enhanceshaman.com)
 local TOOLTIP_SOURCE = "https://www.enhanceshaman.com/pages/guide/sync_stagger"
@@ -73,7 +90,7 @@ local swingState = {
     lastSwing  = 0,                -- GetTime() of any last swing (for smart hide)
     delta      = nil,              -- current stagger delta (seconds), nil = unknown
     deltaSign  = 0,                -- 1 = MH first, -1 = OH first, 0 = unknown
-    extraAttacksFlag = false,      -- next MH swing is extra attack, skip recording (SPELL_EXTRA_ATTACKS)
+    extraAttacksPending = 0,       -- pending extra MH swings to skip (SPELL_EXTRA_ATTACKS amount)
     ohSeeded   = false,            -- true if ohExpected/ohLast came from MH-seed only (not a real OH swing yet)
     mhSeeded   = false,            -- true if mhExpected came from OH-seed only (not a real MH swing yet)
 }
@@ -84,7 +101,7 @@ local smartHide = {
     fadeTarget = 0,
 }
 
--- Action cue: time-gated resync prompt that only shows "Click!" in the tap window
+-- Action cue: time-gated resync prompt that only shows "Click!" at valid dynamic timing
 local actionCue = {
     state          = "idle",   -- idle | resync_needed | click_now | cooldown
     mhSwingAt      = 0,        -- GetTime() of most recent MH swing
@@ -92,6 +109,37 @@ local actionCue = {
     cooldownSwings = 0,        -- swing events counted during cooldown
     stateEnteredAt = 0,        -- GetTime() when we entered current state
 }
+
+-- Per-fight stagger score (resets on next combat start).
+local fightScore = {
+    good = 0,   -- MH first and <= 0.5s
+    total = 0,  -- total scored swing-pair samples
+}
+
+local function ResetFightScore()
+    fightScore.good = 0
+    fightScore.total = 0
+end
+
+local function RecordFightScoreSample()
+    if not (UnitAffectingCombat and UnitAffectingCombat("player")) then return end
+    local d = swingState.delta
+    if d == nil or swingState.deltaSign == 0 then return end
+    fightScore.total = (fightScore.total or 0) + 1
+    if swingState.deltaSign > 0 and d >= SAME_TIME_THRESHOLD and d <= GOOD_THRESHOLD then
+        fightScore.good = (fightScore.good or 0) + 1
+    end
+end
+
+local function GetFightScorePercent()
+    if not fightScore.total or fightScore.total <= 0 then
+        return 0
+    end
+    local pct = (fightScore.good / fightScore.total) * 100
+    if pct < 0 then return 0 end
+    if pct > 100 then return 100 end
+    return pct
+end
 
 -- Cast-time detection: non-instant spell completion resets weapon swing in-game
 local castState = {
@@ -151,6 +199,99 @@ local function GetHandCycleSpeed(hand)
     return swingState.ohSpeed
 end
 
+local function Clamp(v, lo, hi)
+    if v < lo then return lo end
+    if v > hi then return hi end
+    return v
+end
+
+local function GetLagCompensationSec()
+    local lagMs = 0
+    if type(GetNetStats) == "function" then
+        local _, _, homeMs, worldMs = GetNetStats()
+        homeMs = tonumber(homeMs) or 0
+        worldMs = tonumber(worldMs) or 0
+        lagMs = (worldMs > 0) and worldMs or homeMs
+    end
+    return Clamp((lagMs / 1000) + RESYNC_FIXED_BUFFER_SEC, RESYNC_FIXED_BUFFER_SEC, RESYNC_MAX_LAG_COMP_SEC)
+end
+
+local function WrapProgress(v)
+    if not v then return 0 end
+    v = v - math.floor(v)
+    if v < 0 then v = v + 1 end
+    return v
+end
+
+local function NormalizeProgress(v)
+    v = v or 0
+    if v < 0 then return 0 end
+    if v >= 1 then return 0.999999 end
+    return v
+end
+
+local function TimeUntilProgress(current, target, cycle)
+    if cycle <= 0 then return nil end
+    current = NormalizeProgress(current)
+    target = Clamp(target, 0, 1)
+    if target >= current then
+        return (target - current) * cycle
+    end
+    return ((1 - current) + target) * cycle
+end
+
+local function BuildProgressIntervals(current, cycle, zoneLo, zoneHi, horizon)
+    local out = {}
+    if cycle <= 0 or horizon <= 0 then return out end
+    zoneLo = Clamp(zoneLo, 0, 1)
+    zoneHi = Clamp(zoneHi, 0, 1)
+    if zoneHi < zoneLo then return out end
+
+    current = NormalizeProgress(current)
+    local zoneDur = (zoneHi - zoneLo) * cycle
+    if zoneDur < 0 then return out end
+
+    local function AddInterval(s, e)
+        if e < 0 or s > horizon then return end
+        if s < 0 then s = 0 end
+        if e > horizon then e = horizon end
+        if e >= s then
+            out[#out + 1] = { s = s, e = e }
+        end
+    end
+
+    -- If we're already in the zone, keep that "now" window.
+    if current >= zoneLo and current <= zoneHi then
+        AddInterval(0, (zoneHi - current) * cycle)
+    end
+
+    local t = TimeUntilProgress(current, zoneLo, cycle)
+    local i = 0
+    while t and t <= horizon and i < 32 do
+        AddInterval(t, t + zoneDur)
+        t = t + cycle
+        i = i + 1
+    end
+    return out
+end
+
+local function FindFirstIntersectionRange(a, b)
+    local i, j = 1, 1
+    while i <= #a and j <= #b do
+        local s = math.max(a[i].s, b[j].s)
+        local e = math.min(a[i].e, b[j].e)
+        if e >= s then
+            return s, e
+        end
+        if a[i].e < b[j].e then
+            i = i + 1
+        else
+            j = j + 1
+        end
+    end
+    return nil, nil
+end
+
 --- Shared visual snapshot used by both bars and debug output.
 --- Returns clamped next swing deltas and clamped bar progress values.
 local function BuildSwingVisualSnapshot(now)
@@ -184,6 +325,137 @@ local function BuildSwingVisualSnapshot(now)
     snap.mhPct = math.floor(100 * snap.mhProgress + 0.5)
     snap.ohPct = math.floor(100 * snap.ohProgress + 0.5)
     return snap
+end
+
+-- Dynamic MH target zone from post-click stagger timing.
+-- After a valid resync click, OH is reset to 50% => next OH swing is ~0.5*OH speed away.
+-- We want MH to still swing first and land within the 0.5s sync window (with lag safety).
+local function GetMhTargetZoneFromDelta(mhCycleSpeed, ohCycleSpeed, lagCompSec)
+    if mhCycleSpeed <= 0 or ohCycleSpeed <= 0 then
+        return nil, nil
+    end
+
+    local minLead = SAME_TIME_THRESHOLD
+    local lagSafety = Clamp(lagCompSec or 0, 0, 0.15)
+    local maxLead = GOOD_THRESHOLD - lagSafety
+    if maxLead <= (minLead + 0.01) then
+        maxLead = minLead + 0.01
+    end
+
+    local ohHalf = 0.5 * ohCycleSpeed
+    local mhRemainingLo = Clamp(ohHalf - maxLead, 0, mhCycleSpeed)
+    local mhRemainingHi = Clamp(ohHalf - minLead, 0, mhCycleSpeed)
+    if mhRemainingHi < mhRemainingLo then
+        return nil, nil
+    end
+
+    local zoneLo = Clamp(1 - (mhRemainingHi / mhCycleSpeed), 0, 1)
+    local zoneHi = Clamp(1 - (mhRemainingLo / mhCycleSpeed), 0, 1)
+    if zoneHi < zoneLo then
+        return nil, nil
+    end
+    return zoneLo, zoneHi
+end
+
+-- Internal helper for direct MH+OH intersection windows.
+-- Returns: tClickSec, markerOhProgress, markerMhProgress, latestSafeOhProgress
+local function SolveResyncWindowFromProgress(mhProgress, ohProgress, mhCycleSpeed, ohCycleSpeed, horizon, lagCompSec, ohClickMin, mhZoneLo, mhZoneHi)
+    if mhZoneLo == nil or mhZoneHi == nil then
+        return nil, nil, nil, nil
+    end
+    local mhIntervals = BuildProgressIntervals(
+        mhProgress, mhCycleSpeed,
+        mhZoneLo, mhZoneHi,
+        horizon
+    )
+    local ohIntervals = BuildProgressIntervals(
+        ohProgress, ohCycleSpeed,
+        ohClickMin, 1.0,
+        horizon
+    )
+
+    local tStart, tEnd = FindFirstIntersectionRange(mhIntervals, ohIntervals)
+    if not tStart then
+        return nil, nil, nil, nil
+    end
+
+    -- Local click should happen a little earlier so server receives it on time.
+    local tActionStart = math.max(0, tStart - lagCompSec)
+    local tActionEnd = math.max(tActionStart, math.max(0, tEnd - lagCompSec))
+
+    local markerOh = WrapProgress(ohProgress + (tActionStart / ohCycleSpeed))
+    local markerMh = WrapProgress(mhProgress + (tActionStart / mhCycleSpeed))
+    local latestSafeOh = WrapProgress(ohProgress + (tActionEnd / ohCycleSpeed))
+    -- Keep visual guides stable: never show the dynamic marker/late edge below OH click minimum.
+    -- This avoids "stuck at 100% then sudden jump" behavior before OH reaches the arm threshold.
+    if markerOh < ohClickMin then
+        markerOh = ohClickMin
+    end
+    if latestSafeOh < ohClickMin then
+        latestSafeOh = ohClickMin
+    end
+
+    return tActionStart, markerOh, markerMh, latestSafeOh
+end
+
+--- Find earliest future time where a resync click is valid:
+---   OH >= (50% + buffer) and MH in a dynamic zone derived from the 0.5s window.
+--- Returns:
+---   tClickSec, markerOhProgress, markerMhProgress, latestSafeOhProgress, mode
+---   mode = "normal" | "hold_now" | nil
+local function FindNextResyncOpportunity(now, snap, lagCompSec, allowHold)
+    now = now or GetTime()
+    snap = snap or BuildSwingVisualSnapshot(now)
+    lagCompSec = lagCompSec or 0
+    if allowHold == nil then allowHold = true end
+
+    local mhCycleSpeed = GetHandCycleSpeed("mh")
+    local ohCycleSpeed = GetHandCycleSpeed("oh")
+    if mhCycleSpeed <= 0 or ohCycleSpeed <= 0 then
+        return nil, nil, nil, nil, nil
+    end
+
+    if swingState.mhLast <= 0 or swingState.ohLast <= 0 then
+        return nil, nil, nil, nil, nil
+    end
+
+    local mhProgress = NormalizeProgress(snap.mhProgress)
+    local ohProgress = NormalizeProgress(snap.ohProgress)
+    local horizon = math.max(mhCycleSpeed, ohCycleSpeed) * RESYNC_LOOKAHEAD_CYCLES
+    local ohClickMin = Clamp(RESYNC_OH_ARM + RESYNC_CLICK_BUFFER_PROGRESS, RESYNC_OH_ARM, 0.99)
+    local mhZoneLo, mhZoneHi = GetMhTargetZoneFromDelta(mhCycleSpeed, ohCycleSpeed, lagCompSec)
+    if mhZoneLo == nil or mhZoneHi == nil then
+        return nil, nil, nil, nil, nil
+    end
+
+    local tActionStart, markerOh, markerMh, latestSafeOh = SolveResyncWindowFromProgress(
+        mhProgress, ohProgress, mhCycleSpeed, ohCycleSpeed, horizon, lagCompSec, ohClickMin, mhZoneLo, mhZoneHi
+    )
+
+    -- Pure moving-window hold rule:
+    -- if OH is already clickable (>=55%) but there is no valid computed click window
+    -- before the next OH swing, hold immediately.
+    if allowHold and ohProgress >= ohClickMin then
+        local tToOhSwing = TimeUntilProgress(ohProgress, 1.0, ohCycleSpeed)
+        if tToOhSwing then
+            local holdLatestSec = math.max(0, tToOhSwing - lagCompSec)
+            local holdLatestOh = WrapProgress(ohProgress + (holdLatestSec / ohCycleSpeed))
+            if holdLatestOh < ohClickMin then
+                holdLatestOh = 0.999
+            end
+            local directClickBeforeSwing = tActionStart ~= nil and tActionStart <= (holdLatestSec + RESYNC_READY_EPSILON)
+            if not directClickBeforeSwing then
+                local holdStartOh = Clamp(ohProgress, ohClickMin, 0.999)
+                return 0, holdStartOh, mhProgress, holdLatestOh, "hold_now"
+            end
+        end
+    end
+
+    if tActionStart ~= nil then
+        return tActionStart, markerOh, markerMh, latestSafeOh, "normal"
+    end
+
+    return nil, nil, nil, nil, nil
 end
 
 local function FirstBoolean(...)
@@ -297,6 +569,123 @@ local function RefreshWeaponSpeeds()
     swingState.ohSpeed = oh or 0
 end
 
+--- Re-time a running hand cycle immediately after attack speed changes.
+--- Keeps visual progress continuous but updates remaining time to new speed.
+local function RetimeHandCycle(hand, now, oldCycle, newCycle)
+    if newCycle <= 0 then return end
+    local last = (hand == "mh") and swingState.mhLast or swingState.ohLast
+    local expected = (hand == "mh") and swingState.mhExpected or swingState.ohExpected
+    local progress = 0
+
+    if last > 0 and oldCycle > 0 then
+        progress = Clamp((now - last) / oldCycle, 0, 1)
+    elseif expected > 0 and oldCycle > 0 then
+        progress = Clamp(1 - ((expected - now) / oldCycle), 0, 1)
+    end
+
+    local newLast = now - progress * newCycle
+    local newExpected = newLast + newCycle
+
+    if hand == "mh" then
+        swingState.mhSpeedAtStart = newCycle
+        if swingState.mhLast > 0 or swingState.mhExpected > 0 then
+            swingState.mhLast = newLast
+            swingState.mhExpected = newExpected
+        end
+    else
+        swingState.ohSpeedAtStart = newCycle
+        if swingState.ohLast > 0 or swingState.ohExpected > 0 then
+            swingState.ohLast = newLast
+            swingState.ohExpected = newExpected
+        end
+    end
+end
+
+local function DecrementExtraAttacksPending()
+    if swingState.extraAttacksPending and swingState.extraAttacksPending > 0 then
+        swingState.extraAttacksPending = swingState.extraAttacksPending - 1
+        if swingState.extraAttacksPending < 0 then
+            swingState.extraAttacksPending = 0
+        end
+        return true
+    end
+    return false
+end
+
+--- Apply parry haste to the next pending hand swing when the player parries an incoming swing.
+--- TBC-like approximation:
+---   - remaining > 60%: reduce by 40% of cycle
+---   - 20% < remaining <= 60%: set remaining to 20%
+---   - remaining <= 20%: no change
+local function ApplyIncomingParryHaste(now)
+    local function Remaining(expected)
+        if expected and expected > now then
+            return expected - now
+        end
+        return nil
+    end
+
+    local mhRem = Remaining(swingState.mhExpected)
+    local ohRem = Remaining(swingState.ohExpected)
+    if not mhRem and not ohRem then
+        return false
+    end
+
+    local hand
+    local rem
+    if mhRem and ohRem then
+        hand = (mhRem <= ohRem) and "mh" or "oh"
+        rem = (hand == "mh") and mhRem or ohRem
+    elseif mhRem then
+        hand = "mh"
+        rem = mhRem
+    else
+        hand = "oh"
+        rem = ohRem
+    end
+
+    local cycle = GetHandCycleSpeed(hand)
+    if cycle <= 0 or rem <= 0 then
+        return false
+    end
+
+    local remPct = rem / cycle
+    local newRem = rem
+    if remPct > PARRY_HASTE_HIGH then
+        newRem = rem - (0.40 * cycle)
+    elseif remPct > PARRY_HASTE_LOW then
+        newRem = PARRY_HASTE_LOW * cycle
+    else
+        return false
+    end
+
+    if newRem >= rem then
+        return false
+    end
+
+    local newLast = now - (cycle - newRem)
+    if hand == "mh" then
+        swingState.mhSpeedAtStart = cycle
+        swingState.mhLast = newLast
+        swingState.mhExpected = now + newRem
+    else
+        swingState.ohSpeedAtStart = cycle
+        swingState.ohLast = newLast
+        swingState.ohExpected = now + newRem
+    end
+    ClearOverdueTrackingForHand(hand)
+    swingState.active = true
+
+    if IsSwingDebugEnabled() then
+        SwingDebugLog(string.format(
+            "parry haste: %s rem %.2f -> %.2f (cycle %.2f)",
+            hand == "mh" and "MH" or "OH",
+            rem, newRem, cycle
+        ))
+    end
+    return true
+end
+
 --- Determine which hand a swing belongs to based on expected timing.
 local function AttributeSwing(now)
     if swingState.firstSwing then
@@ -387,6 +776,7 @@ local function RecordSwing(hand, now)
     end
 
     -- Update delta: how close are the most recent MH and OH swings?
+    local scoredDelta = false
     if swingState.mhLast > 0 and swingState.ohLast > 0 then
         local raw = swingState.ohLast - swingState.mhLast
         local maxWindow = math.max(GetHandCycleSpeed("mh"), GetHandCycleSpeed("oh"), 1)
@@ -400,6 +790,7 @@ local function RecordSwing(hand, now)
             local predicted = swingState.ohExpected - swingState.mhLast
             swingState.delta = math.min(predicted, maxWindow)
             swingState.deltaSign = 1   -- MH first (predicted)
+            scoredDelta = true
 
         elseif raw > 0 and raw > halfWindow
                and swingState.mhExpected > swingState.ohLast then
@@ -408,13 +799,18 @@ local function RecordSwing(hand, now)
             local predicted = swingState.mhExpected - swingState.ohLast
             swingState.delta = math.min(predicted, maxWindow)
             swingState.deltaSign = -1  -- OH first (predicted)
+            scoredDelta = true
 
         elseif math.abs(raw) <= maxWindow then
             -- Same-cycle comparison: both swings are recent enough to compare
             -- directly.  This is the normal case (second hand completes the pair).
             swingState.delta = math.abs(raw)
             swingState.deltaSign = (raw >= 0) and 1 or -1
+            scoredDelta = true
         end
+    end
+    if scoredDelta then
+        RecordFightScoreSample()
     end
 end
 
@@ -467,17 +863,24 @@ local function AttributeFirstTwoSwings(now)
 
     -- Update delta (same logic as RecordSwing when both hands set)
     local raw = swingState.ohLast - swingState.mhLast
+    local scoredDelta = false
     if raw < 0 and math.abs(raw) > halfWindow and swingState.ohExpected > swingState.mhLast then
         local predicted = swingState.ohExpected - swingState.mhLast
         swingState.delta = math.min(predicted, maxWindow)
         swingState.deltaSign = 1
+        scoredDelta = true
     elseif raw > 0 and raw > halfWindow and swingState.mhExpected > swingState.ohLast then
         local predicted = swingState.mhExpected - swingState.ohLast
         swingState.delta = math.min(predicted, maxWindow)
         swingState.deltaSign = -1
+        scoredDelta = true
     elseif math.abs(raw) <= maxWindow then
         swingState.delta = math.abs(raw)
         swingState.deltaSign = (raw >= 0) and 1 or -1
+        scoredDelta = true
+    end
+    if scoredDelta then
+        RecordFightScoreSample()
     end
 end
 
@@ -500,7 +903,7 @@ local function ClearStaggerVisuals(reason)
     swingState.ohExpected = 0
     swingState.firstSwing = true
     swingState.pendingFirstSwingTime = 0
-    swingState.extraAttacksFlag = false
+    swingState.extraAttacksPending = 0
     swingState.ohSeeded = false
     swingState.mhSeeded = false
     swingState.delta = nil
@@ -611,16 +1014,22 @@ local function CreateStaggerBarFrame()
     f:SetScript("OnEnter", function(self)
         if GameTooltip then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:AddLine("When to Resync", 1, 0.82, 0, true)
+            GameTooltip:AddLine("Stagger Click Guide", 1, 0.82, 0, true)
             GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("OH hitting first (wrong order)", 1, 0.82, 0, true)
-            GameTooltip:AddLine("Wait until OH is between 50%-60% of its swing, then press once. Usually enough to flip priority.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Top bar = MH. Bottom bar = OH.", 0.9, 0.9, 0.9, true)
             GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("Both hands hit at same time (synced but not staggered)", 1, 0.82, 0, true)
-            GameTooltip:AddLine("Wait until OH is between 50%-60%, then press once. Creates a small MH lead. Do not press again.", 0.9, 0.9, 0.9, true)
-            GameTooltip:AddLine(" ")
-            GameTooltip:AddLine("MH first but OH not in window (drifting)", 1, 0.82, 0, true)
-            GameTooltip:AddLine("Wait until OH is between 50%-60%. Press repeatedly while OH stays in that window; stop as soon as OH lines up behind MH.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Simple rules", 1, 0.82, 0, true)
+            GameTooltip:AddLine("Green state = all good, no action needed.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("White zone = click allowed.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Red zones = do not click.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Dynamic marker = ideal click point for this pass (green normally, yellow in hold mode).", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Try to click when OH reaches the marker, inside white and outside red.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("'Click!' = press now. 'Click Multiple Times!' = hold until marker.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("'Synced: wait for marker' = bars are stacked; wait for the dynamic window.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("The marker uses live MH/OH speeds and the 0.5s rule (with lag buffer).", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Timing includes ping and safety buffer.", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("Right yellow % = how correct your stagger is this fight (0-100).", 0.9, 0.9, 0.9, true)
+            GameTooltip:AddLine("It auto-resets when the next fight starts.", 0.9, 0.9, 0.9, true)
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine("Source: " .. TOOLTIP_SOURCE, 0.5, 0.7, 1, true)
             GameTooltip:Show()
@@ -644,7 +1053,7 @@ local function CreateStaggerBarFrame()
     f.cropTop = CROP_TOP
     f.cropBottom = CROP_BOTTOM
 
-    -- Layer 2: Bar container (same frame level as base; bars are ARTWORK)
+    -- Layer 1: White swing bars
     f.barFrame = CreateFrame("Frame", nil, f)
     f.barFrame:SetAllPoints(f)
     f.barFrame:SetFrameLevel(baseLevel)
@@ -658,30 +1067,7 @@ local function CreateStaggerBarFrame()
     f.ohBar = f.barFrame:CreateTexture(nil, "ARTWORK")
     f.ohBar:SetColorTexture(COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1)
 
-    -- Markers overlay: zone lines (50%, 60%) and OH cursor (moves with offhand progress)
-    f.markersFrame = CreateFrame("Frame", nil, f)
-    f.markersFrame:SetAllPoints(f)
-    f.markersFrame:SetFrameLevel(baseLevel + 0.5)
-    f.markersFrame:EnableMouse(false)
-
-    f.ohCursorTex = f.markersFrame:CreateTexture(nil, "OVERLAY")
-    f.ohCursorTex:SetColorTexture(0.2, 1, 0.2, 0.9)  -- bright green
-    f.ohCursorTex:SetSize(4, 8)
-
-    f.mhZone50 = f.markersFrame:CreateTexture(nil, "OVERLAY")
-    f.mhZone50:SetColorTexture(1, 0.6, 0.2, 0.7)  -- orange
-    f.mhZone50:SetSize(2, 6)
-    f.mhZone60 = f.markersFrame:CreateTexture(nil, "OVERLAY")
-    f.mhZone60:SetColorTexture(0.2, 1, 0.2, 0.7)  -- green
-    f.mhZone60:SetSize(2, 6)
-    f.ohZone50 = f.markersFrame:CreateTexture(nil, "OVERLAY")
-    f.ohZone50:SetColorTexture(1, 0.6, 0.2, 0.7)
-    f.ohZone50:SetSize(2, 6)
-    f.ohZone60 = f.markersFrame:CreateTexture(nil, "OVERLAY")
-    f.ohZone60:SetColorTexture(0.2, 1, 0.2, 0.7)
-    f.ohZone60:SetSize(2, 6)
-
-    -- Layer 3: Front texture (one level above bars)
+    -- Layer 2a: Front texture (above bars)
     f.frontFrame = CreateFrame("Frame", nil, f)
     f.frontFrame:SetAllPoints(f)
     f.frontFrame:SetFrameLevel(baseLevel + 1)
@@ -694,10 +1080,51 @@ local function CreateStaggerBarFrame()
     f.frontTex:SetAllPoints(f.frontFrame)
     f.frontTex:SetTexCoord(0, 1, CROP_TOP, CROP_BOTTOM)
 
-    -- Layer 4: Delta text (two levels above bars, on top of front texture)
+    -- Layer 2: OH red no-click overlay (above white bars/front art)
+    f.noClickFrame = CreateFrame("Frame", nil, f)
+    f.noClickFrame:SetAllPoints(f)
+    f.noClickFrame:SetFrameLevel(baseLevel + 2)
+    f.noClickFrame:EnableMouse(false)
+
+    -- Early no-click segment: fixed OH arm buffer (50% -> 55% by default).
+    f.ohNoClickEarlyTex = f.noClickFrame:CreateTexture(nil, "ARTWORK")
+    f.ohNoClickEarlyTex:SetColorTexture(COLOR_NO_CLICK[1], COLOR_NO_CLICK[2], COLOR_NO_CLICK[3], 1)
+    f.ohNoClickEarlyTex:SetSize(1, 6)
+    f.ohNoClickEarlyTex:Hide()
+
+    -- Late no-click segment: too late for this pass.
+    f.ohNoClickTex = f.noClickFrame:CreateTexture(nil, "ARTWORK")
+    f.ohNoClickTex:SetColorTexture(COLOR_NO_CLICK[1], COLOR_NO_CLICK[2], COLOR_NO_CLICK[3], 1)
+    f.ohNoClickTex:SetSize(1, 6)
+    f.ohNoClickTex:Hide()
+
+    -- Layer 3: Markers overlay (yellow arm line + dynamic line + OH cursor)
+    f.markersFrame = CreateFrame("Frame", nil, f)
+    f.markersFrame:SetAllPoints(f)
+    f.markersFrame:SetFrameLevel(baseLevel + 3)
+    f.markersFrame:EnableMouse(false)
+
+    f.ohCursorTex = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.ohCursorTex:SetColorTexture(0.2, 1, 0.2, 0.9)  -- bright green
+    f.ohCursorTex:SetSize(4, 8)
+
+    f.mhZone50 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.mhZone50:SetColorTexture(COLOR_NO_CLICK[1], COLOR_NO_CLICK[2], COLOR_NO_CLICK[3], 0.85)  -- red arm marker
+    f.mhZone50:SetSize(ZONE50_LINE_WIDTH, 6)
+    f.mhZone60 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.mhZone60:SetColorTexture(0.2, 1, 0.2, 0.7)  -- green
+    f.mhZone60:SetSize(ZONE_DYNAMIC_LINE_WIDTH, 6)
+    f.ohZone50 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.ohZone50:SetColorTexture(COLOR_NO_CLICK[1], COLOR_NO_CLICK[2], COLOR_NO_CLICK[3], 0.85)
+    f.ohZone50:SetSize(ZONE50_LINE_WIDTH, 6)
+    f.ohZone60 = f.markersFrame:CreateTexture(nil, "OVERLAY")
+    f.ohZone60:SetColorTexture(0.2, 1, 0.2, 0.7)
+    f.ohZone60:SetSize(ZONE_DYNAMIC_LINE_WIDTH, 6)
+
+    -- Text: keep above all bar overlays
     f.textFrame = CreateFrame("Frame", nil, f)
     f.textFrame:SetAllPoints(f)
-    f.textFrame:SetFrameLevel(baseLevel + 2)
+    f.textFrame:SetFrameLevel(baseLevel + 4)
     f.textFrame:EnableMouse(false)
 
     local font = "Fonts\\FRIZQT__.TTF"
@@ -705,6 +1132,13 @@ local function CreateStaggerBarFrame()
     f.deltaText:SetFont(font, 14, "OUTLINE")
     f.deltaText:SetPoint("CENTER", f, "CENTER", 0, 0)
     f.deltaText:SetText("")
+
+    -- Fight stagger score text (0-100%) shown on right side.
+    f.scoreText = f.textFrame:CreateFontString(nil, "OVERLAY")
+    f.scoreText:SetFont(font, 14, "OUTLINE")
+    f.scoreText:SetPoint("CENTER", f, "CENTER", 0, 0)
+    f.scoreText:SetText("")
+    f.scoreText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
 
     -- MH / OH labels (tiny, left of bars)
     f.mhLabel = f.textFrame:CreateFontString(nil, "OVERLAY")
@@ -722,6 +1156,12 @@ local function CreateStaggerBarFrame()
     f.helperText:SetFont(font, 11, "OUTLINE")
     f.helperText:SetPoint("CENTER", f, "CENTER", 0, -20)
     f.helperText:SetText("")
+
+    -- Hold helper text: separate position so it never blocks the bars.
+    f.holdHelperText = f.textFrame:CreateFontString(nil, "OVERLAY")
+    f.holdHelperText:SetFont(font, 11, "OUTLINE")
+    f.holdHelperText:SetPoint("CENTER", f, "CENTER", 0, -30)
+    f.holdHelperText:SetText("")
 
     -- Start at alpha 0 but shown, so OnUpdate fires immediately.
     -- UpdateSmartHide will manage visibility (show/hide) from the first frame.
@@ -774,6 +1214,14 @@ local function ApplyStaggerBarLayout()
     f.deltaText:SetFont("Fonts\\FRIZQT__.TTF", fontSz, "OUTLINE")
     f.deltaText:ClearAllPoints()
     f.deltaText:SetPoint("CENTER", f, "CENTER", dx, dy)
+    if f.scoreText then
+        local scoreSz = math.max(10, math.floor(fontSz * 0.75 + 0.5))
+        local scoreX = bx + (barW / 2) + 28
+        local scoreY = by
+        f.scoreText:SetFont("Fonts\\FRIZQT__.TTF", scoreSz, "OUTLINE")
+        f.scoreText:ClearAllPoints()
+        f.scoreText:SetPoint("CENTER", f, "CENTER", scoreX, scoreY)
+    end
 
     -- Helper text
     local helperSz = p.staggerHelperFontSize or 11
@@ -783,6 +1231,14 @@ local function ApplyStaggerBarLayout()
         f.helperText:SetFont("Fonts\\FRIZQT__.TTF", helperSz, "OUTLINE")
         f.helperText:ClearAllPoints()
         f.helperText:SetPoint("CENTER", f, "CENTER", hx, hy)
+    end
+    if f.holdHelperText then
+        local holdX = bx + barW * (HOLD_TEXT_ANCHOR_PROGRESS - 0.5) + HOLD_TEXT_X_OFFSET
+        local ohY = topY - barH - gap - barH / 2 + by
+        local holdY = ohY - barH / 2 - 10 + HOLD_TEXT_Y_OFFSET
+        f.holdHelperText:SetFont("Fonts\\FRIZQT__.TTF", helperSz, "OUTLINE")
+        f.holdHelperText:ClearAllPoints()
+        f.holdHelperText:SetPoint("CENTER", f, "CENTER", holdX, holdY)
     end
 
     -- Store barW and bar layout for OnUpdate (cursor + markers)
@@ -798,19 +1254,31 @@ local function ApplyStaggerBarLayout()
         local mhY = topY - barH / 2 + by
         local ohY = topY - barH - gap - barH / 2 + by
 
-        -- Zone markers at 50% and 60% of bar width (resync "click here" reference)
+        -- Zone markers: fixed 50% arm point and dynamic optimal-click marker.
         f.mhZone50:ClearAllPoints()
-        f.mhZone50:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.5, mhY)
-        f.mhZone50:SetSize(2, barH)
+        f.mhZone50:SetPoint("LEFT", f, "CENTER", leftEdge + barW * RESYNC_OH_ARM, mhY)
+        f.mhZone50:SetSize(ZONE50_LINE_WIDTH, barH)
         f.mhZone60:ClearAllPoints()
-        f.mhZone60:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.6, mhY)
-        f.mhZone60:SetSize(2, barH)
+        f.mhZone60:SetPoint("LEFT", f, "CENTER", leftEdge + barW * RESYNC_OH_ARM, mhY)
+        f.mhZone60:SetSize(ZONE_DYNAMIC_LINE_WIDTH, barH)
         f.ohZone50:ClearAllPoints()
-        f.ohZone50:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.5, ohY)
-        f.ohZone50:SetSize(2, barH)
+        f.ohZone50:SetPoint("LEFT", f, "CENTER", leftEdge + barW * RESYNC_OH_ARM, ohY)
+        f.ohZone50:SetSize(ZONE50_LINE_WIDTH, barH)
         f.ohZone60:ClearAllPoints()
-        f.ohZone60:SetPoint("LEFT", f, "CENTER", leftEdge + barW * 0.6, ohY)
-        f.ohZone60:SetSize(2, barH)
+        f.ohZone60:SetPoint("LEFT", f, "CENTER", leftEdge + barW * RESYNC_OH_ARM, ohY)
+        f.ohZone60:SetSize(ZONE_DYNAMIC_LINE_WIDTH, barH)
+        if f.ohNoClickEarlyTex then
+            f.ohNoClickEarlyTex:ClearAllPoints()
+            f.ohNoClickEarlyTex:SetPoint("LEFT", f, "CENTER", leftEdge + barW * RESYNC_OH_ARM, ohY)
+            f.ohNoClickEarlyTex:SetSize(1, barH)
+            f.ohNoClickEarlyTex:Hide()
+        end
+        if f.ohNoClickTex then
+            f.ohNoClickTex:ClearAllPoints()
+            f.ohNoClickTex:SetPoint("LEFT", f, "CENTER", leftEdge + barW * RESYNC_OH_ARM, ohY)
+            f.ohNoClickTex:SetSize(1, barH)
+            f.ohNoClickTex:Hide()
+        end
 
         -- OH cursor size (position set in OnUpdate)
         f.ohCursorTex:SetSize(4, barH + 2)
@@ -973,6 +1441,12 @@ local function OnUpdate(self, elapsed)
     local snap = BuildSwingVisualSnapshot(now)
     local mhProgress = snap.mhProgress
     local ohProgress = snap.ohProgress
+    local hasDelta = swingState.delta ~= nil
+    local isOHFirst = hasDelta and (swingState.deltaSign < 0) or false
+    local isSameTime = hasDelta and (swingState.deltaSign >= 0) and (swingState.delta < SAME_TIME_THRESHOLD) or false
+    local lagCompSec = GetLagCompensationSec()
+    -- Same-time bars should not flip into hold spam while moving together.
+    local nextClickIn, nextClickOh, _, nextClickLateOh, nextClickMode = FindNextResyncOpportunity(now, snap, lagCompSec, not isSameTime)
 
     -- Set bar widths (minimum 1 pixel to avoid SetSize(0, h) issues)
     local mhW = math.max(1, math.floor(maxW * mhProgress + 0.5))
@@ -984,9 +1458,13 @@ local function OnUpdate(self, elapsed)
     local p = GetDB()
     local barAlpha = (p and p.staggerSwingBarAlpha) or 1
     local barColor = GetSwingBarColor()
+    local cueEnabled = p and p.staggerActionCueEnabled ~= false
+    local showDriftCue = not p or p.staggerActionCueYellow ~= false
+    local isDrifting = hasDelta and (not isOHFirst) and (not isSameTime) and (swingState.delta > GOOD_THRESHOLD) or false
+    local needsResync = hasDelta and (isOHFirst or isSameTime or (showDriftCue and isDrifting)) or false
     f.mhBar:SetColorTexture(barColor[1], barColor[2], barColor[3], barAlpha)
     f.ohBar:SetColorTexture(barColor[1], barColor[2], barColor[3], barAlpha)
-    -- Zone markers (50%, 60%) and OH cursor (moving line with offhand progress)
+    -- Zone markers (OH arm + dynamic next-click) and OH cursor (live progress)
     if f.mhZone50 and f.ohCursorTex then
     local showZones = not p or p.staggerShowZoneMarkers ~= false
     local showCursor = not p or p.staggerShowOhCursor ~= false
@@ -996,18 +1474,100 @@ local function OnUpdate(self, elapsed)
     local gap = f._barGap or 4
     local topY = f._barTopY or (barH * 2 + gap) / 2
     local leftEdge = -(maxW / 2) + bx
+    local mhY = topY - barH / 2 + by
     local ohY = topY - barH - gap - barH / 2 + by
+    local ohClickMin = Clamp(RESYNC_OH_ARM + RESYNC_CLICK_BUFFER_PROGRESS, RESYNC_OH_ARM, 0.99)
+    local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
 
     if showZones then
+        local hasDynamicTarget = nextClickOh ~= nil
+        local optimalProgress = nextClickOh or ohClickMin
+        if optimalProgress < ohClickMin then
+            optimalProgress = ohClickMin
+        end
+        -- Keep the marker visible even when the target is exactly at the early-buffer edge.
+        -- Nudge by ~1 px so it doesn't visually merge into the red 50-55% band.
+        local markerProgress = optimalProgress
+        if hasDynamicTarget and markerProgress <= (ohClickMin + 0.001) then
+            markerProgress = math.min(0.999, ohClickMin + (1 / math.max(maxW, 1)))
+        end
+        local showDynamicMarker = hasDynamicTarget
+        local markerX = leftEdge + maxW * markerProgress
+
+        f.mhZone50:ClearAllPoints()
+        f.mhZone50:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * RESYNC_OH_ARM, mhY)
+        f.ohZone50:ClearAllPoints()
+        f.ohZone50:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * RESYNC_OH_ARM, ohY)
+
         f.mhZone50:Show()
-        f.mhZone60:Show()
         f.ohZone50:Show()
-        f.ohZone60:Show()
+        if showDynamicMarker then
+            f.mhZone60:ClearAllPoints()
+            f.mhZone60:SetPoint("LEFT", f, "CENTER", markerX, mhY)
+            f.ohZone60:ClearAllPoints()
+            f.ohZone60:SetPoint("LEFT", f, "CENTER", markerX, ohY)
+            if nextClickMode == "hold_now" then
+                f.mhZone60:SetColorTexture(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 0.95)
+                f.ohZone60:SetColorTexture(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 0.95)
+            else
+                f.mhZone60:SetColorTexture(0.2, 1, 0.2, 0.85)
+                f.ohZone60:SetColorTexture(0.2, 1, 0.2, 0.85)
+            end
+            f.mhZone60:Show()
+            f.ohZone60:Show()
+        else
+            -- Inside the early buffer window, keep only red guidance visible.
+            f.mhZone60:Hide()
+            f.ohZone60:Hide()
+        end
+
+        -- Early no-click: fixed arm buffer (50% -> 55% by default).
+        if f.ohNoClickEarlyTex then
+            if inCombat then
+                local earlyStart = RESYNC_OH_ARM
+                local earlyEnd = Clamp(ohClickMin, RESYNC_OH_ARM, 1)
+                local earlyW = math.floor(maxW * (earlyEnd - earlyStart) + 0.5)
+                if earlyW > 1 then
+                    f.ohNoClickEarlyTex:ClearAllPoints()
+                    f.ohNoClickEarlyTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * earlyStart, ohY)
+                    f.ohNoClickEarlyTex:SetSize(earlyW, barH)
+                    f.ohNoClickEarlyTex:Show()
+                else
+                    f.ohNoClickEarlyTex:Hide()
+                end
+            else
+                f.ohNoClickEarlyTex:Hide()
+            end
+        end
+
+        -- Late no-click: too late for this pass.
+        if f.ohNoClickTex then
+            if inCombat then
+                if nextClickLateOh ~= nil then
+                    local noClickStart = Clamp(nextClickLateOh, ohClickMin, 1)
+                    local noClickW = math.floor(maxW * (1 - noClickStart) + 0.5)
+                    if noClickW > 1 then
+                        f.ohNoClickTex:ClearAllPoints()
+                        f.ohNoClickTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * noClickStart, ohY)
+                        f.ohNoClickTex:SetSize(noClickW, barH)
+                        f.ohNoClickTex:Show()
+                    else
+                        f.ohNoClickTex:Hide()
+                    end
+                else
+                    f.ohNoClickTex:Hide()
+                end
+            else
+                f.ohNoClickTex:Hide()
+            end
+        end
     else
         f.mhZone50:Hide()
         f.mhZone60:Hide()
         f.ohZone50:Hide()
         f.ohZone60:Hide()
+        if f.ohNoClickEarlyTex then f.ohNoClickEarlyTex:Hide() end
+        if f.ohNoClickTex then f.ohNoClickTex:Hide() end
     end
 
     if showCursor and swingState.ohLast > 0 then
@@ -1026,86 +1586,137 @@ local function OnUpdate(self, elapsed)
     else
         f.deltaText:SetText("")
     end
+    if f.scoreText then
+        local showScore = not p or p.staggerFightScoreEnabled ~= false
+        if showScore then
+            local pct = math.floor(GetFightScorePercent() + 0.5)
+            f.scoreText:SetText(string.format("%d%%", pct))
+            f.scoreText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
+            f.scoreText:Show()
+        else
+            f.scoreText:SetText("")
+            f.scoreText:Hide()
+        end
+    end
 
     -- Helper text / Action cue
     if f.helperText then
-        local cueEnabled = p and p.staggerActionCueEnabled ~= false
-
-        if cueEnabled and swingState.delta then
-            local showDriftCue = p.staggerActionCueYellow ~= false
-            local isOHFirst = (swingState.deltaSign < 0)
-            local isSameTime = (swingState.deltaSign >= 0) and (swingState.delta < SAME_TIME_THRESHOLD)
-            local isDrifting = (not isOHFirst) and (not isSameTime) and (swingState.delta > GOOD_THRESHOLD)
-            local needsResync = isOHFirst or isSameTime or (showDriftCue and isDrifting)
-
-            -- Resync tap window: OH must be between 50% and 60%.
-            -- This is where the in-game macro reliably shifts the offhand timer.
-            local zoneLo     = 0.50
-            local zoneHi     = 0.60
+        local holdModeActive = nextClickMode == "hold_now"
+        if cueEnabled and (hasDelta or holdModeActive) then
             local cdTime     = (p.staggerCooldownDuration) or 2.0
-            -- All scenarios use OH 50-60 for macro timing.
-            local inZoneOh   = ohProgress >= zoneLo and ohProgress <= zoneHi
-            local inZone     = needsResync and inZoneOh
-
-            ----------------------------------------------------------------
-            -- State machine: safe moment = OH in 50%-60% window.
-            ----------------------------------------------------------------
-            if actionCue.state == "idle" then
-                if needsResync then
-                    local reason = isOHFirst and "delta:OH_first"
-                        or (isSameTime and "delta:same_time")
-                        or (isDrifting and "delta:drift")
-                        or "delta:unspecified"
-                    EnterResyncNeeded(now, reason)
-                end
-
-            elseif actionCue.state == "resync_needed" then
-                if not needsResync then
-                    actionCue.state = "idle"
-                    actionCue.stateEnteredAt = now
-                elseif inZone then
-                    actionCue.state = "click_now"
-                    actionCue.stateEnteredAt = now
-                end
-
-            elseif actionCue.state == "click_now" then
-                if not needsResync then
-                    actionCue.state = "idle"
-                    actionCue.stateEnteredAt = now
-                elseif not inZone then
-                    -- Bar left the 50-60% window (or reset to 0 from new swing)
-                    actionCue.state = "cooldown"
-                    actionCue.cooldownEnd = now + cdTime
-                    actionCue.cooldownSwings = 0
-                    actionCue.stateEnteredAt = now
-                end
-
-            elseif actionCue.state == "cooldown" then
-                if not needsResync then
-                    -- Resync worked; clear immediately
-                    actionCue.state = "idle"
-                    actionCue.stateEnteredAt = now
-                elseif now >= actionCue.cooldownEnd
-                       or actionCue.cooldownSwings >= 2 then
-                    -- Time or swing-count based exit
-                    EnterResyncNeeded(now, "cooldown:exit")
-                end
+            -- Dynamic click timing: only click when the next valid opportunity is now.
+            -- Uses OH arm+buffer plus a dynamic MH zone computed from the post-click
+            -- stagger lead-time window (<= 0.5s with lag safety).
+            -- Fallback can also signal an immediate OH-hold prep click when OH is far
+            -- ahead and MH is still below the dynamic zone.
+            -- nextClickIn already includes lag compensation (click slightly early).
+            local clickReadyNow = nextClickIn ~= nil and nextClickIn <= RESYNC_READY_EPSILON
+            local holdNow = holdModeActive
+            local inZone = needsResync and clickReadyNow and not holdNow
+            if f.holdHelperText then
+                f.holdHelperText:SetText("")
             end
 
-            ----------------------------------------------------------------
-            -- Display text by cue state
-            ----------------------------------------------------------------
-            if actionCue.state == "click_now" then
-                f.helperText:SetText("Click!")
-                f.helperText:SetTextColor(
-                    COLOR_CUE_CLICK[1], COLOR_CUE_CLICK[2], COLOR_CUE_CLICK[3], 1)
-            else
-                -- Keep helper clear outside the actual click window.
+            -- Hold mode should be immediate and persistent while condition is true.
+            if holdNow then
+                actionCue.state = "click_now"
+                actionCue.stateEnteredAt = now
                 f.helperText:SetText("")
+                if f.holdHelperText then
+                    f.holdHelperText:SetText("Click Multiple Times!")
+                    f.holdHelperText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
+                else
+                    f.helperText:SetText("Click Multiple Times!")
+                    f.helperText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
+                end
+            else
+
+                ----------------------------------------------------------------
+                -- State machine: safe moment = dynamic MH/OH click condition.
+                ----------------------------------------------------------------
+                if actionCue.state == "idle" then
+                    if needsResync then
+                        local reason = isOHFirst and "delta:OH_first"
+                            or (isSameTime and "delta:same_time")
+                            or (isDrifting and "delta:drift")
+                            or "delta:unspecified"
+                        EnterResyncNeeded(now, reason)
+                    end
+
+                elseif actionCue.state == "resync_needed" then
+                    if not needsResync then
+                        actionCue.state = "idle"
+                        actionCue.stateEnteredAt = now
+                    elseif inZone then
+                        actionCue.state = "click_now"
+                        actionCue.stateEnteredAt = now
+                    end
+
+                elseif actionCue.state == "click_now" then
+                    if not needsResync then
+                        actionCue.state = "idle"
+                        actionCue.stateEnteredAt = now
+                    elseif not inZone then
+                        -- Left the dynamic click timing (or reset to 0 from new swing)
+                        actionCue.state = "cooldown"
+                        actionCue.cooldownEnd = now + cdTime
+                        actionCue.cooldownSwings = 0
+                        actionCue.stateEnteredAt = now
+                    end
+
+                elseif actionCue.state == "cooldown" then
+                    if not needsResync then
+                        -- Resync worked; clear immediately
+                        actionCue.state = "idle"
+                        actionCue.stateEnteredAt = now
+                    elseif now >= actionCue.cooldownEnd
+                           or actionCue.cooldownSwings >= 2 then
+                        -- Time or swing-count based exit
+                        EnterResyncNeeded(now, "cooldown:exit")
+                    end
+                end
+
+                ----------------------------------------------------------------
+                -- Display text by cue state
+                ----------------------------------------------------------------
+                if actionCue.state == "click_now" then
+                    f.helperText:SetText("Click!")
+                    f.helperText:SetTextColor(
+                        COLOR_CUE_CLICK[1], COLOR_CUE_CLICK[2], COLOR_CUE_CLICK[3], 1)
+                else
+                    f.helperText:SetText("")
+                    -- Keep a simple wait cue visible while resync is still pending.
+                    local waitMsg = nil
+                    local ohClickMin = Clamp(RESYNC_OH_ARM + RESYNC_CLICK_BUFFER_PROGRESS, RESYNC_OH_ARM, 0.99)
+                    if needsResync then
+                        -- Same-time resync should keep one stable instruction until click opens.
+                        if isSameTime then
+                            waitMsg = "Synced: wait for marker"
+                        elseif ohProgress < RESYNC_OH_ARM then
+                            waitMsg = "Wait: OH < 50%"
+                        elseif ohProgress < ohClickMin then
+                            waitMsg = "Wait: OH < 55%"
+                        else
+                            waitMsg = "Wait for marker"
+                        end
+                    end
+                    if waitMsg then
+                        if f.holdHelperText then
+                            f.holdHelperText:SetText(waitMsg)
+                            f.holdHelperText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
+                        else
+                            f.helperText:SetText(waitMsg)
+                            f.helperText:SetTextColor(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 1)
+                        end
+                    end
+                end
             end
         else
             -- Action cue disabled or no swing data: keep helper clear.
             f.helperText:SetText("")
+            if f.holdHelperText then
+                f.holdHelperText:SetText("")
+            end
         end
     end
 end
@@ -1117,11 +1728,37 @@ local eventFrame = CreateFrame("Frame")
 
 local function OnEvent(self, event, ...)
     if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        local timestamp, subevent, _, sourceGUID = CombatLogGetCurrentEventInfo()
-        if sourceGUID ~= UnitGUID("player") then return end
+        local timestamp, subevent, _, sourceGUID, _, _, _, destGUID = CombatLogGetCurrentEventInfo()
+        local playerGUID = UnitGUID("player")
+
+        -- Incoming parry (enemy swing is parried by player) can apply parry haste to the player's next swing.
+        if subevent == "SWING_MISSED" and destGUID == playerGUID and sourceGUID ~= playerGUID then
+            local ev = { CombatLogGetCurrentEventInfo() }
+            local p9, p12 = ev[9], ev[12]
+            local missType = (type(p12) == "string") and p12 or (type(p9) == "string") and p9
+            if missType == "PARRY" then
+                local now = GetTime()
+                if ApplyIncomingParryHaste(now) then
+                    SwingDebugLogVisualState(now)
+                elseif IsSwingDebugEnabled() then
+                    SwingDebugLog("parry haste: incoming parry seen, no active swing to adjust")
+                end
+            end
+        end
+
+        if sourceGUID ~= playerGUID then return end
 
         if subevent == "SPELL_EXTRA_ATTACKS" then
-            swingState.extraAttacksFlag = true
+            local extraCount = tonumber(select(15, CombatLogGetCurrentEventInfo())) or 1
+            if extraCount < 1 then extraCount = 1 end
+            swingState.extraAttacksPending = (swingState.extraAttacksPending or 0) + extraCount
+            if IsSwingDebugEnabled() then
+                SwingDebugLog(string.format(
+                    "SPELL_EXTRA_ATTACKS pending=%d (+%d)",
+                    swingState.extraAttacksPending,
+                    extraCount
+                ))
+            end
             return
         end
 
@@ -1154,8 +1791,10 @@ local function OnEvent(self, event, ...)
                 SwingDebugLogEventTrace("SWING_MISSED", missType, isOffHand, hand, now, decision)
                 local handLabel = (hand == "mh") and "Right (MH)" or "Left (OH)"
                 SwingDebugLog(handLabel .. " " .. (missType and tostring(missType):lower() or "miss"))
-                if hand == "mh" then
-                    swingState.extraAttacksFlag = false
+                if hand == "mh" and DecrementExtraAttacksPending() then
+                    SwingDebugLog("Right (MH) extra attack (missed, skipped)")
+                    SwingDebugLogVisualState(now)
+                    return
                 end
                 if swingState.pendingFirstSwingTime > 0 then
                     swingState.pendingFirstSwingTime = 0
@@ -1174,8 +1813,7 @@ local function OnEvent(self, event, ...)
 
                 if hand ~= nil then
                     SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, hand, now, "cleu:isOffHand")
-                    if hand == "mh" and swingState.extraAttacksFlag then
-                        swingState.extraAttacksFlag = false
+                    if hand == "mh" and DecrementExtraAttacksPending() then
                         SwingDebugLog("Right (MH) extra attack (skipped)")
                         SwingDebugLogVisualState(now)
                     else
@@ -1234,8 +1872,7 @@ local function OnEvent(self, event, ...)
                         decision = "heuristic:AttributeSwing"
                         SwingDebugLog("SWING_DAMAGE isOffHand=nil args (p12=" .. tostring(raw12) .. " p13=" .. tostring(raw13) .. " p21=" .. tostring(raw21) .. ") decision=" .. string.upper(chosenHand))
                         SwingDebugLogEventTrace("SWING_DAMAGE", nil, isOffHand, chosenHand, now, decision)
-                        if chosenHand == "mh" and swingState.extraAttacksFlag then
-                            swingState.extraAttacksFlag = false
+                        if chosenHand == "mh" and DecrementExtraAttacksPending() then
                             SwingDebugLog("Right (MH) extra attack (skipped)")
                             SwingDebugLogVisualState(now)
                         else
@@ -1262,12 +1899,23 @@ local function OnEvent(self, event, ...)
         local unit = ...
         if unit == "player" then
             local oldMh, oldOh = swingState.mhSpeed, swingState.ohSpeed
+            local oldMhCycle, oldOhCycle = GetHandCycleSpeed("mh"), GetHandCycleSpeed("oh")
+            local now = GetTime()
             RefreshWeaponSpeeds()
+            if swingState.active then
+                RetimeHandCycle("mh", now, oldMhCycle or 0, swingState.mhSpeed or 0)
+                RetimeHandCycle("oh", now, oldOhCycle or 0, swingState.ohSpeed or 0)
+                ResetOverdueTracking()
+            end
             if IsSwingDebugEnabled() then
                 SwingDebugLog(string.format(
-                    "UNIT_ATTACK_SPEED oldMH=%.2f newMH=%.2f oldOH=%.2f newOH=%.2f (applies next swing only)",
-                    oldMh or 0, swingState.mhSpeed or 0, oldOh or 0, swingState.ohSpeed or 0
+                    "UNIT_ATTACK_SPEED oldMH=%.2f newMH=%.2f oldOH=%.2f newOH=%.2f (%s)",
+                    oldMh or 0, swingState.mhSpeed or 0, oldOh or 0, swingState.ohSpeed or 0,
+                    swingState.active and "retimed immediately" or "idle"
                 ))
+                if swingState.active then
+                    SwingDebugLogVisualState(now)
+                end
             end
         end
 
@@ -1316,6 +1964,7 @@ local function OnEvent(self, event, ...)
 
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Entered combat: refresh speeds
+        ResetFightScore()
         RefreshWeaponSpeeds()
 
     elseif event == "UNIT_INVENTORY_CHANGED" then

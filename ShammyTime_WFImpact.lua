@@ -189,7 +189,7 @@ local function CreateAnchorFrame()
 
     anchor = CreateFrame("Frame", "ShammyTimeWFImpactFrame", UIParent)
     anchor:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
-    anchor:SetFrameStrata("MEDIUM")
+    anchor:SetFrameStrata("LOW")
     anchor:SetFrameLevel(50)
     anchor:SetClampedToScreen(true)
     anchor:SetMovable(true)

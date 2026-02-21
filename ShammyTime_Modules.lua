@@ -1,5 +1,5 @@
 -- ShammyTime_Modules.lua
--- Registers the 5 UI modules with ShammyTime.Modules (Create, ApplyConfig, SetEnabled, DemoStart, DemoStop)
+-- Registers UI modules with ShammyTime.Modules (Create, ApplyConfig, SetEnabled, DemoStart, DemoStop)
 -- so the options panel and demo system can drive them. Uses existing Ensure*/Apply* APIs.
 
 local ShammyTime = _G.ShammyTime
@@ -220,7 +220,7 @@ function shamanisticFocus:ApplyConfig()
             f:SetPoint(ff.point or "CENTER", relTo, ff.relativePoint or "CENTER", ff.x or 0, ff.y or -150)
         end
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1.17
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -281,7 +281,7 @@ function weaponImbueBar:ApplyConfig()
     if st and st.ApplyImbueBarPosition then
         st.ApplyImbueBarPosition()
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.4
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.75
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -334,7 +334,7 @@ function shieldIndicator:ApplyConfig()
     if st and st.ApplyShieldPosition then
         st.ApplyShieldPosition()
     end
-    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.05 and cfg.scale <= 3) and cfg.scale or 0.2
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.05 and cfg.scale <= 3) and cfg.scale or 0.36
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
     f:SetScale(effScale)
@@ -427,3 +427,173 @@ function wfImpact:DemoStop()
 end
 
 ShammyTime.Modules.wfImpact = wfImpact
+
+-- ---------------------------------------------------------------------------
+-- Windfury ICD (Internal Cooldown indicator)
+-- ---------------------------------------------------------------------------
+local windfuryIcd = {
+    frame = nil,
+}
+
+function windfuryIcd:Create()
+    if ShammyTime.EnsureWindfuryICDFrame then
+        self.frame = ShammyTime.EnsureWindfuryICDFrame()
+    end
+    return self.frame
+end
+
+function windfuryIcd:ApplyConfig()
+    local cfg = getModuleConfig("windfuryIcd")
+    if not cfg then return end
+    self:Create()
+    local st = _G.ShammyTime
+    local f = self.frame or (st and st.GetWindfuryICDFrame and st.GetWindfuryICDFrame())
+    if not f then return end
+    -- Position from windfuryIcdFrame; scale/alpha from this module only.
+    local db = st and st.GetDB and st.GetDB()
+    if db and db.windfuryIcdFrame then
+        local ff = db.windfuryIcdFrame
+        local relTo = (ff.relativeTo and _G[ff.relativeTo]) or UIParent
+        if relTo then
+            f:ClearAllPoints()
+            f:SetPoint(ff.point or "CENTER", relTo, ff.relativePoint or "CENTER", ff.x or 0, ff.y or -250)
+        end
+    end
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 1.045
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
+    f:SetScale(effScale)
+    if db and db.windfuryIcdFrame then
+        local ff = db.windfuryIcdFrame
+        local relTo = (ff.relativeTo and _G[ff.relativeTo]) or UIParent
+        if relTo then
+            f:ClearAllPoints()
+            f:SetPoint(ff.point or "CENTER", relTo, ff.relativePoint or "CENTER", ff.x or 0, ff.y or -250)
+        end
+    end
+end
+
+function windfuryIcd:SetEnabled(enabled)
+    local p = ShammyTime.db.profile
+    if p.modules and p.modules.windfuryIcd then p.modules.windfuryIcd.enabled = enabled end
+    p.wfIcdEnabled = enabled
+    if ShammyTime.ApplyElementVisibility then ShammyTime.ApplyElementVisibility() end
+end
+
+function windfuryIcd:DemoStart()
+    local st = _G.ShammyTime
+    if st and st.StartWindfuryICDTest then st.StartWindfuryICDTest() end
+    self:Create()
+    if self.frame then self.frame:Show(); self.frame:SetAlpha(1) end
+end
+
+function windfuryIcd:DemoStop()
+    local st = _G.ShammyTime
+    if st and st.StopWindfuryICDTest then st.StopWindfuryICDTest() end
+    if st and st.UpdateAllElementsFadeState then st.UpdateAllElementsFadeState() end
+end
+
+ShammyTime.Modules.windfuryIcd = windfuryIcd
+
+-- ---------------------------------------------------------------------------
+-- Stagger Bar (dual-wield swing timer visual)
+-- ---------------------------------------------------------------------------
+local staggerBar = {
+    frame = nil,
+}
+
+function staggerBar:Create()
+    if ShammyTime.EnsureStaggerBarFrame then
+        self.frame = ShammyTime.EnsureStaggerBarFrame()
+    end
+    return self.frame
+end
+
+function staggerBar:ApplyConfig()
+    local cfg = getModuleConfig("staggerBar")
+    if not cfg then return end
+    self:Create()
+    local st = _G.ShammyTime
+    local f = self.frame or (st and st.EnsureStaggerBarFrame and st.EnsureStaggerBarFrame())
+    if not f then return end
+    -- Position first, then scale, then re-apply position so the frame doesn't drift
+    if st and st.ApplyStaggerBarPosition then st.ApplyStaggerBarPosition() end
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.5
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    -- Alpha is NOT set here; UpdateAllElementsFadeState() is the sole owner of frame alpha.
+    f:SetScale(effScale)
+    if st and st.ApplyStaggerBarPosition then st.ApplyStaggerBarPosition() end
+    if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+end
+
+function staggerBar:SetEnabled(enabled)
+    local p = ShammyTime.db.profile
+    if p.modules and p.modules.staggerBar then p.modules.staggerBar.enabled = enabled end
+    p.staggerBarEnabled = enabled
+    if ShammyTime.ApplyElementVisibility then ShammyTime.ApplyElementVisibility() end
+end
+
+function staggerBar:DemoStart()
+    local st = _G.ShammyTime
+    if st and st.StartStaggerBarDemo then st.StartStaggerBarDemo() end
+    self:Create()
+    if self.frame then self.frame:Show(); self.frame:SetAlpha(1) end
+end
+
+function staggerBar:DemoStop()
+    local st = _G.ShammyTime
+    if st and st.StopStaggerBarDemo then st.StopStaggerBarDemo() end
+    if st and st.UpdateAllElementsFadeState then st.UpdateAllElementsFadeState() end
+end
+
+ShammyTime.Modules.staggerBar = staggerBar
+
+-- ---------------------------------------------------------------------------
+-- Pressure Visual (bar + popup slots)
+-- ---------------------------------------------------------------------------
+local pressureVisual = {
+    frame = nil,
+}
+
+function pressureVisual:Create()
+    if ShammyTime.EnsurePressureFrame then
+        self.frame = ShammyTime.EnsurePressureFrame()
+    elseif ShammyTime.GetPressureFrame then
+        self.frame = ShammyTime.GetPressureFrame()
+    end
+    return self.frame
+end
+
+function pressureVisual:ApplyConfig()
+    local cfg = getModuleConfig("pressureVisual")
+    if not cfg then return end
+    self:Create()
+    local st = _G.ShammyTime
+    local f = self.frame or (st and st.GetPressureFrame and st.GetPressureFrame())
+    if not f then return end
+    local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
+    local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
+    local baseScale = (st and st.GetPressureBaseScale and st.GetPressureBaseScale()) or 0.5
+    f:SetScale(baseScale * effScale)
+    local db = st and st.GetDB and st.GetDB()
+    if db then db.pressureScale = moduleScale end
+end
+
+function pressureVisual:SetEnabled(enabled)
+    local p = ShammyTime.db.profile
+    if p.modules and p.modules.pressureVisual then p.modules.pressureVisual.enabled = enabled end
+    p.pressureEnabled = enabled
+    if ShammyTime.ApplyElementVisibility then ShammyTime.ApplyElementVisibility() end
+end
+
+function pressureVisual:DemoStart()
+    local f = self:Create()
+    if f then f:Show(); f:SetAlpha(1) end
+end
+
+function pressureVisual:DemoStop()
+    local st = _G.ShammyTime
+    if st and st.UpdateAllElementsFadeState then st.UpdateAllElementsFadeState() end
+end
+
+ShammyTime.Modules.pressureVisual = pressureVisual

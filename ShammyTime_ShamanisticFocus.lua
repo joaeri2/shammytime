@@ -14,9 +14,10 @@ local FOCUSED_BUFF_SPELL_ID = 43339  -- "Focused" (Shamanistic Focus proc), TBC
 local FOCUS_FADE_IN_DURATION = 0.3   -- off→on transition (~300ms so change is visible but quick)
 local FOCUS_FADE_OUT_DURATION = 0.6
 local FOCUS_HOLD_AFTER_OFF = 3.0  -- seconds to hold "on" art after proc ends before fading to off
-local FOCUS_PULSE_MIN = 0.90   -- scale 90%
-local FOCUS_PULSE_MAX = 1.0   -- scale 100%
-local FOCUS_PULSE_PERIOD = 1.0 -- seconds per full cycle (100% -> 80% -> 100%)
+local FOCUS_CD_TEXT_GAP = 4
+local FOCUS_CD_TEXT_WIDTH = 24
+local FOCUS_CD_Y_OFFSET = -8
+local FOCUS_CD_PAIR_X_OFFSET = -((FOCUS_CD_TEXT_GAP + FOCUS_CD_TEXT_WIDTH) * 0.5)
 
 local focusFrame
 local lastFocusedActive = false
@@ -41,7 +42,7 @@ local DEFAULTS = {
     relativePoint = "CENTER",
     x = 0,
     y = -150,
-    scale = 0.8,
+    scale = 1.3,
     locked = false,
 }
 
@@ -105,6 +106,25 @@ local function AreShocksReady()
     return true
 end
 
+-- Returns cooldown state for the first known shock spell (all shocks share the same cooldown in TBC).
+local function GetShockCooldownState()
+    for _, spellName in ipairs(SHOCK_SPELLS) do
+        local iconTexture = nil
+        if GetSpellInfo then
+            local _, _, tex = GetSpellInfo(spellName)
+            iconTexture = tex
+        end
+        local start, duration, enabled = GetSpellCooldown(spellName)
+        if start then
+            local remaining = (start + (duration or 0)) - GetTime()
+            local onCooldown = enabled ~= 0 and duration and duration > GCD_THRESHOLD and remaining > 0
+            if not onCooldown then remaining = 0 end
+            return onCooldown and true or false, start or 0, duration or 0, remaining or 0, iconTexture
+        end
+    end
+    return false, 0, 0, 0, nil
+end
+
 -- Forward-declare UpdateFocus so the poll timer can call it (defined later).
 local UpdateFocus
 
@@ -130,11 +150,11 @@ local function CreateFocusFrame()
     if focusFrame then return focusFrame end
 
     local db = GetDB()
-    -- Images are 256x256; display at 80 so they look sharp and aren't cut off
+    -- Images are 512×512; display at 80 so they look sharp and aren't cut off
     local iconSize = 80
     local padW, padH = 16, 24
     local f = CreateFrame("Frame", "ShammyTimeShamanisticFocus", UIParent)
-    f:SetFrameStrata("MEDIUM")
+    f:SetFrameStrata("LOW")
     f:SetSize(iconSize + padW, iconSize + padH)
     f:SetClipsChildren(false)
     f:SetScale(db.scale or 0.8)
@@ -176,21 +196,7 @@ local function CreateFocusFrame()
         end
     end)
 
-    -- Shadow behind icon: same file as totems (wf_center_shadow.tga), custom size/offset/tint for this frame
-    local FOCUS_SHADOW_SIZE = 90       -- slightly larger than 80px icon so soft edge shows
-    local FOCUS_SHADOW_OFFSET_X = 2     -- drop shadow offset right
-    local FOCUS_SHADOW_OFFSET_Y = -6    -- drop shadow offset down
-    local FOCUS_SHADOW_TINT = { 0.1, 0.08, 0.1, 0.42 }  -- r, g, b, a (custom for Shamanistic Focus)
-    local focusShadow = f:CreateTexture(nil, "BACKGROUND", nil, -1)
-    focusShadow:SetSize(FOCUS_SHADOW_SIZE, FOCUS_SHADOW_SIZE)
-    focusShadow:SetPoint("CENTER", FOCUS_SHADOW_OFFSET_X, FOCUS_SHADOW_OFFSET_Y)
-    focusShadow:SetTexture(TEX.CENTER_SHADOW)
-    focusShadow:SetTexCoord(0, 1, 0, 1)
-    focusShadow:SetVertexColor(FOCUS_SHADOW_TINT[1], FOCUS_SHADOW_TINT[2], FOCUS_SHADOW_TINT[3], FOCUS_SHADOW_TINT[4])
-    focusShadow:Show()
-    f.focusShadow = focusShadow
     f.baseIconSize = iconSize
-    f.baseShadowSize = FOCUS_SHADOW_SIZE
 
     -- Base: "off" image always visible
     local focusOff = f:CreateTexture(nil, "ARTWORK")
@@ -214,6 +220,35 @@ local function CreateFocusFrame()
     focusOn:Show()
     f.focusOn = focusOn
 
+    -- Shock cooldown marker (same compact top placement as WF ICD SS overlay).
+    local shockCooldownIcon = f:CreateTexture(nil, "OVERLAY")
+    shockCooldownIcon:SetSize(20, 20)
+    shockCooldownIcon:SetPoint("BOTTOM", focusOff, "TOP", FOCUS_CD_PAIR_X_OFFSET, FOCUS_CD_Y_OFFSET)
+    shockCooldownIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    shockCooldownIcon:SetAlpha(1)
+    shockCooldownIcon:Hide()
+    f.shockCooldownIcon = shockCooldownIcon
+
+    local shockCooldownSwipe = CreateFrame("Cooldown", nil, f)
+    shockCooldownSwipe:SetAllPoints(shockCooldownIcon)
+    if shockCooldownSwipe.SetDrawEdge then shockCooldownSwipe:SetDrawEdge(false) end
+    if shockCooldownSwipe.SetDrawBling then shockCooldownSwipe:SetDrawBling(false) end
+    if shockCooldownSwipe.SetHideCountdownNumbers then
+        shockCooldownSwipe:SetHideCountdownNumbers(true)
+    end
+    shockCooldownSwipe:Hide()
+    f.shockCooldownSwipe = shockCooldownSwipe
+
+    local shockCooldownText = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    shockCooldownText:SetPoint("LEFT", shockCooldownIcon, "RIGHT", FOCUS_CD_TEXT_GAP, 0)
+    shockCooldownText:SetWidth(FOCUS_CD_TEXT_WIDTH)
+    shockCooldownText:SetJustifyH("LEFT")
+    shockCooldownText:SetFont(shockCooldownText:GetFont(), 13, "OUTLINE")
+    shockCooldownText:SetTextColor(1, 1, 1, 1)
+    shockCooldownText:SetText("")
+    shockCooldownText:Hide()
+    f.shockCooldownText = shockCooldownText
+
     -- Manual alpha ticker (more reliable than AnimationGroup on some clients)
     f.focusAlphaTicker = nil
     local function stopAlphaTicker()
@@ -222,7 +257,7 @@ local function CreateFocusFrame()
             f.focusAlphaTicker = nil
         end
     end
-    -- Pulse ticker: texture size 100% <-> 80% while proc is active (no frame movement)
+    -- Pulse effect intentionally disabled; keep helpers for cleanup compatibility.
     f.focusPulseTicker = nil
     local function stopPulseTicker()
         if f.focusPulseTicker then
@@ -230,27 +265,11 @@ local function CreateFocusFrame()
             f.focusPulseTicker = nil
         end
         local sz = f.baseIconSize
-        local ss = f.baseShadowSize
         f.focusOff:SetSize(sz, sz)
         f.focusOn:SetSize(sz, sz)
-        f.focusShadow:SetSize(ss, ss)
     end
     local function startPulse()
         stopPulseTicker()
-        local baseIcon = f.baseIconSize
-        local baseShadow = f.baseShadowSize
-        f.focusPulseTicker = C_Timer.NewTicker(1/60, function()
-            local t = GetTime() % FOCUS_PULSE_PERIOD
-            local phase = t / FOCUS_PULSE_PERIOD
-            -- Triangle wave: 1.0 -> 0.8 -> 1.0 over one period
-            local pulseScale = (phase <= 0.5) and (FOCUS_PULSE_MAX - (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * phase)
-                or (FOCUS_PULSE_MIN + (FOCUS_PULSE_MAX - FOCUS_PULSE_MIN) * 2 * (phase - 0.5))
-            local iconSz = baseIcon * pulseScale
-            local shadowSz = baseShadow * pulseScale
-            f.focusOff:SetSize(iconSz, iconSz)
-            f.focusOn:SetSize(iconSz, iconSz)
-            f.focusShadow:SetSize(shadowSz, shadowSz)
-        end)
     end
     local function fadeInOn()
         stopAlphaTicker()
@@ -265,7 +284,6 @@ local function CreateFocusFrame()
                 focusOn:SetAlpha(1)
                 stopAlphaTicker()
                 focusOverlayFadingOn = false
-                startPulse()
                 return
             end
             focusOn:SetAlpha(startAlpha + (1 - startAlpha) * t)
@@ -298,6 +316,39 @@ local function CreateFocusFrame()
     return f
 end
 
+local function UpdateShockCooldownOverlay(hasFocusedBuff)
+    local f = CreateFocusFrame()
+    if not f then return end
+    local icon = f.shockCooldownIcon
+    local swipe = f.shockCooldownSwipe
+    local text = f.shockCooldownText
+    if not icon or not swipe or not text then return end
+
+    local onCooldown, start, duration, remaining, iconTexture = GetShockCooldownState()
+    if iconTexture then
+        icon:SetTexture(iconTexture)
+    end
+
+    if hasFocusedBuff and onCooldown then
+        icon:Show()
+        swipe:Show()
+        if swipe._lastStart ~= start or swipe._lastDuration ~= duration then
+            swipe:SetCooldown(start, duration)
+            swipe._lastStart = start
+            swipe._lastDuration = duration
+        end
+        text:SetText(remaining >= 10 and ("%.0f"):format(remaining) or ("%.1f"):format(remaining))
+        text:Show()
+        return
+    end
+
+    icon:Hide()
+    swipe:Hide()
+    swipe._lastStart = nil
+    swipe._lastDuration = nil
+    text:Hide()
+end
+
 -- Simple light logic: ON when buff is on AND shocks off CD, OFF otherwise, with smooth animations.
 -- hasBuffOverride: hint from main addon, but we always verify with HasFocusedBuff() for ground truth.
 UpdateFocus = function(hasBuffOverride)
@@ -311,6 +362,8 @@ UpdateFocus = function(hasBuffOverride)
     if hasBuffOverride == true and not buffIsOn and not focusOverlayFadingOff then
         buffIsOn = true
     end
+
+    local hasFocusedBuff = buffIsOn
     
     -- Even with the Focused buff active, only glow when shocks are off cooldown.
     -- This makes the lamp signal "you can use your cheap shock RIGHT NOW."
@@ -322,6 +375,8 @@ UpdateFocus = function(hasBuffOverride)
         -- Either buff is off or shocks are ready; no need to poll.
         StopShockCDPoll()
     end
+
+    UpdateShockCooldownOverlay(hasFocusedBuff)
     
     local currentAlpha = f.focusOn:GetAlpha() or 0
     
@@ -341,13 +396,7 @@ UpdateFocus = function(hasBuffOverride)
             return
         end
         
-        -- If already at full alpha and pulsing, do nothing
-        if currentAlpha >= 0.99 and f.focusPulseTicker then
-            -- Already showing "on" and pulsing, nothing to do
-        elseif currentAlpha >= 0.99 then
-            -- At full alpha but not pulsing, start pulse
-            f.startPulse()
-        else
+        if currentAlpha < 0.99 then
             -- Need to show "on" - fade in from current alpha
             f.fadeInOn()
         end
@@ -407,6 +456,7 @@ function ShammyTime.StartShamanisticFocusTest()
     focusTestActive = true
     local f = CreateFocusFrame()
     f:Show()
+    UpdateShockCooldownOverlay(false)
     f.stopAlphaTicker()
     f.focusOn:SetAlpha(0)
     lastFocusedActive = false

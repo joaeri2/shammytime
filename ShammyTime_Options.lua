@@ -9,15 +9,15 @@ local AceConfigDialog = LibStub("AceConfigDialog-3.0")
 local ShammyTime = _G.ShammyTime
 if not ShammyTime then return end
 
--- Satellite bubble names (for per-bubble text position overrides)
-local SATELLITE_NAMES = { "air", "stone", "fire", "grass", "water", "grass_2" }
+-- Satellite bubble names (match v2 texture file positions: middle_right, upper_right, etc.)
+local SATELLITE_NAMES = { "middle_right", "upper_right", "upper_left", "middle_left", "bottom_left", "bottom_right" }
 local SATELLITE_LABELS = {
-    air = "MIN (Air)",
-    stone = "MAX (Stone)",
-    fire = "AVG (Fire)",
-    grass = "PROCS (Grass)",
-    water = "PROC% (Water)",
-    grass_2 = "CRIT% (Grass 2)",
+    middle_right  = "Middle right (MIN)",
+    upper_right   = "Upper right (MAX)",
+    upper_left    = "Upper left (AVG)",
+    middle_left   = "Middle left (PROCS)",
+    bottom_left   = "Bottom left (PROC%)",
+    bottom_right  = "Bottom right (CRIT%)",
 }
 
 --------------------------------------------------------------------------------
@@ -42,6 +42,67 @@ local function getModule(name)
     return p and p.modules and p.modules[name]
 end
 
+-- Normalize user-facing scale values so "current default visual size" = 1.0
+-- for specific circular indicators that historically used different raw scales.
+local MODULE_SCALE_NORMALIZATION = {
+    shieldIndicator = { base = 0.4, minRaw = 0.05, maxRaw = 3 },
+    shamanisticFocus = { base = 1.3, minRaw = 0.1, maxRaw = 3 },
+    windfuryIcd = { base = 1.1, minRaw = 0.1, maxRaw = 3 },
+}
+local MODULE_SCALE_STEP = 0.05
+
+local function round2(v)
+    return math.floor((v * 100) + 0.5) / 100
+end
+
+local function roundUpToStep(v, step)
+    return math.ceil((v / step) - 1e-9) * step
+end
+
+local function roundDownToStep(v, step)
+    return math.floor((v / step) + 1e-9) * step
+end
+
+local function getScaleRule(moduleName)
+    return moduleName and MODULE_SCALE_NORMALIZATION[moduleName] or nil
+end
+
+local function toDisplayScale(moduleName, rawScale)
+    local rule = getScaleRule(moduleName)
+    if not rule then return rawScale end
+    return rawScale / rule.base
+end
+
+local function toRawScale(moduleName, displayScale)
+    local rule = getScaleRule(moduleName)
+    if not rule then return displayScale end
+    return displayScale * rule.base
+end
+
+local function getScaleRawDefault(moduleName)
+    local rule = getScaleRule(moduleName)
+    if rule then return rule.base end
+    return 1
+end
+
+local function getScaleRawBounds(moduleName)
+    local rule = getScaleRule(moduleName)
+    if rule then
+        return rule.minRaw, rule.maxRaw
+    end
+    return 0.1, 3
+end
+
+local function getScaleDisplayBounds(moduleName)
+    local minRaw, maxRaw = getScaleRawBounds(moduleName)
+    local minDisplay = toDisplayScale(moduleName, minRaw)
+    local maxDisplay = toDisplayScale(moduleName, maxRaw)
+    minDisplay = round2(roundUpToStep(minDisplay, MODULE_SCALE_STEP))
+    maxDisplay = round2(roundDownToStep(maxDisplay, MODULE_SCALE_STEP))
+    if maxDisplay < minDisplay then maxDisplay = minDisplay end
+    return minDisplay, maxDisplay
+end
+
 -- Resolve module name from AceConfig info (arg, option.arg, or path when in Modules group)
 local function getModuleKeyFromInfo(info)
     if info.arg and info.arg.module then return info.arg.module end
@@ -57,7 +118,14 @@ local function getModuleOption(info, key)
     local m = getModule(modKey)
     if not m then return nil end
     if key == "enabled" then return m.enabled ~= false end
-    if key == "scale" then return m.scale or 1 end
+    if key == "scale" then
+        local rawScale = (type(m.scale) == "number") and m.scale or getScaleRawDefault(modKey)
+        local displayScale = toDisplayScale(modKey, rawScale)
+        local minDisplay, maxDisplay = getScaleDisplayBounds(modKey)
+        if displayScale < minDisplay then displayScale = minDisplay end
+        if displayScale > maxDisplay then displayScale = maxDisplay end
+        return round2(displayScale)
+    end
     if key == "alpha" then return m.alpha or 1 end
     if key == "fadeEnabled" then return m.fade and m.fade.enabled or false end
     if key == "inactiveAlpha" then return m.fade and m.fade.inactiveAlpha or 0 end
@@ -67,6 +135,7 @@ local function getModuleOption(info, key)
     if key == "noTotemsPlaced" then return m.fade and m.fade.conditions and m.fade.conditions.noTotemsPlaced or false end
     if key == "outOfRange" then return m.fade and m.fade.conditions and m.fade.conditions.outOfRange or false end
     if key == "fadeInOnTarget" then return m.fade and m.fade.conditions and m.fade.conditions.fadeInOnTarget or false end
+    if key == "hideWhenActive" then return m.fade and m.fade.conditions and m.fade.conditions.hideWhenActive or false end
     return nil
 end
 
@@ -75,7 +144,14 @@ local function setModuleOption(info, val, key)
     local m = getModule(modKey)
     if not m then return end
     if key == "enabled" then m.enabled = val end
-    if key == "scale" then m.scale = val end
+    if key == "scale" then
+        local rawMin, rawMax = getScaleRawBounds(modKey)
+        local displayScale = round2(tonumber(val) or 1)
+        local rawScale = toRawScale(modKey, displayScale)
+        if rawScale < rawMin then rawScale = rawMin end
+        if rawScale > rawMax then rawScale = rawMax end
+        m.scale = rawScale
+    end
     if key == "alpha" then m.alpha = val end
     if key == "fadeEnabled" then m.fade = m.fade or {}; m.fade.enabled = val end
     if key == "inactiveAlpha" then m.fade = m.fade or {}; m.fade.inactiveAlpha = val end
@@ -85,11 +161,12 @@ local function setModuleOption(info, val, key)
     if key == "noTotemsPlaced" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.noTotemsPlaced = val end
     if key == "outOfRange" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.outOfRange = val end
     if key == "fadeInOnTarget" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.fadeInOnTarget = val end
+    if key == "hideWhenActive" then m.fade = m.fade or {}; m.fade.conditions = m.fade.conditions or {}; m.fade.conditions.hideWhenActive = val end
     -- When any condition is enabled, turn on fade so the condition takes effect without requiring "Enable Fade" separately.
     -- When all conditions are off, turn off fade so the "Enable Fade" checkbox stays in sync.
-    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" then
+    if key == "outOfCombat" or key == "noTarget" or key == "inactiveBuff" or key == "noTotemsPlaced" or key == "outOfRange" or key == "fadeInOnTarget" or key == "hideWhenActive" then
         local c = m.fade and m.fade.conditions
-        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget) then
+        if c and (c.outOfCombat or c.noTarget or c.inactiveBuff or c.noTotemsPlaced or c.outOfRange or c.fadeInOnTarget or c.hideWhenActive) then
             m.fade.enabled = true
         else
             if m.fade then m.fade.enabled = false end
@@ -104,12 +181,71 @@ local function getFlatDB(key, default)
     local p = getDB()
     if not p then return default end
     local val = p[key]
-    return val ~= nil and val or default
+    if val == nil then return default end
+    return val
 end
 
 local function setFlatDB(key, val)
     local p = getDB()
     if p then p[key] = val end
+    local st = _G.ShammyTime
+    if st and st.ApplyAllConfigs then st:ApplyAllConfigs() end
+end
+
+local PRESSURE_DEV_DEFAULTS = {
+    pressureSimpleResistance = 1.25,
+    pressureSimpleRubberband = 1.10,
+    pressureSimpleTierBase = 2.10,
+    pressureSimpleTierStepPct = 11.00,
+    pressureSimpleTierHelp = 0.85,
+    pressureSimpleOverdrivePercentile = 98.00,
+    pressureSimpleOverdriveMultiplier = 1.16,
+    pressureSimpleTierHoldSec = 5.00,
+    pressureSimpleShakeAmount = 1.00,
+    pressureSimpleShakeFromDamage = 0.85,
+}
+
+local PRESSURE_DEV_LEGACY_KEYS = {
+    "pressureFeelMass",
+    "pressureFeelResistanceScale",
+    "pressureFeelRubberDropSec",
+    "pressureFeelRubberDamping",
+    "pressureFeelRubberOscillations",
+    "pressureFeelRubberLandingFloor",
+    "pressureFeelTierHelpScale",
+    "pressureFeelShakeAmount",
+    "pressureFeelShakeDamageScale",
+    "pressureOverloadThreshold",
+    "pressureOverloadTierBoost",
+    "pressureOverloadCooldownSec",
+    "pressureTierHoldMinSec",
+    "pressureTierConcavityDepth",
+    "pressureTierMomentumOnPromote",
+    "pressureTierMomentumPerTier",
+    "pressureTierMomentumMax",
+    "pressureTierMomentumDecayTau",
+    "pressureTierMomentumIdleDecayTau",
+    "pressureTierDamageReq1",
+    "pressureTierDamageReq2",
+    "pressureTierDamageReq3",
+    "pressureTierDamageReq4",
+    "pressureTierDamageReq5",
+    "pressureTierForceReq1",
+    "pressureTierForceReq2",
+    "pressureTierForceReq3",
+    "pressureTierForceReq4",
+    "pressureTierForceReq5",
+}
+
+local function resetPressureDevOptions()
+    local p = getDB()
+    if not p then return end
+    for key, value in pairs(PRESSURE_DEV_DEFAULTS) do
+        p[key] = value
+    end
+    for _, key in ipairs(PRESSURE_DEV_LEGACY_KEYS) do
+        p[key] = nil
+    end
     local st = _G.ShammyTime
     if st and st.ApplyAllConfigs then st:ApplyAllConfigs() end
 end
@@ -176,6 +312,7 @@ local function BuildFullExportLines(useColorCodes)
 
     sec("Global")
     line("locked = " .. tostring(p.locked))
+    line("uiErrorTextEnabled = " .. tostring(p.uiErrorTextEnabled == true))
     if p.global then
         line("masterScale = " .. tostring(p.global.masterScale or 1))
         line("masterAlpha = " .. tostring(p.global.masterAlpha or 1))
@@ -255,7 +392,7 @@ local function BuildFullExportLines(useColorCodes)
     line("")
     sec("Totem bar")
     line("wfTotemBarScale = " .. tostring(p.wfTotemBarScale or 1))
-    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 13))
+    line("fontTotemTimer = " .. tostring(p.fontTotemTimer or 10))
     line("")
     sec("Shamanistic Focus (position and scale)")
     if p.focusFrame then
@@ -264,23 +401,54 @@ local function BuildFullExportLines(useColorCodes)
         line("focusFrame.relativePoint = " .. tostring(p.focusFrame.relativePoint or "CENTER"))
         line("focusFrame.x = " .. tostring(p.focusFrame.x or 0))
         line("focusFrame.y = " .. tostring(p.focusFrame.y or -150))
-        line("focusFrame.scale = " .. tostring(p.focusFrame.scale or 0.8))
+        line("focusFrame.scale = " .. tostring(p.focusFrame.scale or 1.17))
         line("focusFrame.locked = " .. tostring(p.focusFrame.locked or false))
     end
     line("")
     sec("Imbue bar (scale, layout, offsets, font)")
-    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.35))
+    line("imbueBarScale = " .. tostring(p.imbueBarScale or 0.75))
     line("imbueBarMargin = " .. tostring(p.imbueBarMargin or "nil"))
     line("imbueBarGap = " .. tostring(p.imbueBarGap or "nil"))
     line("imbueBarOffsetY = " .. tostring(p.imbueBarOffsetY or "nil"))
     line("imbueBarIconSize = " .. tostring(p.imbueBarIconSize or "nil"))
-    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 28))
+    line("fontImbueTimer = " .. tostring(p.fontImbueTimer or 16))
     line("")
     sec("Shield indicator")
-    line("shieldScale = " .. tostring(p.shieldScale or 0.2))
+    line("shieldScale = " .. tostring(p.shieldScale or 0.36))
     line("fontShieldCount = " .. tostring(p.fontShieldCount or 86))
     line("shieldCountX = " .. tostring(p.shieldCountX or 0))
-    line("shieldCountY = " .. tostring(p.shieldCountY or 101))
+    line("shieldCountY = " .. tostring(p.shieldCountY or 127))
+    line("")
+    sec("Pressure popup slots")
+    line("pressurePopupIconSize = " .. tostring(p.pressurePopupIconSize or 74))
+    line("pressurePopupTextSize = " .. tostring(p.pressurePopupTextSize or 49))
+    line("pressurePopupHoldSec = " .. tostring(p.pressurePopupHoldSec or 5.20))
+    line("pressurePopupFadeSec = " .. tostring(p.pressurePopupFadeSec or 1.20))
+    line("pressurePopupSustainSec = " .. tostring(p.pressurePopupSustainSec or 6.00))
+    line("pressurePopupCritBounceScale = " .. tostring(p.pressurePopupCritBounceScale or 2.00))
+    line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
+    line("pressureSimpleResistance = " .. tostring(p.pressureSimpleResistance or 1.25))
+    line("pressureSimpleRubberband = " .. tostring(p.pressureSimpleRubberband or 1.10))
+    line("pressureSimpleTierBase = " .. tostring(p.pressureSimpleTierBase or 2.10))
+    line("pressureSimpleTierStepPct = " .. tostring(p.pressureSimpleTierStepPct or 11.00))
+    line("pressureSimpleTierHelp = " .. tostring(p.pressureSimpleTierHelp or 0.85))
+    line("pressureSimpleOverdrivePercentile = " .. tostring(p.pressureSimpleOverdrivePercentile or 98.00))
+    line("pressureSimpleOverdriveMultiplier = " .. tostring(p.pressureSimpleOverdriveMultiplier or 1.16))
+    line("pressureSimpleTierHoldSec = " .. tostring(p.pressureSimpleTierHoldSec or 5.00))
+    line("pressureSimpleShakeAmount = " .. tostring(p.pressureSimpleShakeAmount or 1.00))
+    line("pressureSimpleShakeFromDamage = " .. tostring(p.pressureSimpleShakeFromDamage or 0.85))
+    line("pressureSlot1X = " .. tostring(p.pressureSlot1X or -130))
+    line("pressureSlot1Y = " .. tostring(p.pressureSlot1Y or -147))
+    line("pressureSlot1TextX = " .. tostring(p.pressureSlot1TextX or 0))
+    line("pressureSlot1TextY = " .. tostring(p.pressureSlot1TextY or -14))
+    line("pressureSlot2X = " .. tostring(p.pressureSlot2X or 1))
+    line("pressureSlot2Y = " .. tostring(p.pressureSlot2Y or -171))
+    line("pressureSlot2TextX = " .. tostring(p.pressureSlot2TextX or 0))
+    line("pressureSlot2TextY = " .. tostring(p.pressureSlot2TextY or -16))
+    line("pressureSlot3X = " .. tostring(p.pressureSlot3X or 135))
+    line("pressureSlot3Y = " .. tostring(p.pressureSlot3Y or -147))
+    line("pressureSlot3TextX = " .. tostring(p.pressureSlot3TextX or -7))
+    line("pressureSlot3TextY = " .. tostring(p.pressureSlot3TextY or -18))
     line("")
     sec("Modules (per-element: enabled, scale, alpha, fade)")
     if p.modules then
@@ -307,6 +475,7 @@ local function BuildFullExportLines(useColorCodes)
                         line("modules." .. modName .. ".fade.conditions.noTotemsPlaced = " .. tostring(c.noTotemsPlaced or false))
                         line("modules." .. modName .. ".fade.conditions.outOfRange = " .. tostring(c.outOfRange or false))
                         line("modules." .. modName .. ".fade.conditions.fadeInOnTarget = " .. tostring(c.fadeInOnTarget or false))
+                        line("modules." .. modName .. ".fade.conditions.hideWhenActive = " .. tostring(c.hideWhenActive or false))
                     end
                 end
             end
@@ -394,6 +563,22 @@ local function ShowCopyPopup(title, text)
     copyFrame.editBox:HighlightText()
 end
 
+local STAGGER_GUIDE_URL = "https://www.enhanceshaman.com/pages/guide/sync_stagger"
+local STAGGER_RESYNC_MACRO = table.concat({
+    "/cleartarget",
+    "/targetlasttarget",
+    "/startattack",
+    "/st resync",
+}, "\n")
+
+local function CopyStaggerGuideLink()
+    ShowCopyPopup("ShammyTime - Sync/Stagger Guide Link", STAGGER_GUIDE_URL)
+end
+
+local function CopyStaggerMacro()
+    ShowCopyPopup("ShammyTime - ShammyTime Custom Resync Macro", STAGGER_RESYNC_MACRO)
+end
+
 local function ExportAllToClipboard()
     local header = { "ShammyTime - All Settings (100% coverage)", "Copy everything below; paste to developer or backup.", "" }
     local body = BuildFullExportLines(false)
@@ -409,6 +594,7 @@ _G.ShammyTime.CopyTextSettings = ExportAllToClipboard
 -- Module Options Builder (simplified)
 --------------------------------------------------------------------------------
 local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
+    local scaleMin, scaleMax = getScaleDisplayBounds(moduleName)
     local opts = {
         type = "group",
         name = displayName,
@@ -427,7 +613,9 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
             scale = {
                 type = "range",
                 name = "Scale",
-                min = 0.1, max = 3, step = 0.05,
+                min = scaleMin,
+                max = scaleMax,
+                step = 0.05,
                 order = 2,
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "scale") end,
@@ -490,11 +678,15 @@ local function CreateModuleOptions(moduleName, displayName, extraArgs, noFade)
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "fadeInOnTarget") end,
                 set = function(info, v) setModuleOption(info, v, "fadeInOnTarget") end,
-                hidden = function() return moduleName ~= "windfuryBubbles" and moduleName ~= "shamanisticFocus" end,
+                hidden = function()
+                    return moduleName ~= "windfuryBubbles"
+                        and moduleName ~= "shamanisticFocus"
+                        and moduleName ~= "pressureVisual"
+                end,
             },
             inactiveBuff = {
                 type = "toggle",
-                name = "No Active Buff/Proc",
+                name = "No Active Effect",
                 order = 15,
                 arg = { module = moduleName },
                 get = function(info) return getModuleOption(info, "inactiveBuff") end,
@@ -691,7 +883,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             metricsDesc = {
                                 type = "description",
-                                name = "|cffccccccMIN|r — Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r — Highest total damage from one proc.\n|cffccccccAVG|r — Total Windfury damage ÷ number of procs.\n|cffccccccPROCS|r — How many Windfury procs so far this session.\n|cffccccccPROC%|r — Procs ÷ white swings (how often Windfury procced).\n|cffccccccCRIT%|r — Windfury hits that were crits ÷ all Windfury hits.\n",
+                                name = "|cffccccccMIN|r - Lowest total damage from one Windfury proc (1 or 2 hits combined).\n|cffccccccMAX|r - Highest total damage from one proc.\n|cffccccccAVG|r - Total Windfury damage / number of procs.\n|cffccccccPROCS|r - How many Windfury procs so far this session.\n|cffccccccPROC%|r - Procs / white swings (how often Windfury procced).\n|cffccccccCRIT%|r - Windfury hits that were crits / all Windfury hits.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -719,7 +911,7 @@ function ShammyTime:SetupOptions()
                         args = {
                             fadeDesc = {
                                 type = "description",
-                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n• |cffccccccOut of Combat|r — fade when you're not in combat.\n• |cffccccccNo Target|r — fade when you have no target.\n• |cffccccccNo Active Buff/Proc|r — e.g. Windfury circle fades when you haven't procced recently; Shamanistic Focus fades when the buff isn't active.\n• |cffccccccNo Totems Placed|r — totem bar fades when you have no totems down.\n• |cffccccccFade In When Targeting Enemy|r — (Windfury/Focus) fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
+                                name = "Each module (Windfury Bubbles, Totem Bar, Shamanistic Focus, etc.) has a |cffccccccFade|r section under Modules. Turn on |cffccccccEnable Fade|r, set |cffccccccFaded Alpha|r (how see-through when faded), then pick when to fade:\n\n- |cffccccccOut of Combat|r - fade when you're not in combat.\n- |cffccccccNo Target|r - fade when you have no target.\n- |cffccccccNo Active Effect|r - fade when that module has no relevant active state (for example no recent proc, buff, or pressure event).\n- |cffccccccNo Totems Placed|r - totem bar fades when you have no totems down.\n- |cffccccccFade In When Targeting Enemy|r - fade in slowly when you select an enemy instead of appearing instantly.\n\nIf any condition you enable is true, that element fades to the alpha you set.\n",
                                 order = 1,
                                 width = "full",
                             },
@@ -788,6 +980,19 @@ function ShammyTime:SetupOptions()
                             if addon and addon.ApplyAllConfigs then addon:ApplyAllConfigs() end
                         end,
                     },
+                    uiErrorTextEnabled = {
+                        type = "toggle",
+                        name = "Show Blizzard Error Text",
+                        desc = "Show/hide red UI error text (for example: Not enough mana).",
+                        order = 3.1,
+                        width = "full",
+                        get = function()
+                            return getFlatDB("uiErrorTextEnabled", false)
+                        end,
+                        set = function(_, v)
+                            setFlatDB("uiErrorTextEnabled", v)
+                        end,
+                    },
                     presetsHeader = {
                         type = "header",
                         name = "Presets",
@@ -795,7 +1000,7 @@ function ShammyTime:SetupOptions()
                     },
                     presetsDesc = {
                         type = "description",
-                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings — scale, position, and other options stay the same.\n",
+                        name = "Quickly configure fade behaviour for all modules at once. This only changes fade settings - scale, position, and other options stay the same.\n",
                         order = 4.1,
                     },
                     presetAlwaysVisible = {
@@ -1014,19 +1219,65 @@ function ShammyTime:SetupOptions()
                         },
                         textHeader = {
                             type = "header",
-                            name = "Text Sizes",
+                            name = "Text",
                             order = 4.1,
                         },
                         fontTotemTimer = {
                             type = "range",
-                            name = "Timer Font",
+                            name = "Text Size",
                             min = 4, max = 20, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontTotemTimer", 13) end,
+                            get = function() return getFlatDB("fontTotemTimer", 10) end,
                             set = function(_, v)
                                 setFlatDB("fontTotemTimer", v)
                                 local st = _G.ShammyTime
                                 if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
+                            end,
+                        },
+                        totemModTextX = {
+                            type = "range",
+                            name = "Text X",
+                            desc = "Horizontal offset for totem timer text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.3,
+                            get = function()
+                                local p = getDB()
+                                if p and p.totemLayout and p.totemLayout.timerOffsetX ~= nil then
+                                    return p.totemLayout.timerOffsetX
+                                end
+                                return 0
+                            end,
+                            set = function(_, v)
+                                local p = getDB()
+                                if p then
+                                    p.totemLayout = p.totemLayout or {}
+                                    p.totemLayout.timerOffsetX = v
+                                end
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                            end,
+                        },
+                        totemModTextY = {
+                            type = "range",
+                            name = "Text Y",
+                            desc = "Vertical offset for totem timer text (negative = down).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.4,
+                            get = function()
+                                local p = getDB()
+                                if p and p.totemLayout and p.totemLayout.timerOffsetY ~= nil then
+                                    return p.totemLayout.timerOffsetY
+                                end
+                                return -2
+                            end,
+                            set = function(_, v)
+                                local p = getDB()
+                                if p then
+                                    p.totemLayout = p.totemLayout or {}
+                                    p.totemLayout.timerOffsetY = v
+                                end
+                                local st = _G.ShammyTime
+                                if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
                             end,
                         },
                         noTotemsFadeDelay = {
@@ -1072,19 +1323,45 @@ function ShammyTime:SetupOptions()
                         },
                         textHeader = {
                             type = "header",
-                            name = "Text Sizes",
+                            name = "Text",
                             order = 4.1,
                         },
                         fontImbueTimer = {
                             type = "range",
-                            name = "Timer Font",
+                            name = "Text Size",
                             min = 6, max = 64, step = 1,
                             order = 4.2,
-                            get = function() return getFlatDB("fontImbueTimer", 28) end,
+                            get = function() return getFlatDB("fontImbueTimer", 16) end,
                             set = function(_, v)
                                 setFlatDB("fontImbueTimer", v)
                                 local st = _G.ShammyTime
                                 if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                            end,
+                        },
+                        imbueModTextX = {
+                            type = "range",
+                            name = "Text X",
+                            desc = "Horizontal offset for imbue timer text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("imbueTextX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("imbueTextX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                            end,
+                        },
+                        imbueModTextY = {
+                            type = "range",
+                            name = "Text Y",
+                            desc = "Vertical offset for imbue timer text (negative = down).",
+                            min = -100, max = 100, step = 1,
+                            order = 4.4,
+                            get = function() return getFlatDB("imbueTextY", -20) end,
+                            set = function(_, v)
+                                setFlatDB("imbueTextY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                             end,
                         },
                         imbueFadeThreshold = {
@@ -1111,6 +1388,15 @@ function ShammyTime:SetupOptions()
                                     width = "full",
                                 },
                             },
+                        },
+                        hideWhenActive = {
+                            type = "toggle",
+                            name = "Hide When Active",
+                            desc = "Hide the shield indicator when Lightning Shield or Water Shield is active with at least 1 charge. The indicator will appear when the shield drops or expires, serving as a reminder to recast.",
+                            order = 16,
+                            arg = { module = "shieldIndicator" },
+                            get = function(info) return getModuleOption(info, "hideWhenActive") end,
+                            set = function(info, v) setModuleOption(info, v, "hideWhenActive") end,
                         },
                         textHeader = {
                             type = "header",
@@ -1142,7 +1428,7 @@ function ShammyTime:SetupOptions()
                                     type = "description",
                                     name = "Ever wondered how much your Windfury Totem actually contributes to your party's damage? " ..
                                            "This shows a live scrolling damage feed whenever you or your party members land bonus hits from " ..
-                                           "your totem — right above it, so you can feel the impact in real time.\n\n" ..
+                                           "your totem - right above it, so you can feel the impact in real time.\n\n" ..
                                            "When combat ends, a total is shown so you can see how much extra damage your totem brought to the fight.\n\n" ..
                                            "|cffaaaaaa" .. "Damage values are estimated based on combat log events." .. "|r\n",
                                     order = 1,
@@ -1268,6 +1554,334 @@ function ShammyTime:SetupOptions()
                             end,
                         },
                     }, true),  -- noFade: fade settings don't apply to the damage feed
+                    pressureVisual = CreateModuleOptions("pressureVisual", "Pressure Visual", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Pressure Visual tracks your outgoing damage momentum and shows it as a live pressure bar. " ..
+                                           "The three popup slots below the bar summarize your recent high-impact spells so you can read your pressure spikes at a glance.\n\n" ..
+                                           "How it works:\n" ..
+                                           "- Sustained effects (like Flame Shock and Magma Totem) keep accumulating while active.\n" ..
+                                           "- Burst events (like Stormstrike, Windfury bursts, and shocks) pop quickly and fade.\n" ..
+                                           "- Slot assignment is dynamic from left to right, with temporary overlays when all slots are occupied.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                        pressureTextHeader = {
+                            type = "header",
+                            name = "Popup Text",
+                            order = 4.1,
+                        },
+                        pressurePopupTextSize = {
+                            type = "range",
+                            name = "Text Size",
+                            desc = "Size of the popup damage numbers shown above pressure slot icons.",
+                            min = 8, max = 72, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("pressurePopupTextSize", 49) end,
+                            set = function(_, v) setFlatDB("pressurePopupTextSize", v) end,
+                        },
+                    }),
+                    staggerBar = CreateModuleOptions("staggerBar", "Stagger Bar", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Quick Guide",
+                            order = 0,
+                            args = {
+                                infoTitle = {
+                                    type = "description",
+                                    name = "|cffffd700Sync and Stagger - Simple Setup|r\n" ..
+                                           "Good staggering increases DPS because Flurry charges are more often spent on two white hits instead of one, and your stronger main-hand gets more valuable Windfury proc opportunities than off-hand.",
+                                    order = 1,
+                                    width = "full",
+                                },
+                                infoHowItWorks = {
+                                    type = "description",
+                                    name = "Goal:\n" ..
+                                           "Gold = perfect stagger (MH first, OH lands within 0.5s).\n" ..
+                                           "White = not perfect (OH-first, same-time, or drifting).\n\n" ..
+                                           "When to press your macro:\n" ..
+                                           "Only press while OH is in |cffffff0050%-60%|r.\n" ..
+                                           "OH-first: press once.\n" ..
+                                           "Same-time (0.00): press once.\n" ..
+                                           "Drifting (MH first, gap too wide): press while OH stays in 50%-60%, then stop when it turns gold.\n\n" ..
+                                           "If OH is below 50%, pressing does nothing.",
+                                    order = 2,
+                                    width = "full",
+                                },
+                                infoMacro = {
+                                    type = "description",
+                                    name = "|cffffd700Custom ShammyTime Macro (bind this):|r\n" ..
+                                           "|cffffcc00/cleartarget|r\n" ..
+                                           "|cffffcc00/targetlasttarget|r\n" ..
+                                           "|cffffcc00/startattack|r\n" ..
+                                           "|cff33ff33/st resync|r\n\n" ..
+                                           "This macro is custom for this addon and makes stagger timing easier to learn with the bar.",
+                                    order = 3,
+                                    width = "full",
+                                },
+                                infoReference = {
+                                    type = "description",
+                                    name = "External guide (not my website):\n" ..
+                                           STAGGER_GUIDE_URL .. "\n" ..
+                                           "There are also useful YouTube videos covering sync/stagger.",
+                                    order = 4,
+                                    width = "full",
+                                },
+                                staggerGuideCopy = {
+                                    type = "execute",
+                                    name = "Copy Guide Link",
+                                    desc = "Open a copy box with the guide URL.",
+                                    order = 5,
+                                    width = "full",
+                                    func = CopyStaggerGuideLink,
+                                },
+                                staggerCopyMacro = {
+                                    type = "execute",
+                                    name = "Copy Custom ShammyTime Macro",
+                                    desc = "Open a copy box with the custom ShammyTime resync macro.",
+                                    order = 6,
+                                    width = "full",
+                                    func = CopyStaggerMacro,
+                                },
+                            },
+                        },
+                        settingsHeader = {
+                            type = "header",
+                            name = "Settings",
+                            order = 0.9,
+                        },
+                        barHeader = {
+                            type = "header",
+                            name = "Bar Dimensions",
+                            order = 4.0,
+                        },
+                        staggerBarWidth = {
+                            type = "range",
+                            name = "Bar Width",
+                            desc = "Length of each swing bar in pixels.",
+                            min = 50, max = 400, step = 5,
+                            order = 4.1,
+                            get = function() return getFlatDB("staggerBarWidth", 335) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarWidth", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerBarHeight = {
+                            type = "range",
+                            name = "Bar Height",
+                            desc = "Thickness of each swing bar in pixels.",
+                            min = 2, max = 20, step = 1,
+                            order = 4.2,
+                            get = function() return getFlatDB("staggerBarHeight", 15) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarHeight", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerBarGap = {
+                            type = "range",
+                            name = "Bar Gap",
+                            desc = "Vertical space between MH and OH bars.",
+                            min = 0, max = 20, step = 1,
+                            order = 4.3,
+                            get = function() return getFlatDB("staggerBarGap", 5) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarGap", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerSwingBarAlpha = {
+                            type = "range",
+                            name = "Bar Alpha",
+                            desc = "Transparency of the MH/OH swing bars. Lower values let the background texture show through.",
+                            min = 0, max = 1, step = 0.05,
+                            order = 4.4,
+                            get = function() return getFlatDB("staggerSwingBarAlpha", 0.8) end,
+                            set = function(_, v)
+                                setFlatDB("staggerSwingBarAlpha", v)
+                            end,
+                        },
+                        deltaHeader = {
+                            type = "header",
+                            name = "Delta Text",
+                            order = 5.0,
+                        },
+                        staggerDeltaFontSize = {
+                            type = "range",
+                            name = "Font Size",
+                            desc = "Size of the stagger delta readout.",
+                            min = 6, max = 48, step = 1,
+                            order = 5.1,
+                            get = function() return getFlatDB("staggerDeltaFontSize", 27) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaFontSize", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerDeltaX = {
+                            type = "range",
+                            name = "Text X Offset",
+                            desc = "Horizontal offset for the delta text (positive = right).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.2,
+                            get = function() return getFlatDB("staggerDeltaX", 46) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerDeltaY = {
+                            type = "range",
+                            name = "Text Y Offset",
+                            desc = "Vertical offset for the delta text (positive = up).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.3,
+                            get = function() return getFlatDB("staggerDeltaY", 12) end,
+                            set = function(_, v)
+                                setFlatDB("staggerDeltaY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        helperHeader = {
+                            type = "header",
+                            name = "Helper Text",
+                            order = 5.5,
+                        },
+                        staggerHelperFontSize = {
+                            type = "range",
+                            name = "Font Size",
+                            desc = "Size of the helper advice text.",
+                            min = 6, max = 48, step = 1,
+                            order = 5.6,
+                            get = function() return getFlatDB("staggerHelperFontSize", 24) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperFontSize", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerHelperX = {
+                            type = "range",
+                            name = "Helper X Offset",
+                            desc = "Horizontal offset for the helper text (positive = right).",
+                            min = -200, max = 200, step = 1,
+                            order = 5.7,
+                            get = function() return getFlatDB("staggerHelperX", 0) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperX", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        staggerHelperY = {
+                            type = "range",
+                            name = "Helper Y Offset",
+                            desc = "Vertical offset for the helper text (positive = up).",
+                            min = -100, max = 100, step = 1,
+                            order = 5.8,
+                            get = function() return getFlatDB("staggerHelperY", -10) end,
+                            set = function(_, v)
+                                setFlatDB("staggerHelperY", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                            end,
+                        },
+                        actionCueHeader = {
+                            type = "header",
+                            name = "Resync Action Cue Settings",
+                            order = 5.82,
+                        },
+                        staggerActionCueEnabled = {
+                            type = "toggle",
+                            name = "Enable Action Cue",
+                            desc = "Show timing-aware resync prompts instead of the basic helper text.",
+                            width = "full",
+                            order = 5.84,
+                            get = function() return getFlatDB("staggerActionCueEnabled", true) end,
+                            set = function(_, v) setFlatDB("staggerActionCueEnabled", v) end,
+                        },
+                        staggerActionCueYellow = {
+                            type = "toggle",
+                            name = "Also Show for Drifting",
+                            desc = "Show the resync action cue when MH is still first but the gap is too wide (>0.5s), not only when OH-first/same-time.",
+                            width = "full",
+                            order = 5.85,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerActionCueYellow", true) end,
+                            set = function(_, v) setFlatDB("staggerActionCueYellow", v) end,
+                        },
+                        staggerCooldownDuration = {
+                            type = "range",
+                            name = "Observe Duration (seconds)",
+                            desc = "After the 50%-60% tap window closes, how long to show \"Observe...\" before the next resync prompt. Also ends early after 2 swing events.",
+                            min = 0.5, max = 5.0, step = 0.5,
+                            order = 5.87,
+                            disabled = function() return not getFlatDB("staggerActionCueEnabled", true) end,
+                            get = function() return getFlatDB("staggerCooldownDuration", 2.0) end,
+                            set = function(_, v) setFlatDB("staggerCooldownDuration", v) end,
+                        },
+                        hideHeader = {
+                            type = "header",
+                            name = "Visibility",
+                            order = 6.0,
+                        },
+                        staggerBarAlwaysShow = {
+                            type = "toggle",
+                            name = "Always Show",
+                            desc = "Keep the stagger bar visible at all times (disables smart hide). When off, the bar only appears while swinging.",
+                            width = "full",
+                            order = 6.05,
+                            get = function() return getFlatDB("staggerBarAlwaysShow", false) end,
+                            set = function(_, v)
+                                setFlatDB("staggerBarAlwaysShow", v)
+                                local st = _G.ShammyTime
+                                if st and st.ApplyElementVisibility then st.ApplyElementVisibility() end
+                                if st and st.UpdateAllElementsFadeState then st:UpdateAllElementsFadeState() end
+                            end,
+                        },
+                        staggerHideDelay = {
+                            type = "range",
+                            name = "Hide After (seconds)",
+                            desc = "Hide the stagger bars after this many seconds of no swings. Only used when 'Always Show' is off.",
+                            min = 3, max = 60, step = 1,
+                            order = 6.1,
+                            disabled = function() return getFlatDB("staggerBarAlwaysShow", false) end,
+                            get = function() return getFlatDB("staggerHideDelay", 15) end,
+                            set = function(_, v) setFlatDB("staggerHideDelay", v) end,
+                        },
+                    }),
+                    windfuryIcd = CreateModuleOptions("windfuryIcd", "Windfury ICD", {
+                        moduleDesc = {
+                            type = "group",
+                            inline = true,
+                            name = "Info",
+                            order = 0,
+                            args = {
+                                desc = {
+                                    type = "description",
+                                    name = "Windfury has a 3-second internal cooldown after each proc. This indicator lamp shows whether Windfury can proc (bright) or is on cooldown (dark, with a countdown). Works with both the personal Windfury Weapon imbue and the Windfury Totem buff.\n\nThe indicator automatically hides when you have no Windfury on any weapon and no Windfury Totem is active.\n",
+                                    order = 1,
+                                    width = "full",
+                                },
+                            },
+                        },
+                    }),
                 },
             },
             -----------------------------------------------------------------
@@ -1300,6 +1914,57 @@ function ShammyTime:SetupOptions()
                         desc = "Open a popup with ALL settings (elements, scales, positions, bubbles, offsets, modules, fade) for copy/paste.",
                         order = 2,
                         func = ExportAllToClipboard,
+                    },
+                    performanceHeader = {
+                        type = "header",
+                        name = "Performance Monitor",
+                        order = 3,
+                    },
+                    performanceDesc = {
+                        type = "description",
+                        name = "Simple ShammyTime memory/CPU monitor.\nUse |cffffd700/st dev performance|r to toggle from chat.\nCPU numbers require: |cffffd700/console scriptProfile 1|r then |cffffd700/reload|r.",
+                        order = 3.05,
+                        width = "full",
+                    },
+                    performanceStatus = {
+                        type = "description",
+                        name = function()
+                            local st = _G.ShammyTime
+                            if st and st.GetPerformanceStatsText then
+                                return "Current: " .. st:GetPerformanceStatsText(true)
+                            end
+                            return "Current: unavailable"
+                        end,
+                        order = 3.1,
+                        width = "full",
+                    },
+                    performanceToggle = {
+                        type = "execute",
+                        name = "Toggle Monitor",
+                        order = 3.2,
+                        width = "half",
+                        func = function()
+                            local st = _G.ShammyTime
+                            if not st or not st.TogglePerformanceMonitor then return end
+                            local enabled = st:TogglePerformanceMonitor()
+                            if enabled then
+                                print("|cff00ff00ShammyTime:|r Performance monitor ON.")
+                            else
+                                print("|cff00ff00ShammyTime:|r Performance monitor OFF.")
+                            end
+                        end,
+                    },
+                    performanceRefresh = {
+                        type = "execute",
+                        name = "Refresh Sample",
+                        order = 3.3,
+                        width = "half",
+                        func = function()
+                            local st = _G.ShammyTime
+                            if not st or not st.GetPerformanceStatsText then return end
+                            if st.UpdatePerformanceMonitorText then st:UpdatePerformanceMonitorText(true) end
+                            print("|cff00ff00ShammyTime:|r " .. st:GetPerformanceStatsText(true))
+                        end,
                     },
                     ---------------------------------------------------------
                     -- Center Ring
@@ -1521,12 +2186,12 @@ function ShammyTime:SetupOptions()
                         name = "Set per-bubble text positions. Values of 0 use the global setting above.\n",
                         order = 41,
                     },
-                    air = CreateSatelliteGroup("air", SATELLITE_LABELS.air, 42),
-                    stone = CreateSatelliteGroup("stone", SATELLITE_LABELS.stone, 43),
-                    fire = CreateSatelliteGroup("fire", SATELLITE_LABELS.fire, 44),
-                    grass = CreateSatelliteGroup("grass", SATELLITE_LABELS.grass, 45),
-                    water = CreateSatelliteGroup("water", SATELLITE_LABELS.water, 46),
-                    grass_2 = CreateSatelliteGroup("grass_2", SATELLITE_LABELS.grass_2, 47),
+                    middle_right  = CreateSatelliteGroup("middle_right",  SATELLITE_LABELS.middle_right,  42),
+                    upper_right   = CreateSatelliteGroup("upper_right",   SATELLITE_LABELS.upper_right,   43),
+                    upper_left    = CreateSatelliteGroup("upper_left",   SATELLITE_LABELS.upper_left,    44),
+                    middle_left   = CreateSatelliteGroup("middle_left",  SATELLITE_LABELS.middle_left,   45),
+                    bottom_left   = CreateSatelliteGroup("bottom_left",  SATELLITE_LABELS.bottom_left,  46),
+                    bottom_right  = CreateSatelliteGroup("bottom_right", SATELLITE_LABELS.bottom_right,  47),
                     ---------------------------------------------------------
                     -- Other Dev Settings
                     ---------------------------------------------------------
@@ -1535,28 +2200,110 @@ function ShammyTime:SetupOptions()
                         name = "Other",
                         order = 60,
                     },
+                    totemTextHeader = {
+                        type = "header",
+                        name = "Totem Bar Text",
+                        order = 60.5,
+                    },
                     fontTotemTimer = {
                         type = "range",
-                        name = "Totem Timer Font",
+                        name = "Totem Text Size",
                         min = 4, max = 20, step = 1,
                         order = 61,
-                        get = function() return getFlatDB("fontTotemTimer", 13) end,
+                        get = function() return getFlatDB("fontTotemTimer", 10) end,
                         set = function(_, v)
                             setFlatDB("fontTotemTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyTotemBarFontSize then st.ApplyTotemBarFontSize() end
                         end,
                     },
+                    totemTextX = {
+                        type = "range",
+                        name = "Totem Text X",
+                        desc = "Horizontal offset for totem timer text (positive = right).",
+                        min = -100, max = 100, step = 1,
+                        order = 61.1,
+                        get = function()
+                            local p = getDB()
+                            if p and p.totemLayout and p.totemLayout.timerOffsetX ~= nil then
+                                return p.totemLayout.timerOffsetX
+                            end
+                            return 0
+                        end,
+                        set = function(_, v)
+                            local p = getDB()
+                            if p then
+                                p.totemLayout = p.totemLayout or {}
+                                p.totemLayout.timerOffsetX = v
+                            end
+                            local st = _G.ShammyTime
+                            if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                        end,
+                    },
+                    totemTextY = {
+                        type = "range",
+                        name = "Totem Text Y",
+                        desc = "Vertical offset for totem timer text (negative = down).",
+                        min = -100, max = 100, step = 1,
+                        order = 61.2,
+                        get = function()
+                            local p = getDB()
+                            if p and p.totemLayout and p.totemLayout.timerOffsetY ~= nil then
+                                return p.totemLayout.timerOffsetY
+                            end
+                            return -33
+                        end,
+                        set = function(_, v)
+                            local p = getDB()
+                            if p then
+                                p.totemLayout = p.totemLayout or {}
+                                p.totemLayout.timerOffsetY = v
+                            end
+                            local st = _G.ShammyTime
+                            if st and st.ApplyTotemBarLayout then st.ApplyTotemBarLayout() end
+                        end,
+                    },
+                    imbueTextHeader = {
+                        type = "header",
+                        name = "Imbue Bar Text",
+                        order = 61.9,
+                    },
                     fontImbueTimer = {
                         type = "range",
-                        name = "Imbue Timer Font",
+                        name = "Imbue Text Size",
                         min = 6, max = 64, step = 1,
                         order = 62,
-                        get = function() return getFlatDB("fontImbueTimer", 28) end,
+                        get = function() return getFlatDB("fontImbueTimer", 16) end,
                         set = function(_, v)
                             setFlatDB("fontImbueTimer", v)
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarFontSize then st.ApplyImbueBarFontSize() end
+                        end,
+                    },
+                    imbueTextX = {
+                        type = "range",
+                        name = "Imbue Text X",
+                        desc = "Horizontal offset for imbue timer text (positive = right).",
+                        min = -100, max = 100, step = 1,
+                        order = 62.1,
+                        get = function() return getFlatDB("imbueTextX", 0) end,
+                        set = function(_, v)
+                            setFlatDB("imbueTextX", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
+                        end,
+                    },
+                    imbueTextY = {
+                        type = "range",
+                        name = "Imbue Text Y",
+                        desc = "Vertical offset for imbue timer text (negative = down).",
+                        min = -100, max = 100, step = 1,
+                        order = 62.2,
+                        get = function() return getFlatDB("imbueTextY", -20) end,
+                        set = function(_, v)
+                            setFlatDB("imbueTextY", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                         end,
                     },
                     shieldTextHeader = {
@@ -1583,7 +2330,7 @@ function ShammyTime:SetupOptions()
                         desc = "Vertical offset for the shield count text (positive = up).",
                         min = -200, max = 300, step = 1,
                         order = 62.7,
-                        get = function() return getFlatDB("shieldCountY", 101) end,
+                        get = function() return getFlatDB("shieldCountY", 127) end,
                         set = function(_, v)
                             setFlatDB("shieldCountY", v)
                             local st = _G.ShammyTime
@@ -1625,6 +2372,367 @@ function ShammyTime:SetupOptions()
                             local st = _G.ShammyTime
                             if st and st.ApplyImbueBarLayout then st.ApplyImbueBarLayout() end
                         end,
+                    },
+                    ---------------------------------------------------------
+                    -- Stagger Bar
+                    ---------------------------------------------------------
+                    staggerHeader = {
+                        type = "header",
+                        name = "Stagger Bar Positions",
+                        order = 70,
+                    },
+                    staggerBarsX = {
+                        type = "range",
+                        name = "Bars X",
+                        desc = "Horizontal offset for the MH/OH swing bars (positive = right).",
+                        min = -250, max = 250, step = 1,
+                        order = 71,
+                        get = function() return getFlatDB("staggerBarsX", 0) end,
+                        set = function(_, v)
+                            setFlatDB("staggerBarsX", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                        end,
+                    },
+                    staggerBarsY = {
+                        type = "range",
+                        name = "Bars Y",
+                        desc = "Vertical offset for the MH/OH swing bars (positive = up).",
+                        min = -100, max = 100, step = 1,
+                        order = 72,
+                        get = function() return getFlatDB("staggerBarsY", 0) end,
+                        set = function(_, v)
+                            setFlatDB("staggerBarsY", v)
+                            local st = _G.ShammyTime
+                            if st and st.ApplyStaggerBarLayout then st.ApplyStaggerBarLayout() end
+                        end,
+                    },
+                    ---------------------------------------------------------
+                    -- Pressure Popup Slots
+                    ---------------------------------------------------------
+                    pressurePopupHeader = {
+                        type = "header",
+                        name = "Pressure Popup Slots",
+                        order = 80,
+                    },
+                    pressurePopupInfo = {
+                        type = "description",
+                        name =
+                            "What these control:\n" ..
+                            "Icon Size / Text Size: Global size for popup icons and damage text.\n" ..
+                            "Popup Hold / Popup Fade: Burst popup lifetime (hold fully visible, then fade out).\n" ..
+                            "Sustain Linger: Extra on-screen time for sustained sources (like DoTs/totem ticks) after their last hit.\n" ..
+                            "Crit Bounce Scale / Time: How strong and how long crit text pulse animation is.\n" ..
+                            "Slot X/Y: Moves each popup icon around the pressure frame (X right/left, Y up/down).\n" ..
+                            "Slot Text X/Y: Moves the number text relative to that slot icon only.",
+                        order = 80.05,
+                        width = "full",
+                    },
+                    pressurePopupIconSize = {
+                        type = "range",
+                        name = "Icon Size",
+                        desc = "Base icon size for the three pressure popup slots.",
+                        min = 24, max = 192, step = 1,
+                        order = 81,
+                        get = function() return getFlatDB("pressurePopupIconSize", 74) end,
+                        set = function(_, v) setFlatDB("pressurePopupIconSize", v) end,
+                    },
+                    pressurePopupTextSize = {
+                        type = "range",
+                        name = "Text Size",
+                        desc = "Base damage text size for the three pressure popup slots.",
+                        min = 8, max = 72, step = 1,
+                        order = 82,
+                        get = function() return getFlatDB("pressurePopupTextSize", 49) end,
+                        set = function(_, v) setFlatDB("pressurePopupTextSize", v) end,
+                    },
+                    pressurePopupHoldSec = {
+                        type = "range",
+                        name = "Popup Hold (sec)",
+                        desc = "How long non-sustained spell popups stay fully visible before fading.",
+                        min = 0.10, max = 10.0, step = 0.05,
+                        order = 82.1,
+                        get = function() return getFlatDB("pressurePopupHoldSec", 5.20) end,
+                        set = function(_, v) setFlatDB("pressurePopupHoldSec", v) end,
+                    },
+                    pressurePopupFadeSec = {
+                        type = "range",
+                        name = "Popup Fade (sec)",
+                        desc = "Fade duration after hold time ends.",
+                        min = 0.10, max = 10.0, step = 0.05,
+                        order = 82.2,
+                        get = function() return getFlatDB("pressurePopupFadeSec", 1.20) end,
+                        set = function(_, v) setFlatDB("pressurePopupFadeSec", v) end,
+                    },
+                    pressurePopupSustainSec = {
+                        type = "range",
+                        name = "Sustain Linger (sec)",
+                        desc = "How long CL/Flame Shock/Magma stay visible since their last damage event.",
+                        min = 0.20, max = 15.0, step = 0.05,
+                        order = 82.3,
+                        get = function() return getFlatDB("pressurePopupSustainSec", 6.00) end,
+                        set = function(_, v) setFlatDB("pressurePopupSustainSec", v) end,
+                    },
+                    pressurePopupCritBounceScale = {
+                        type = "range",
+                        name = "Crit Bounce Scale",
+                        desc = "How big the damage text expands on crit pulses (1.00 = no bounce).",
+                        min = 1.00, max = 2.50, step = 0.01,
+                        order = 82.4,
+                        get = function() return getFlatDB("pressurePopupCritBounceScale", 2.00) end,
+                        set = function(_, v) setFlatDB("pressurePopupCritBounceScale", v) end,
+                    },
+                    pressurePopupCritBounceSec = {
+                        type = "range",
+                        name = "Crit Bounce Time (sec)",
+                        desc = "Duration of the text crit bounce animation.",
+                        min = 0.05, max = 1.50, step = 0.01,
+                        order = 82.5,
+                        get = function() return getFlatDB("pressurePopupCritBounceSec", 0.20) end,
+                        set = function(_, v) setFlatDB("pressurePopupCritBounceSec", v) end,
+                    },
+                    pressureSlot1X = {
+                        type = "range",
+                        name = "Slot 1 X",
+                        desc = "Horizontal icon offset for slot 1 from the pressure frame center.",
+                        min = -500, max = 500, step = 1,
+                        order = 83,
+                        get = function() return getFlatDB("pressureSlot1X", -130) end,
+                        set = function(_, v) setFlatDB("pressureSlot1X", v) end,
+                    },
+                    pressureSlot1Y = {
+                        type = "range",
+                        name = "Slot 1 Y",
+                        desc = "Vertical icon offset for slot 1 from the pressure frame center.",
+                        min = -500, max = 500, step = 1,
+                        order = 84,
+                        get = function() return getFlatDB("pressureSlot1Y", -147) end,
+                        set = function(_, v) setFlatDB("pressureSlot1Y", v) end,
+                    },
+                    pressureSlot1TextX = {
+                        type = "range",
+                        name = "Slot 1 Text X",
+                        desc = "Horizontal offset of slot 1 number text relative to slot 1 icon.",
+                        min = -500, max = 500, step = 1,
+                        order = 84.1,
+                        get = function() return getFlatDB("pressureSlot1TextX", 0) end,
+                        set = function(_, v) setFlatDB("pressureSlot1TextX", v) end,
+                    },
+                    pressureSlot1TextY = {
+                        type = "range",
+                        name = "Slot 1 Text Y",
+                        desc = "Vertical offset of slot 1 number text relative to slot 1 icon.",
+                        min = -500, max = 500, step = 1,
+                        order = 84.2,
+                        get = function() return getFlatDB("pressureSlot1TextY", -14) end,
+                        set = function(_, v) setFlatDB("pressureSlot1TextY", v) end,
+                    },
+                    pressureSlot2X = {
+                        type = "range",
+                        name = "Slot 2 X",
+                        desc = "Horizontal icon offset for slot 2 from the pressure frame center.",
+                        min = -500, max = 500, step = 1,
+                        order = 85,
+                        get = function() return getFlatDB("pressureSlot2X", 1) end,
+                        set = function(_, v) setFlatDB("pressureSlot2X", v) end,
+                    },
+                    pressureSlot2Y = {
+                        type = "range",
+                        name = "Slot 2 Y",
+                        desc = "Vertical icon offset for slot 2 from the pressure frame center.",
+                        min = -500, max = 500, step = 1,
+                        order = 86,
+                        get = function() return getFlatDB("pressureSlot2Y", -171) end,
+                        set = function(_, v) setFlatDB("pressureSlot2Y", v) end,
+                    },
+                    pressureSlot2TextX = {
+                        type = "range",
+                        name = "Slot 2 Text X",
+                        desc = "Horizontal offset of slot 2 number text relative to slot 2 icon.",
+                        min = -500, max = 500, step = 1,
+                        order = 86.1,
+                        get = function() return getFlatDB("pressureSlot2TextX", 0) end,
+                        set = function(_, v) setFlatDB("pressureSlot2TextX", v) end,
+                    },
+                    pressureSlot2TextY = {
+                        type = "range",
+                        name = "Slot 2 Text Y",
+                        desc = "Vertical offset of slot 2 number text relative to slot 2 icon.",
+                        min = -500, max = 500, step = 1,
+                        order = 86.2,
+                        get = function() return getFlatDB("pressureSlot2TextY", -16) end,
+                        set = function(_, v) setFlatDB("pressureSlot2TextY", v) end,
+                    },
+                    pressureSlot3X = {
+                        type = "range",
+                        name = "Slot 3 X",
+                        desc = "Horizontal icon offset for slot 3 from the pressure frame center.",
+                        min = -500, max = 500, step = 1,
+                        order = 87,
+                        get = function() return getFlatDB("pressureSlot3X", 135) end,
+                        set = function(_, v) setFlatDB("pressureSlot3X", v) end,
+                    },
+                    pressureSlot3Y = {
+                        type = "range",
+                        name = "Slot 3 Y",
+                        desc = "Vertical icon offset for slot 3 from the pressure frame center.",
+                        min = -500, max = 500, step = 1,
+                        order = 88,
+                        get = function() return getFlatDB("pressureSlot3Y", -147) end,
+                        set = function(_, v) setFlatDB("pressureSlot3Y", v) end,
+                    },
+                    pressureSlot3TextX = {
+                        type = "range",
+                        name = "Slot 3 Text X",
+                        desc = "Horizontal offset of slot 3 number text relative to slot 3 icon.",
+                        min = -500, max = 500, step = 1,
+                        order = 88.1,
+                        get = function() return getFlatDB("pressureSlot3TextX", -7) end,
+                        set = function(_, v) setFlatDB("pressureSlot3TextX", v) end,
+                    },
+                    pressureSlot3TextY = {
+                        type = "range",
+                        name = "Slot 3 Text Y",
+                        desc = "Vertical offset of slot 3 number text relative to slot 3 icon.",
+                        min = -500, max = 500, step = 1,
+                        order = 88.2,
+                        get = function() return getFlatDB("pressureSlot3TextY", -18) end,
+                        set = function(_, v) setFlatDB("pressureSlot3TextY", v) end,
+                    },
+                    pressureEngineTuneHeader = {
+                        type = "header",
+                        name = "Pressure Engine Tuning",
+                        order = 89,
+                    },
+                    pressureEngineTuneDesc = {
+                        type = "description",
+                        name = "Developer-only pressure tuning with simple controls. Tune resistance, rubberband feel, tier scaling, overdrive trigger, cooldown hold, and shake response.",
+                        order = 89.05,
+                        width = "full",
+                    },
+                    pressureDevReset = {
+                        type = "execute",
+                        name = "Reset Pressure Dev Options",
+                        desc = "Reset only pressure engine tuning values to defaults.",
+                        order = 89.06,
+                        width = "full",
+                        confirm = true,
+                        confirmText = "Reset only Pressure tuning settings to defaults?",
+                        func = resetPressureDevOptions,
+                    },
+                    pressureFeelHeader = {
+                        type = "header",
+                        name = "Simple Pressure Controls",
+                        order = 89.07,
+                    },
+                    pressureSimpleTuneInfo = {
+                        type = "description",
+                        name =
+                            "What each setting does:\n" ..
+                            "|cffccccccResistance|r: Core push weight. Higher = heavier bar pull, especially from ~80% to 100%.\n" ..
+                            "|cffccccccRubberband|r: Post-tier transfer spring behavior. Higher = longer drop-back, more bounce, and slightly more overall tier difficulty.\n" ..
+                            "|cffccccccTier Base|r: Global difficulty floor (Tier 1 requirement). Raising it makes every tier harder.\n" ..
+                            "|cffccccccTier Step %|r: Extra difficulty added per tier. Higher tiers scale harder by this step.\n" ..
+                            "|cffccccccTier Help|r: Carry help from holding tiers (momentum + transfer landing support).\n" ..
+                            "|cffccccccTier Hold Seconds|r: Time a tier stays before cooldown-based demotion can happen.\n" ..
+                            "|cffccccccOverdrive Percentile|r: Rare-hit baseline from last 100 hits (higher = rarer overdrive).\n" ..
+                            "|cffccccccOverdrive Multiplier|r: How far above that baseline a hit must be to instantly tier up.\n" ..
+                            "|cffccccccShake Amount|r: Max circular gauge shake strength.\n" ..
+                            "|cffccccccShake From Damage|r: How much current damage drives shake intensity.\n\n" ..
+                            "Fast tuning order:\n" ..
+                            "1) Tier Base, 2) Tier Step %, 3) Resistance, 4) Tier Help, 5) Overdrive settings.",
+                        order = 89.0705,
+                        width = "full",
+                    },
+                    pressureSimpleResistance = {
+                        type = "range",
+                        name = "Resistance",
+                        desc = "Global push resistance. Higher makes high-end bar progress feel heavier.",
+                        min = 0.20, max = 4.00, step = 0.01,
+                        order = 89.071,
+                        get = function() return getFlatDB("pressureSimpleResistance", 1.25) end,
+                        set = function(_, v) setFlatDB("pressureSimpleResistance", v) end,
+                    },
+                    pressureSimpleRubberband = {
+                        type = "range",
+                        name = "Rubberband",
+                        desc = "Controls transfer spring feel after tier up: drop speed, bounce amount, and added end-of-segment tension. Higher = more elastic and a bit harder.",
+                        min = 0.20, max = 3.00, step = 0.01,
+                        order = 89.072,
+                        get = function() return getFlatDB("pressureSimpleRubberband", 1.10) end,
+                        set = function(_, v) setFlatDB("pressureSimpleRubberband", v) end,
+                    },
+                    pressureSimpleTierBase = {
+                        type = "range",
+                        name = "Tier Base",
+                        desc = "Base score needed for Tier 1. Higher means all tiers require more force.",
+                        min = 0.20, max = 10.0, step = 0.01,
+                        order = 89.073,
+                        get = function() return getFlatDB("pressureSimpleTierBase", 2.10) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierBase", v) end,
+                    },
+                    pressureSimpleTierStepPct = {
+                        type = "range",
+                        name = "Tier Step %",
+                        desc = "Percent hardness increase per tier. 10 means each tier is 10% harder than the previous.",
+                        min = 1.00, max = 30.0, step = 0.10,
+                        order = 89.074,
+                        get = function() return getFlatDB("pressureSimpleTierStepPct", 11.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierStepPct", v) end,
+                    },
+                    pressureSimpleTierHelp = {
+                        type = "range",
+                        name = "Tier Help",
+                        desc = "Carry assistance gained while holding higher tiers (momentum help).",
+                        min = 0.00, max = 3.00, step = 0.01,
+                        order = 89.075,
+                        get = function() return getFlatDB("pressureSimpleTierHelp", 0.85) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierHelp", v) end,
+                    },
+                    pressureSimpleTierHoldSec = {
+                        type = "range",
+                        name = "Tier Hold Seconds",
+                        desc = "How long a tier stays active before automatic cooling can demote it.",
+                        min = 0.10, max = 15.0, step = 0.05,
+                        order = 89.076,
+                        get = function() return getFlatDB("pressureSimpleTierHoldSec", 5.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleTierHoldSec", v) end,
+                    },
+                    pressureSimpleOverdrivePercentile = {
+                        type = "range",
+                        name = "Overdrive Percentile",
+                        desc = "Percentile of the last 100 hits used as overdrive baseline. Higher = rarer procs.",
+                        min = 85.0, max = 99.5, step = 0.10,
+                        order = 89.077,
+                        get = function() return getFlatDB("pressureSimpleOverdrivePercentile", 98.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleOverdrivePercentile", v) end,
+                    },
+                    pressureSimpleOverdriveMultiplier = {
+                        type = "range",
+                        name = "Overdrive Multiplier",
+                        desc = "Extra factor above percentile baseline required to instantly promote tiers.",
+                        min = 1.00, max = 3.00, step = 0.01,
+                        order = 89.078,
+                        get = function() return getFlatDB("pressureSimpleOverdriveMultiplier", 1.16) end,
+                        set = function(_, v) setFlatDB("pressureSimpleOverdriveMultiplier", v) end,
+                    },
+                    pressureSimpleShakeAmount = {
+                        type = "range",
+                        name = "Shake Amount",
+                        desc = "Overall circular gauge shake intensity cap.",
+                        min = 0.00, max = 2.50, step = 0.01,
+                        order = 89.079,
+                        get = function() return getFlatDB("pressureSimpleShakeAmount", 1.00) end,
+                        set = function(_, v) setFlatDB("pressureSimpleShakeAmount", v) end,
+                    },
+                    pressureSimpleShakeFromDamage = {
+                        type = "range",
+                        name = "Shake From Damage",
+                        desc = "How much burst damage contributes to gauge shake (starts near 90% fill).",
+                        min = 0.00, max = 3.00, step = 0.01,
+                        order = 89.08,
+                        get = function() return getFlatDB("pressureSimpleShakeFromDamage", 0.85) end,
+                        set = function(_, v) setFlatDB("pressureSimpleShakeFromDamage", v) end,
                     },
                 },
             },

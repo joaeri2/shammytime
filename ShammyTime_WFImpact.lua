@@ -11,6 +11,9 @@
 -- WoW Classic TBC Anniversary 2026 (Interface 20501–20505).
 
 local ADDON_NAME = "ShammyTime"
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local M = _G.ShammyTime_Media  -- may be nil if Media hasn't loaded; we fallback
 
 -- ---------------------------------------------------------------------------

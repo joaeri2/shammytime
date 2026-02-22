@@ -1,6 +1,9 @@
 -- ShammyTime_Core.lua
 -- AceAddon init, AceDB, options hook, and ApplyAllConfigs. Uses installed Ace3 in Libs/.
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local LibStub = LibStub
 local AceAddon = LibStub("AceAddon-3.0")
 local AceDB = LibStub("AceDB-3.0")

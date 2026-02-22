@@ -22,36 +22,11 @@ M.TEX = {
     -- Weapon imbue bar (layered: back, icons, front, text) 512×512
     IMBUE_BAR_BACK  = M.MEDIA .. "v2_imbue_bar_back_512x512.tga",
     IMBUE_BAR_FRONT = M.MEDIA .. "v2_imbue_bar_front_512x512.tga",
-    -- Crit satellite ring (layered, aligned)
-    CRIT_BG     = M.MEDIA .. "wf_crit_bg_aligned.tga",
-    CRIT_BORDER = M.MEDIA .. "wf_crit_border_aligned.tga",
-    CRIT_GLOW   = M.MEDIA .. "wf_crit_glow_aligned.tga",
-    CRIT_SHADOW = M.MEDIA .. "wf_crit_shadow_aligned.tga",
-    -- Procs satellite (fire art)
-    PROCS_BG     = M.MEDIA .. "wf_fire_bg.tga",
-    PROCS_BORDER = M.MEDIA .. "wf_fire_border.tga",
-    PROCS_GLOW   = M.MEDIA .. "wf_fire_glow.tga",
-    PROCS_SHADOW = M.MEDIA .. "wf_fire_shadow.tga",
     -- Placeholders: add wf_max_*.tga, wf_min_*.tga, wf_avg_*.tga, wf_procpct_*.tga when ready
     MAX_BG     = M.MEDIA .. "wf_max_bg.tga",
     MAX_BORDER = M.MEDIA .. "wf_max_border.tga",
     MAX_GLOW   = M.MEDIA .. "wf_max_glow.tga",
     MAX_SHADOW = M.MEDIA .. "wf_max_shadow.tga",
-    -- Left center satellite (wf_wind_*)
-    MIN_BG     = M.MEDIA .. "wf_wind_bg.tga",
-    MIN_BORDER = M.MEDIA .. "wf_wind_border.tga",
-    MIN_GLOW   = M.MEDIA .. "wf_wind_glow.tga",
-    MIN_SHADOW = M.MEDIA .. "wf_wind_shadow.tga",
-    -- Lower 3rd left (wf_next_*)
-    AVG_BG     = M.MEDIA .. "wf_next_bg.tga",
-    AVG_BORDER = M.MEDIA .. "wf_next_border.tga",
-    AVG_GLOW   = M.MEDIA .. "wf_next_glow.tga",
-    AVG_SHADOW = M.MEDIA .. "wf_next_shadow.tga",
-    -- Center-right satellite (wf_sat_*)
-    PROCPCT_BG     = M.MEDIA .. "wf_sat_bg.tga",
-    PROCPCT_BORDER = M.MEDIA .. "wf_sat_border.tga",
-    PROCPCT_GLOW   = M.MEDIA .. "wf_sat_glow.tga",
-    PROCPCT_SHADOW = M.MEDIA .. "wf_sat_shadow.tga",
     -- Windfury satellite bubbles (v2, 256×256 single texture per position)
     SATELLITE_MIDDLE_RIGHT = M.MEDIA .. "v2_wf_bubbles_middle_right_256x256.tga",   -- 0° mid-right  (MIN)
     SATELLITE_MIDDLE_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_middle_right_diffuse_overlay_256x256.tga",
@@ -65,16 +40,11 @@ M.TEX = {
     SATELLITE_BOTTOM_LEFT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_bottom_left_diffuse_overlay_256x256.tga",
     SATELLITE_BOTTOM_RIGHT = M.MEDIA .. "v2_wf_bubbles_bottom_right_256x256.tga",  -- 300° down-right (CRIT%)
     SATELLITE_BOTTOM_RIGHT_DIFFUSE_OVERLAY = M.MEDIA .. "v2_wf_bubbles_bottom_right_diffuse_overlay_256x256.tga",
-    -- Legacy full-design satellites (single texture, kept for reference)
-    AIR_FULL   = M.MEDIA .. "wf_air_full_256.tga",
-    GRASS_FULL = M.MEDIA .. "wf_magic_gras_256.tga",
-    GRASS_UPPER_RIGHT = M.MEDIA .. "wf_grass_upper_right.tga",
     -- Orb set (satellites / totems)
     ORB_BG     = M.MEDIA .. "orb_bg.tga",
     ORB_BORDER = M.MEDIA .. "orb_border.tga",
     GLOW       = M.MEDIA .. "glow_soft.tga",
     RING_RUNES = M.MEDIA .. "ring_runes.tga",
-    ASSET_TEST = M.MEDIA .. "wf_asset_test.tga",
     -- Shamanistic Focus proc indicator (light on / light off, 512×512)
     FOCUS_ON  = M.MEDIA .. "v2_shamanistic_focus_on_256x256.tga",
     FOCUS_OFF = M.MEDIA .. "v2_shamanistic_focus_off_256x256.tga",

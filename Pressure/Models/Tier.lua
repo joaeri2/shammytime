@@ -60,7 +60,7 @@ function Models.CreateTierModel(ctx)
     local SIMPLE_DEFAULTS = {
         resistance = 1.25,
         rubberband = 1.10,
-        tierBase = 2.10,
+        tierBase = 2.03,
         tierStepPct = 11.00,
         tierHelp = 0.85,
         holdSec = 6.00,
@@ -536,7 +536,7 @@ function Models.CreateTierModel(ctx)
     function model.ApplyTuningSettings()
         local resistance = GetPressurePopupDBNumber("pressureSimpleResistance", 1.25, 0.20, 4.00)
         local rubberband = GetPressurePopupDBNumber("pressureSimpleRubberband", 1.10, 0.20, 3.00)
-        local tierBase = GetPressurePopupDBNumber("pressureSimpleTierBase", 2.10, 0.20, 10.00)
+        local tierBase = GetPressurePopupDBNumber("pressureSimpleTierBase", 2.03, 0.20, 10.00)
         local tierStepPct = GetPressurePopupDBNumber("pressureSimpleTierStepPct", 11.00, 1.00, 30.00)
         local tierHelp = GetPressurePopupDBNumber("pressureSimpleTierHelp", 0.85, 0.00, 3.00)
         local holdSec = GetPressurePopupDBNumber("pressureSimpleTierHoldSec", 6.00, 0.10, 15.00)

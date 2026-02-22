@@ -96,7 +96,7 @@ So **damage directly sets the height of the ratio**; **tauFast/tauSlow and burst
 ### 1.4 From score to tier (T0–T5)
 
 - **Tier thresholds** are five numbers (e.g. T1 at ~1.05, T2 at ~1.17, …). They come from:
-  - **tierBase** (default 2.10) and **tierStepPct** (default 11%), combined with **resistance** and **rubberband** into a single “difficulty” that scales the thresholds.
+  - **tierBase** (default 2.03) and **tierStepPct** (default 11%), combined with **resistance** and **rubberband** into a single “difficulty” that scales the thresholds.
 - **Before** comparing to thresholds, the score is adjusted:
   - **Edge resistance** — as you get closer to the *next* tier (within a segment), a resistance term increases (curve based on segment progress). So pushing from 80% to 100% of a segment feels “heavier”.
   - **Edge slip** — if you’ve been **idle** (no damage) for longer than **idleGrace** (0.9 s) and you’re past 65% of the segment, a small “slip” subtracts from the score so the bar can drift down when you stop DPS.
@@ -151,7 +151,7 @@ These are the main knobs that affect **in-game feel** (all have defaults below; 
 |-----------|---------|----------------|------------------------|
 | **pressureSimpleResistance** | 1.25 | 0.20–4.00 | Difficulty scale: thresholds, edge resistance, fill “mass”. Higher = harder to climb, heavier bar. |
 | **pressureSimpleRubberband** | 1.10 | 0.20–3.00 | Difficulty + transfer animation: more bounce, longer drop, more slip when idle. |
-| **pressureSimpleTierBase** | 2.10 | 0.20–10.00 | Base for tier thresholds. Higher = need higher score for T1 (and all tiers). |
+| **pressureSimpleTierBase** | 2.03 | 0.20–10.00 | Base for tier thresholds. Higher = need higher score for T1 (and all tiers). |
 | **pressureSimpleTierStepPct** | 11.00 | 1–30 | Step between tiers (%). Higher = bigger gap between tiers. |
 | **pressureSimpleTierHelp** | 0.85 | 0–3 | Tier stickiness and fill landing floor. Higher = tiers hold longer, bar doesn’t drop as fast. |
 | **pressureSimpleTierHoldSec** | 6.00 | 0.10–15 | Min time before demoting a tier. Longer = tiers stick longer. |

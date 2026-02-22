@@ -45,7 +45,7 @@ Full target speeds and tuning goals: **`docs/PRESSURE_TUNING_GUIDE.md`** §0.
 
 - **Damage:** Every outgoing damage event adds its **raw amount** to fastCharge, slowCharge, and recentHitImpulse. **No crit or spell weighting in production.**
 - **Baseline:** **Time-based** — slowCharge decays with tauSlow (~20 s). pressureRatio = fastCharge / dampedDen(slowCharge). “Above baseline” = above a ~20 s exponential moving average.
-- **Tiers:** Score = smoothed ratio × displayGain; tier thresholds from tierBase (2.10), tierStepPct (11%), resistance, rubberband. Edge resistance and slip make the bar heavier near segment top; tier help adds stickiness.
+- **Tiers:** Score = smoothed ratio × displayGain; tier thresholds from tierBase (2.03), tierStepPct (11%), resistance, rubberband. Edge resistance and slip make the bar heavier near segment top; tier help adds stickiness.
 - **Overdrive:** **Event-based** — last **100 hit amounts** define a percentile (e.g. 98th) × multiplier; a single hit above that can grant +1 tier. **40 samples minimum** before overdrive is active.
 - **Startup:** First **~2.4 s** we seed slowCharge from fastCharge to avoid spike-then-collapse.
 

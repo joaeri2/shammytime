@@ -8,6 +8,9 @@
 local addonName = ...
 if addonName ~= "ShammyTime" then return end
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local M = ShammyTime_Media
 if not M then return end
 

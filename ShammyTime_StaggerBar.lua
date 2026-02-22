@@ -4,6 +4,9 @@
 -- activity-based smart hide.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local ShammyTime = _G.ShammyTime
 if not ShammyTime then return end
 
@@ -1506,7 +1509,7 @@ local function OnUpdate(self, elapsed)
             f.mhZone60:SetPoint("LEFT", f, "CENTER", markerX, mhY)
             f.ohZone60:ClearAllPoints()
             f.ohZone60:SetPoint("LEFT", f, "CENTER", markerX, ohY)
-            if nextClickMode == "hold_now" then
+            if needsResync and nextClickMode == "hold_now" then
                 f.mhZone60:SetColorTexture(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 0.95)
                 f.ohZone60:SetColorTexture(COLOR_DELTA[1], COLOR_DELTA[2], COLOR_DELTA[3], 0.95)
             else
@@ -1601,7 +1604,7 @@ local function OnUpdate(self, elapsed)
 
     -- Helper text / Action cue
     if f.helperText then
-        local holdModeActive = nextClickMode == "hold_now"
+        local holdModeActive = needsResync and nextClickMode == "hold_now"
         if cueEnabled and (hasDelta or holdModeActive) then
             local cdTime     = (p.staggerCooldownDuration) or 2.0
             -- Dynamic click timing: only click when the next valid opportunity is now.

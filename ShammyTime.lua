@@ -2,6 +2,9 @@
 -- When you're too far from a totem to receive its buff, a red overlay appears on that slot.
 -- WoW Classic Anniversary 2026 (TBC Anniversary Edition, Interface 20505); compatible with builds 20501–20505.
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 -- ShammyTime main logic (API, totems, windfury, fade). Core creates ShammyTime addon and DB.
 ShammyTime = ShammyTime or {}
 -- Chat colors for slash help (WoW: |cAARRGGBB text |r)

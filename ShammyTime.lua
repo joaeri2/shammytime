@@ -1056,6 +1056,9 @@ local function ApplyElementVisibility()
                 -- Only show when windfury is available (imbue or totem)
                 if ShammyTime.HasWindfuryAvailable and ShammyTime.HasWindfuryAvailable() then
                     icdFrame:Show()
+                    if ShammyTime.UpdateWindfuryICDVisual then
+                        ShammyTime.UpdateWindfuryICDVisual(true)
+                    end
                 else
                     icdFrame:Hide()
                 end
@@ -1591,6 +1594,9 @@ function UpdateAllElementsFadeState()
                 icdFrame:Hide()
             else
                 icdFrame:Show()
+                if ShammyTime.UpdateWindfuryICDVisual then
+                    ShammyTime.UpdateWindfuryICDVisual(true)
+                end
                 local effAlphaIcd = (ShammyTime.GetModuleEffectiveAlpha and ShammyTime.GetModuleEffectiveAlpha("windfuryIcd")) or 1
                 local mod = useModuleFade and ShammyTime.db.profile.modules.windfuryIcd
                 if mod and ShammyTime.EvaluateFade then

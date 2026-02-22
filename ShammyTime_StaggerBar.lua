@@ -1482,7 +1482,9 @@ local function OnUpdate(self, elapsed)
     local ohClickMin = Clamp(RESYNC_OH_ARM + RESYNC_CLICK_BUFFER_PROGRESS, RESYNC_OH_ARM, 0.99)
     local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
 
-    if showZones then
+    local showResyncGuidance = needsResync and inCombat
+
+    if showZones and showResyncGuidance then
         local hasDynamicTarget = nextClickOh ~= nil
         local optimalProgress = nextClickOh or ohClickMin
         if optimalProgress < ohClickMin then
@@ -1526,18 +1528,14 @@ local function OnUpdate(self, elapsed)
 
         -- Early no-click: fixed arm buffer (50% -> 55% by default).
         if f.ohNoClickEarlyTex then
-            if inCombat then
-                local earlyStart = RESYNC_OH_ARM
-                local earlyEnd = Clamp(ohClickMin, RESYNC_OH_ARM, 1)
-                local earlyW = math.floor(maxW * (earlyEnd - earlyStart) + 0.5)
-                if earlyW > 1 then
-                    f.ohNoClickEarlyTex:ClearAllPoints()
-                    f.ohNoClickEarlyTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * earlyStart, ohY)
-                    f.ohNoClickEarlyTex:SetSize(earlyW, barH)
-                    f.ohNoClickEarlyTex:Show()
-                else
-                    f.ohNoClickEarlyTex:Hide()
-                end
+            local earlyStart = RESYNC_OH_ARM
+            local earlyEnd = Clamp(ohClickMin, RESYNC_OH_ARM, 1)
+            local earlyW = math.floor(maxW * (earlyEnd - earlyStart) + 0.5)
+            if earlyW > 1 then
+                f.ohNoClickEarlyTex:ClearAllPoints()
+                f.ohNoClickEarlyTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * earlyStart, ohY)
+                f.ohNoClickEarlyTex:SetSize(earlyW, barH)
+                f.ohNoClickEarlyTex:Show()
             else
                 f.ohNoClickEarlyTex:Hide()
             end
@@ -1545,18 +1543,14 @@ local function OnUpdate(self, elapsed)
 
         -- Late no-click: too late for this pass.
         if f.ohNoClickTex then
-            if inCombat then
-                if nextClickLateOh ~= nil then
-                    local noClickStart = Clamp(nextClickLateOh, ohClickMin, 1)
-                    local noClickW = math.floor(maxW * (1 - noClickStart) + 0.5)
-                    if noClickW > 1 then
-                        f.ohNoClickTex:ClearAllPoints()
-                        f.ohNoClickTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * noClickStart, ohY)
-                        f.ohNoClickTex:SetSize(noClickW, barH)
-                        f.ohNoClickTex:Show()
-                    else
-                        f.ohNoClickTex:Hide()
-                    end
+            if nextClickLateOh ~= nil then
+                local noClickStart = Clamp(nextClickLateOh, ohClickMin, 1)
+                local noClickW = math.floor(maxW * (1 - noClickStart) + 0.5)
+                if noClickW > 1 then
+                    f.ohNoClickTex:ClearAllPoints()
+                    f.ohNoClickTex:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * noClickStart, ohY)
+                    f.ohNoClickTex:SetSize(noClickW, barH)
+                    f.ohNoClickTex:Show()
                 else
                     f.ohNoClickTex:Hide()
                 end

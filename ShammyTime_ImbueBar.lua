@@ -6,6 +6,9 @@
 local addonName = ...
 if addonName ~= "ShammyTime" then return end
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local FormatTime = ShammyTime.FormatTime
 local GetWeaponImbuePerHand = ShammyTime.GetWeaponImbuePerHand
 local GetElementalShieldAura = ShammyTime.GetElementalShieldAura

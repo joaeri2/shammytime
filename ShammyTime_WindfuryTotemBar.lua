@@ -7,6 +7,9 @@
 local addonName = ...
 if addonName ~= "ShammyTime" then return end
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local DISPLAY_ORDER = ShammyTime.DISPLAY_ORDER or { 2, 1, 3, 4 }
 local FormatTime = ShammyTime.FormatTime
 local GetTotemSlotData = ShammyTime.GetTotemSlotData

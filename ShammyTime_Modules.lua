@@ -2,6 +2,9 @@
 -- Registers UI modules with ShammyTime.Modules (Create, ApplyConfig, SetEnabled, DemoStart, DemoStop)
 -- so the options panel and demo system can drive them. Uses existing Ensure*/Apply* APIs.
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local ShammyTime = _G.ShammyTime
 if not ShammyTime then return end  -- ShammyTime.db is nil at load time; that's fine, it's set in OnInitialize
 

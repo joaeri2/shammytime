@@ -3,6 +3,9 @@
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
 local ADDON = ...
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local M = {}
 
 M.ADDON_NAME = ADDON or "ShammyTime"

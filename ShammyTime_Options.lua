@@ -2,6 +2,9 @@
 -- AceConfig options table and Blizzard Interface Options integration.
 -- Structure: General | Modules (tabs) | Developer (hidden unless devMode=true)
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local LibStub = LibStub
 local AceConfig = LibStub("AceConfig-3.0")
 local AceConfigDialog = LibStub("AceConfigDialog-3.0")

@@ -4,6 +4,9 @@
 -- activity-based smart hide.
 -- WoW Classic TBC Anniversary 2026; compatible with 20501–20505.
 
+local _, playerClass = UnitClass("player")
+if playerClass ~= "SHAMAN" then return end
+
 local ShammyTime = _G.ShammyTime
 if not ShammyTime then return end
 

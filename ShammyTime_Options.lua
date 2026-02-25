@@ -198,7 +198,7 @@ end
 local PRESSURE_DEV_DEFAULTS = {
     pressureSimpleResistance = 1.25,
     pressureSimpleRubberband = 1.10,
-    pressureSimpleTierBase = 2.10,
+    pressureSimpleTierBase = 2.03,
     pressureSimpleTierStepPct = 11.00,
     pressureSimpleTierHelp = 0.85,
     pressureSimpleOverdrivePercentile = 98.00,
@@ -432,7 +432,7 @@ local function BuildFullExportLines(useColorCodes)
     line("pressurePopupCritBounceSec = " .. tostring(p.pressurePopupCritBounceSec or 0.20))
     line("pressureSimpleResistance = " .. tostring(p.pressureSimpleResistance or 1.25))
     line("pressureSimpleRubberband = " .. tostring(p.pressureSimpleRubberband or 1.10))
-    line("pressureSimpleTierBase = " .. tostring(p.pressureSimpleTierBase or 2.10))
+    line("pressureSimpleTierBase = " .. tostring(p.pressureSimpleTierBase or 2.03))
     line("pressureSimpleTierStepPct = " .. tostring(p.pressureSimpleTierStepPct or 11.00))
     line("pressureSimpleTierHelp = " .. tostring(p.pressureSimpleTierHelp or 0.85))
     line("pressureSimpleOverdrivePercentile = " .. tostring(p.pressureSimpleOverdrivePercentile or 98.00))
@@ -2684,7 +2684,7 @@ function ShammyTime:SetupOptions()
                         desc = "Base score needed for Tier 1. Higher means all tiers require more force.",
                         min = 0.20, max = 10.0, step = 0.01,
                         order = 89.073,
-                        get = function() return getFlatDB("pressureSimpleTierBase", 2.10) end,
+                        get = function() return getFlatDB("pressureSimpleTierBase", 2.03) end,
                         set = function(_, v) setFlatDB("pressureSimpleTierBase", v) end,
                     },
                     pressureSimpleTierStepPct = {

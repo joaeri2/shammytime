@@ -373,7 +373,7 @@ local wfRadialTextState = {
 local wfTestTimer = nil  -- /st test: global test (circle + Windfury + Shamanistic Focus); one proc immediately, then every 10s
 local lastWfProcEndTime = 0  -- GetTime() when last Windfury proc animation ended; used for "fade when not procced" grace
 local FADE_GRACE_AFTER_PROC = 15  -- seconds after proc end we still consider radial "procced" for fade logic (other elements)
-local CIRCLE_SHOW_AFTER_PROC_SEC = 2  -- when "fade when not procced" is on: circle stays visible this long after proc animation, then fades out slowly
+local CIRCLE_SHOW_AFTER_PROC_SEC = 8  -- when "fade when not procced" is on: circle stays visible this long after proc animation, then fades out slowly
 local FADE_ALPHA = 0  -- alpha when faded (e.g. when not procced) — 0% visibility
 local FADE_OUT_OF_COMBAT_ALPHA = 0  -- alpha when faded out of combat (0% visibility)
 local FADE_ANIM_OUT_DURATION = 2.5  -- slow fade-out when going out of combat / not procced (when user has fade settings on)
@@ -678,6 +678,21 @@ local RADIAL_LEAVE_DEBOUNCE = 0.15
 local RADIAL_HOVER_HOLD_SEC = 3.0
 local RADIAL_PROC_HOLD_SEC = 2.0
 
+local function IsWindfuryInactiveFadeEnabled()
+    local db = GetDB()
+    if db.wfFadeWhenNotProcced then return true end
+    local profile = ShammyTime and ShammyTime.db and ShammyTime.db.profile
+    local mod = profile and profile.modules and profile.modules.windfuryBubbles
+    return mod and mod.fade and mod.fade.conditions and mod.fade.conditions.inactiveBuff
+end
+
+local function GetRadialProcHoldSec()
+    if IsWindfuryInactiveFadeEnabled() then
+        return RADIAL_PROC_HOLD_SEC * 4
+    end
+    return RADIAL_PROC_HOLD_SEC
+end
+
 local function BumpRadialTextToken()
     wfRadialTextState.token = wfRadialTextState.token + 1
     return wfRadialTextState.token
@@ -867,7 +882,7 @@ end
 function ShammyTime.RequestRadialTextFadeAfter(delay)
     local db = GetDB()
     if db.wfAlwaysShowNumbers then return end
-    local d = tonumber(delay) or RADIAL_PROC_HOLD_SEC
+    local d = tonumber(delay) or GetRadialProcHoldSec()
     if d < 0 then d = 0 end
     BumpRadialTextToken()
     wfRadialTextState.procActive = false
@@ -893,7 +908,7 @@ function ShammyTime.OnRadialProcEnded()
     if db.wfAlwaysShowNumbers or wfRadialTextState.hovered then
         wfRadialTextState.fadeDeadline = nil
     else
-        wfRadialTextState.fadeDeadline = GetTime() + RADIAL_PROC_HOLD_SEC
+        wfRadialTextState.fadeDeadline = GetTime() + GetRadialProcHoldSec()
     end
     RescheduleRadialTextFade()
 end
@@ -1343,7 +1358,7 @@ function UpdateAllElementsFadeState()
         pressureActive = pressureActive,
     }
 
-    -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + 2s hold, fade out slowly (never blink/hide).
+    -- Circle (center + satellites): only visible when procced or toggled on; not affected by no-totems fade. While proc animation is playing, always show at full alpha. After animation + hold, fade out slowly (never blink/hide).
     local wrapper = _G.ShammyTimeWindfuryRadial
     local center = _G.ShammyTimeCenterRing
     if not db.wfRadialEnabled then

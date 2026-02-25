@@ -275,6 +275,8 @@ local DEFAULTS = {
         pressureSimpleTierHoldSec = 5.00,
         pressureSimpleShakeAmount = 1.00,
         pressureSimpleShakeFromDamage = 0.85,
+        pressureTierModelMode = "percentile_live_poc",
+        pressureTierModelModeExplicit = false,
         imbueBarScale = 0.75,
         imbueBarMargin = nil,
         imbueBarGap = nil,
@@ -1261,6 +1263,8 @@ local MODULE_RESET_FLAT_KEYS = {
         "pressureSimpleTierHoldSec",
         "pressureSimpleShakeAmount",
         "pressureSimpleShakeFromDamage",
+        "pressureTierModelMode",
+        "pressureTierModelModeExplicit",
         -- Legacy pressure tuning keys (removed from UI, cleared on module reset)
         "pressureFeelMass",
         "pressureFeelResistanceScale",

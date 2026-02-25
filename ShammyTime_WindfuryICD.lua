@@ -392,8 +392,9 @@ end
 
 --------------------------------------------------------------------------------
 -- Update visual state (called from fade system and on WF availability change)
+-- forceInstantReady=true snaps to the ready lamp immediately when ICD is not active.
 --------------------------------------------------------------------------------
-local function UpdateICDVisual()
+local function UpdateICDVisual(forceInstantReady)
     local f = CreateICDFrame()
     if not f then return end
 
@@ -407,13 +408,21 @@ local function UpdateICDVisual()
             icdActive = false
             StopCountdownTicker()
             f.countdownText:Hide()
-            FadeOverlayTo(1, ICD_FADE_IN_DURATION)
+            if forceInstantReady then
+                StopAlphaTicker()
+                f.icdOn:SetAlpha(1)
+            else
+                FadeOverlayTo(1, ICD_FADE_IN_DURATION)
+            end
         end
         return
     end
 
     -- Not in ICD: show "on" state
-    if f.icdOn:GetAlpha() < 0.99 then
+    if forceInstantReady then
+        StopAlphaTicker()
+        f.icdOn:SetAlpha(1)
+    elseif f.icdOn:GetAlpha() < 0.99 then
         FadeOverlayTo(1, ICD_FADE_IN_DURATION)
     end
     f.countdownText:Hide()

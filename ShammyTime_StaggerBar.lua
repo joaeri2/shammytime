@@ -937,6 +937,14 @@ local function SimulateResyncMacro()
     RefreshWeaponSpeeds()
     if swingState.ohSpeed <= 0 then return end
     local now = GetTime()
+    local p = GetDB()
+    local showDriftCue = not p or p.staggerActionCueYellow ~= false
+    local priorHasDelta = swingState.delta ~= nil
+    local priorIsOHFirst = priorHasDelta and (swingState.deltaSign < 0) or false
+    local priorIsSameTime = priorHasDelta and (swingState.deltaSign >= 0) and (swingState.delta < SAME_TIME_THRESHOLD) or false
+    local priorIsDrifting = priorHasDelta and (not priorIsOHFirst) and (not priorIsSameTime) and (swingState.delta > GOOD_THRESHOLD) or false
+    local priorNeedsResync = priorHasDelta and (priorIsOHFirst or priorIsSameTime or (showDriftCue and priorIsDrifting)) or false
+    local priorCueActive = actionCue.state == "resync_needed" or actionCue.state == "click_now" or actionCue.state == "cooldown"
 
     local ohCycleSpeed = GetHandCycleSpeed("oh")
     if swingState.ohLast <= 0 or ohCycleSpeed <= 0 then
@@ -960,6 +968,15 @@ local function SimulateResyncMacro()
     swingState.lastSwing = now
     swingState.delta = nil
     swingState.deltaSign = 0
+    -- Keep guidance active across repeated macro taps while correcting desync.
+    if priorNeedsResync or priorCueActive then
+        actionCue.state = "resync_needed"
+    else
+        actionCue.state = "idle"
+    end
+    actionCue.cooldownEnd = 0
+    actionCue.cooldownSwings = 0
+    actionCue.stateEnteredAt = now
     ActivateFrame()
     SwingDebugLog("Resync macro (OH 50%)")
     SwingDebugLogVisualState(now)
@@ -1482,29 +1499,26 @@ local function OnUpdate(self, elapsed)
     local ohClickMin = Clamp(RESYNC_OH_ARM + RESYNC_CLICK_BUFFER_PROGRESS, RESYNC_OH_ARM, 0.99)
     local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
 
+    local hasSwingTiming = swingState.mhLast > 0 and swingState.ohLast > 0
+    local hasDynamicTarget = nextClickOh ~= nil
+    local showPredictiveGuide = showZones and inCombat and hasSwingTiming
+    local cueResyncActive = actionCue.state == "resync_needed" or actionCue.state == "click_now" or actionCue.state == "cooldown"
+    local showRiskGuidance = showPredictiveGuide and (needsResync or cueResyncActive)
+
     if showZones then
-        local hasDynamicTarget = nextClickOh ~= nil
-        local optimalProgress = nextClickOh or ohClickMin
-        if optimalProgress < ohClickMin then
-            optimalProgress = ohClickMin
-        end
-        -- Keep the marker visible even when the target is exactly at the early-buffer edge.
-        -- Nudge by ~1 px so it doesn't visually merge into the red 50-55% band.
-        local markerProgress = optimalProgress
-        if hasDynamicTarget and markerProgress <= (ohClickMin + 0.001) then
-            markerProgress = math.min(0.999, ohClickMin + (1 / math.max(maxW, 1)))
-        end
-        local showDynamicMarker = hasDynamicTarget
-        local markerX = leftEdge + maxW * markerProgress
+        if showPredictiveGuide then
+            local optimalProgress = nextClickOh or ohClickMin
+            if optimalProgress < ohClickMin then
+                optimalProgress = ohClickMin
+            end
+            -- Keep the marker visible even when the dynamic target is exactly at the early-buffer edge.
+            -- Nudge by ~1 px so it doesn't visually merge into risk overlays when shown.
+            local markerProgress = optimalProgress
+            if hasDynamicTarget and markerProgress <= (ohClickMin + 0.001) then
+                markerProgress = math.min(0.999, ohClickMin + (1 / math.max(maxW, 1)))
+            end
+            local markerX = leftEdge + maxW * markerProgress
 
-        f.mhZone50:ClearAllPoints()
-        f.mhZone50:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * RESYNC_OH_ARM, mhY)
-        f.ohZone50:ClearAllPoints()
-        f.ohZone50:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * RESYNC_OH_ARM, ohY)
-
-        f.mhZone50:Show()
-        f.ohZone50:Show()
-        if showDynamicMarker then
             f.mhZone60:ClearAllPoints()
             f.mhZone60:SetPoint("LEFT", f, "CENTER", markerX, mhY)
             f.ohZone60:ClearAllPoints()
@@ -1519,14 +1533,20 @@ local function OnUpdate(self, elapsed)
             f.mhZone60:Show()
             f.ohZone60:Show()
         else
-            -- Inside the early buffer window, keep only red guidance visible.
             f.mhZone60:Hide()
             f.ohZone60:Hide()
         end
 
-        -- Early no-click: fixed arm buffer (50% -> 55% by default).
-        if f.ohNoClickEarlyTex then
-            if inCombat then
+        if showRiskGuidance then
+            f.mhZone50:ClearAllPoints()
+            f.mhZone50:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * RESYNC_OH_ARM, mhY)
+            f.ohZone50:ClearAllPoints()
+            f.ohZone50:SetPoint("LEFT", f, "CENTER", leftEdge + maxW * RESYNC_OH_ARM, ohY)
+            f.mhZone50:Show()
+            f.ohZone50:Show()
+
+            -- Early no-click: fixed arm buffer (50% -> 55% by default).
+            if f.ohNoClickEarlyTex then
                 local earlyStart = RESYNC_OH_ARM
                 local earlyEnd = Clamp(ohClickMin, RESYNC_OH_ARM, 1)
                 local earlyW = math.floor(maxW * (earlyEnd - earlyStart) + 0.5)
@@ -1538,14 +1558,10 @@ local function OnUpdate(self, elapsed)
                 else
                     f.ohNoClickEarlyTex:Hide()
                 end
-            else
-                f.ohNoClickEarlyTex:Hide()
             end
-        end
 
-        -- Late no-click: too late for this pass.
-        if f.ohNoClickTex then
-            if inCombat then
+            -- Late no-click: too late for this pass.
+            if f.ohNoClickTex then
                 if nextClickLateOh ~= nil then
                     local noClickStart = Clamp(nextClickLateOh, ohClickMin, 1)
                     local noClickW = math.floor(maxW * (1 - noClickStart) + 0.5)
@@ -1560,9 +1576,12 @@ local function OnUpdate(self, elapsed)
                 else
                     f.ohNoClickTex:Hide()
                 end
-            else
-                f.ohNoClickTex:Hide()
             end
+        else
+            f.mhZone50:Hide()
+            f.ohZone50:Hide()
+            if f.ohNoClickEarlyTex then f.ohNoClickEarlyTex:Hide() end
+            if f.ohNoClickTex then f.ohNoClickTex:Hide() end
         end
     else
         f.mhZone50:Hide()

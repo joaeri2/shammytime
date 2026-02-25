@@ -35,7 +35,7 @@ local MIN_FILL_U = 0.001
 local FILL_SHOW_EPS = 0.003
 local FILL_HIDE_EPS = 0.0005
 local FILL_SMOOTH_TAU_RISE = 0.18
-local FILL_SMOOTH_TAU_FALL = 8.20
+local FILL_SMOOTH_TAU_FALL = 5.20
 local FILL_FULL_HOLD_SEC = 0.40
 local FILL_FULL_EPSILON = 0.985
 local OVERLAY_COLOR_TAU_IN = 0.08
@@ -51,19 +51,26 @@ local PUSH_FEEL_CFG = {
     fillPullResistStart = 0.80,
     fillPullLowerPower = 1.12,
     fillPullEdgePower = 2.20,
+    chargeVisualMode = true,
     tierPromotionStepLockSec = 0.35,
     resistanceScale = 1.00,
     gaugeShakeTriggerFill = 0.90,
     gaugeShakeStressTauIn = 0.12,
     gaugeShakeStressTauOut = 0.26,
-    gaugeShakeAmount = 1.00,
-    gaugeShakeDamageScale = 0.85,
+    gaugeShakeAmount = 1.35,
+    gaugeShakeDamageScale = 1.30,
     gaugeShakeMaxX = 1.30,
     gaugeShakeMaxY = 0.95,
     gaugeShakeFreqX1 = 35.0,
     gaugeShakeFreqX2 = 52.0,
     gaugeShakeFreqY1 = 41.0,
     overloadThreshold = 1.10,
+    hitReactTauIn = 0.02,
+    hitReactTauOut = 0.40,
+    hitReactFillKick = 0.55,
+    hitReactColorBoost = 0.72,
+    tierPromoFlashTauOut = 0.75,
+    tierPromoFlashColorBoost = 0.90,
 }
 local PS
 local SmoothAlpha
@@ -164,11 +171,11 @@ local SLOT_POPUP_CFG = {
     textSizeMin = 8,
     textSizeMax = 72,
     popupHoldSecMin = 0.10,
-    popupHoldSecMax = 10.0,
+    popupHoldSecMax = 30.0,
     popupFadeSecMin = 0.10,
-    popupFadeSecMax = 10.0,
+    popupFadeSecMax = 20.0,
     popupSustainSecMin = 0.20,
-    popupSustainSecMax = 15.0,
+    popupSustainSecMax = 30.0,
     textCritPulseScaleMin = 1.00,
     textCritPulseScaleMax = 2.50,
     textCritPulseSecMin = 0.05,
@@ -270,6 +277,7 @@ local STACK = {
     { key = "backgroundSquares",            file = "Pressure\\v2_pressure_bar_background_squares_1024x1024.tga", layer = "ARTWORK",    sub = 0 },
     { key = "background",                   file = "Pressure\\v2_pressure_bar_background_1024x1024.tga",         layer = "ARTWORK",    sub = 2 },
     { key = "colorOverlay",                 file = "Pressure\\v2_pressure_bar_color_overlay_on_1024x1024.tga",   layer = "ARTWORK",    sub = 3 },
+    { key = "chargeEnergy",                 file = "wf_center_energy.tga",                                        layer = "OVERLAY",    sub = 2 },
     { key = "gaugeZero",                    file = "Pressure\\v2_pressure_gauge_zero_pct_1024x1024.tga",         layer = "ARTWORK",    sub = 4 },
     { key = "gaugeTen",                     file = "Pressure\\v2_pressure_gauge_ten_pct_1024x1024.tga",          layer = "ARTWORK",    sub = 5 },
     { key = "gaugeFifty",                   file = "Pressure\\v2_pressure_gauge_fifty_pct_1024x1024.tga",        layer = "ARTWORK",    sub = 6 },
@@ -294,8 +302,19 @@ for _, info in ipairs(STACK) do
     local tex = frame:CreateTexture(nil, info.layer)
     tex:SetDrawLayer(info.layer, info.sub)
     tex:SetTexture(M.MEDIA .. info.file)
-    tex:SetTexCoord(0, 1, CROP_TOP, 1 - CROP_BOTTOM)
-    tex:SetAllPoints(frame)
+    if info.key == "chargeEnergy" then
+        local energySize = math.floor(math_min(DISPLAY_HEIGHT * 0.98, DISPLAY_WIDTH * 0.52) + 0.5)
+        tex:ClearAllPoints()
+        tex:SetPoint("CENTER", frame, "CENTER", 0, 0)
+        tex:SetSize(energySize, energySize)
+        tex:SetTexCoord(0, 1, 0, 1)
+        tex:SetBlendMode("ADD")
+        tex:SetVertexColor(0.82, 0.94, 1.00)
+        tex:SetAlpha(0.00)
+    else
+        tex:SetTexCoord(0, 1, CROP_TOP, 1 - CROP_BOTTOM)
+        tex:SetAllPoints(frame)
+    end
     frame.textures[info.key] = tex
 end
 
@@ -662,6 +681,7 @@ local function ShowOrUpdateSustainedSlot(_preferredSlotId, spellId, totalAmount,
 end
 
 local function ApplyPressurePopupDevSettings()
+    local popupLifetimeMult = 2.00
     SLOT_POPUP_CFG.iconSize = GetPressurePopupDBNumber(
         "pressurePopupIconSize",
         SLOT_POPUP_CFG.iconSizeDefault,
@@ -680,14 +700,32 @@ local function ApplyPressurePopupDevSettings()
         SLOT_POPUP_CFG.popupHoldSecMin,
         SLOT_POPUP_CFG.popupHoldSecMax
     )
+    SLOT_POPUP_CFG.popupHoldSec = ClampNumber(
+        SLOT_POPUP_CFG.popupHoldSec * popupLifetimeMult,
+        SLOT_POPUP_CFG.popupHoldSecDefault,
+        SLOT_POPUP_CFG.popupHoldSecMin,
+        SLOT_POPUP_CFG.popupHoldSecMax
+    )
     SLOT_POPUP_CFG.popupFadeSec = GetPressurePopupDBNumber(
         "pressurePopupFadeSec",
         SLOT_POPUP_CFG.popupFadeSecDefault,
         SLOT_POPUP_CFG.popupFadeSecMin,
         SLOT_POPUP_CFG.popupFadeSecMax
     )
+    SLOT_POPUP_CFG.popupFadeSec = ClampNumber(
+        SLOT_POPUP_CFG.popupFadeSec * popupLifetimeMult,
+        SLOT_POPUP_CFG.popupFadeSecDefault,
+        SLOT_POPUP_CFG.popupFadeSecMin,
+        SLOT_POPUP_CFG.popupFadeSecMax
+    )
     SLOT_POPUP_CFG.popupSustainSec = GetPressurePopupDBNumber(
         "pressurePopupSustainSec",
+        SLOT_POPUP_CFG.popupSustainSecDefault,
+        SLOT_POPUP_CFG.popupSustainSecMin,
+        SLOT_POPUP_CFG.popupSustainSecMax
+    )
+    SLOT_POPUP_CFG.popupSustainSec = ClampNumber(
+        SLOT_POPUP_CFG.popupSustainSec * popupLifetimeMult,
         SLOT_POPUP_CFG.popupSustainSecDefault,
         SLOT_POPUP_CFG.popupSustainSecMin,
         SLOT_POPUP_CFG.popupSustainSecMax
@@ -1185,11 +1223,82 @@ local visualAnimState = {
     gaugeShakeStress = 0,
     gaugeShakeOffsetX = 0,
     gaugeShakeOffsetY = 0,
+    hitReact = 0,
+    tierPromoFlash = 0,
+    chargeFrac = 0,
+    chargeEnergyAlpha = 0.00,
+    chargeWasFull = false,
+    lastChargeExplosionAt = 0,
+    chargeTier5HoldUntil = 0,
+    chargeLightningFx = nil,
 }
 
 local PressureVisualModel
 local PressureTierModel
 local PressureSampleModel
+
+local PRESSURE_TIER_MODE_SIMPLE = "simple"
+local PRESSURE_TIER_MODE_PERCENTILE_POC = "percentile_live_poc"
+
+local function ResolvePressureTierMode(rawMode)
+    local mode = tostring(rawMode or ""):lower()
+    if mode == "percentile"
+        or mode == "poc"
+        or mode == "live"
+        or mode == PRESSURE_TIER_MODE_PERCENTILE_POC
+    then
+        return PRESSURE_TIER_MODE_PERCENTILE_POC
+    end
+    return PRESSURE_TIER_MODE_SIMPLE
+end
+
+local function GetConfiguredPressureTierMode()
+    local db = ShammyTime.GetDB and ShammyTime.GetDB()
+    local configured = db and db.pressureTierModelMode
+    local explicit = db and db.pressureTierModelModeExplicit
+    local resolved = ResolvePressureTierMode(configured)
+    -- Migration behavior: existing profiles that never explicitly chose a mode
+    -- should default to the new percentile model.
+    if explicit ~= true and resolved == PRESSURE_TIER_MODE_SIMPLE then
+        return PRESSURE_TIER_MODE_PERCENTILE_POC
+    end
+    return resolved
+end
+
+local function MakePressureTierModelContext()
+    return {
+        PS = PS,
+        PUSH_FEEL_CFG = PUSH_FEEL_CFG,
+        SmoothAlpha = SmoothAlpha,
+        GetPressurePopupDBNumber = GetPressurePopupDBNumber,
+        math_max = math_max,
+        math_min = math_min,
+    }
+end
+
+local function CreatePressureTierModelForMode(requestedMode)
+    local PressureModels = ShammyTime.PressureModels
+    if not PressureModels then
+        return nil, PRESSURE_TIER_MODE_SIMPLE, "missing_models"
+    end
+
+    local resolved = ResolvePressureTierMode(requestedMode)
+    local model = nil
+    local fallback = nil
+    if resolved == PRESSURE_TIER_MODE_PERCENTILE_POC
+        and type(PressureModels.CreateTierModelPercentilePOC) == "function"
+    then
+        model = PressureModels.CreateTierModelPercentilePOC(MakePressureTierModelContext())
+    else
+        model = PressureModels.CreateTierModel(MakePressureTierModelContext())
+        if resolved ~= PRESSURE_TIER_MODE_SIMPLE then
+            fallback = "simple"
+            resolved = PRESSURE_TIER_MODE_SIMPLE
+        end
+    end
+
+    return model, resolved, fallback
+end
 
 if frame.textures.colorOverlay then
     local colorOverlay = frame.textures.colorOverlay
@@ -1276,7 +1385,7 @@ debugText:SetJustifyH("LEFT")
 debugText:SetPoint("TOPLEFT", debugFrame, "TOPLEFT", DEBUG_LAYOUT.padding, -(DEBUG_LAYOUT.headerHeight + DEBUG_LAYOUT.padding + DEBUG_LAYOUT.barHeight + 4))
 debugText:SetPoint("RIGHT", debugFrame, "RIGHT", -DEBUG_LAYOUT.padding, 0)
 debugText:SetTextColor(0.6, 0.6, 0.6)
-debugText:SetText("ratio:0.00 eval:0.00 hold:0.00 tier:T0 (want T0) ok\nflow:hold +0% gate:0% target:0% shown:0%")
+debugText:SetText("ratio:0.00 eval:0.00 hold:0.00 tier:T0 (want T0 comp T0 0%) ok\nflow:hold +0% gate:0% target:0% shown:0%")
 
 local bucketStrings = {}
 for i = 1, NUM_WINDOWS do
@@ -1370,6 +1479,7 @@ PS = {
     tierSqueezeWeight = 0.65,
     tierHysteresis = 0.28,
     tierHoldMinSec = 5.00,
+    tierTopHoldMinSec = 1.00,
     tierEdgeStartFrac = 0.62,
     tierEdgePower = 1.70,
     tierEdgeResistMax = 0.52,
@@ -1406,6 +1516,7 @@ PS = {
     pressureBucketAvg = { 0, 0, 0, 0, 0 },
     pressureBucketMax = { 0, 0, 0, 0, 0 },
     tierThresholds = { 1.50, 1.85, 2.32, 3.05, 3.90 },
+    tierModelMode = PRESSURE_TIER_MODE_PERCENTILE_POC,
 }
 
 local function ExportPressureState()
@@ -1437,14 +1548,25 @@ do
         math_max = math_max,
     })
 
-    PressureTierModel = PressureModels.CreateTierModel({
-        PS = PS,
-        PUSH_FEEL_CFG = PUSH_FEEL_CFG,
-        SmoothAlpha = SmoothAlpha,
-        GetPressurePopupDBNumber = GetPressurePopupDBNumber,
-        math_max = math_max,
-        math_min = math_min,
-    })
+    local requestedMode = GetConfiguredPressureTierMode()
+    local fallbackMode
+    PressureTierModel, PS.tierModelMode, fallbackMode = CreatePressureTierModelForMode(requestedMode)
+    if not PressureTierModel then
+        print(ADDON_PREFIX .. " failed to create pressure tier model; disabling pressure engine.")
+        return
+    end
+    if fallbackMode then
+        print(ADDON_PREFIX .. " pressure mode '" .. tostring(requestedMode) .. "' unavailable; using 'simple'.")
+    end
+    do
+        local db = ShammyTime.GetDB and ShammyTime.GetDB()
+        if db then
+            db.pressureTierModelMode = PS.tierModelMode
+            if db.pressureTierModelModeExplicit == nil then
+                db.pressureTierModelModeExplicit = false
+            end
+        end
+    end
 
     PressureVisualModel = PressureModels.CreateVisualModel({
         frame = frame,
@@ -1477,6 +1599,20 @@ do
         GetTime = GetTime,
         getTierFillTarget = function(score, tier)
             return PressureTierModel.GetTierFillTarget(score, tier)
+        end,
+        getTierSegmentProgress = function(score)
+            if PressureTierModel and PressureTierModel.GetTierSegmentProgress then
+                return PressureTierModel.GetTierSegmentProgress(score)
+            end
+            local t = PressureTierModel and PressureTierModel.GetTier and PressureTierModel.GetTier(score) or 0
+            local f = PressureTierModel and PressureTierModel.GetTierFillTarget and PressureTierModel.GetTierFillTarget(score, t) or 0
+            return t or 0, f or 0
+        end,
+        getTierPromoteThreshold = function(tier)
+            if PressureTierModel and PressureTierModel.GetPromoteThreshold then
+                return PressureTierModel.GetPromoteThreshold(tier)
+            end
+            return nil
         end,
     })
 
@@ -1646,7 +1782,7 @@ local function ClearPressureDebugFrame()
     debugBarText:SetText("0.00x")
     debugBarTierText:SetText("T0")
     debugBarTierText:SetTextColor(0.6, 0.6, 0.6)
-    debugText:SetText("ratio:0.00 eval:0.00 hold:0.00 tier:T0 (want T0) ok\nflow:hold +0% gate:0% target:0% shown:0%")
+    debugText:SetText("ratio:0.00 eval:0.00 hold:0.00 tier:T0 (want T0 comp T0 0%) ok\nflow:hold +0% gate:0% target:0% shown:0%")
     for i = 1, NUM_WINDOWS do
         bucketStrings[i]:SetText("")
     end
@@ -1705,6 +1841,17 @@ local function UpdatePressureDebugFrame(hitKick)
     if PressureTierModel and PressureTierModel.GetTier then
         candidateTier = PressureTierModel.GetTier(scoreForBuild or 0)
     end
+    local computedTier = candidateTier
+    local computedFrac = targetFillRaw
+    if PressureTierModel and PressureTierModel.GetTierSegmentProgress then
+        local segTier, segFrac = PressureTierModel.GetTierSegmentProgress(scoreForBuild or 0)
+        if segTier ~= nil then
+            computedTier = math_min(math_max(math_floor(tonumber(segTier) or computedTier), 0), 5)
+        end
+        if segFrac ~= nil then
+            computedFrac = math_min(math_max(tonumber(segFrac) or computedFrac, 0), 1)
+        end
+    end
     local nextReq = nextGate
     if tier >= 5 then
         nextReq = scoreForBuild
@@ -1713,13 +1860,16 @@ local function UpdatePressureDebugFrame(hitKick)
     local tune = PS.debugTune
     if tune then
         debugText:SetText(string.format(
-            "ratio:%.2f eval:%.2f hold:%.2f tier:T%d (want T%d) %s\nflow:%s %+.0f%% gate:%.0f%% target:%.0f%% shown:%.0f%%",
+            "ratio:%.2f eval:%.2f hold:%.2f tier:T%d (want T%d comp T%d %.0f%%) %s\nmode:%s flow:%s %+.0f%% gate:%.0f%% target:%.0f%% shown:%.0f%%",
             PS.pressureRatio or 0,
             PS.tierEvalScore or 0,
             PS.tierHoldScore or 0,
             tier,
             candidateTier,
+            computedTier,
+            computedFrac * 100,
             PS.tierCapReason or "ok",
+            PS.tierModelMode or PRESSURE_TIER_MODE_SIMPLE,
             flowDir,
             flowPct,
             gatePct,
@@ -1766,13 +1916,16 @@ local function UpdatePressureDebugFrame(hitKick)
         end
     else
         debugText:SetText(string.format(
-            "ratio:%.2f eval:%.2f hold:%.2f tier:T%d (want T%d) %s\nflow:%s %+.0f%% gate:%.0f%% target:%.0f%% shown:%.0f%%",
+            "ratio:%.2f eval:%.2f hold:%.2f tier:T%d (want T%d comp T%d %.0f%%) %s\nmode:%s flow:%s %+.0f%% gate:%.0f%% target:%.0f%% shown:%.0f%%",
             PS.pressureRatio or 0,
             PS.tierEvalScore or 0,
             PS.tierHoldScore or 0,
             tier,
             candidateTier,
+            computedTier,
+            computedFrac * 100,
             PS.tierCapReason or "ok",
+            PS.tierModelMode or PRESSURE_TIER_MODE_SIMPLE,
             flowDir,
             flowPct,
             gatePct,
@@ -1842,7 +1995,17 @@ local function ResetPressureState()
     visualAnimState.colorOverlayTransferTo = 0
     visualAnimState.promotionPending = false
     visualAnimState.gaugeShakeStress = 0
+    visualAnimState.hitReact = 0
+    visualAnimState.tierPromoFlash = 0
+    visualAnimState.chargeFrac = 0
+    visualAnimState.chargeEnergyAlpha = 0.00
+    visualAnimState.chargeWasFull = false
+    visualAnimState.lastChargeExplosionAt = 0
+    visualAnimState.chargeTier5HoldUntil = 0
     PressureVisualModel.SetGaugeTextureOffset(0, 0)
+    if PressureVisualModel and PressureVisualModel.ResetChargeEffects then
+        PressureVisualModel.ResetChargeEffects()
+    end
     for i, key in ipairs(gaugeKeys) do
         gaugeCurrentAlpha[i] = (i == 1) and 1 or 0
         local tex = frame.textures[key]
@@ -1866,6 +2029,44 @@ local function ResetPressureState()
 end
 
 ShammyTime.ResetPressureState = ResetPressureState
+
+local function SetPressureTierMode(mode, quiet)
+    local requested = ResolvePressureTierMode(mode)
+    local newModel, activeMode, fallbackMode = CreatePressureTierModelForMode(requested)
+    if not newModel then
+        if not quiet then
+            print(ADDON_PREFIX .. " failed to switch pressure mode.")
+        end
+        return false
+    end
+
+    PressureTierModel = newModel
+    PS.tierModelMode = activeMode
+
+    local db = ShammyTime.GetDB and ShammyTime.GetDB()
+    if db then
+        db.pressureTierModelMode = activeMode
+        db.pressureTierModelModeExplicit = true
+    end
+
+    ShammyTime.ApplyPressureTuningSettings = PressureTierModel.ApplyTuningSettings
+    if PressureTierModel and PressureTierModel.ApplyTuningSettings then
+        PressureTierModel.ApplyTuningSettings()
+    end
+    ResetPressureState()
+    ExportPressureState()
+
+    if not quiet then
+        if fallbackMode then
+            print(ADDON_PREFIX .. " pressure mode '" .. tostring(mode) .. "' unavailable; using 'simple'.")
+        else
+            print(ADDON_PREFIX .. " pressure mode set to '" .. activeMode .. "'.")
+        end
+    end
+    return true
+end
+
+ShammyTime.SetPressureTierMode = SetPressureTierMode
 
 local function HasDriverPopupActivity()
     for _, slotId in ipairs(SLOT_ORDER) do
@@ -1921,7 +2122,17 @@ local function EnterPressureIdleState()
     visualAnimState.colorOverlayTransferTo = 0
     visualAnimState.promotionPending = false
     visualAnimState.gaugeShakeStress = 0
+    visualAnimState.hitReact = 0
+    visualAnimState.tierPromoFlash = 0
+    visualAnimState.chargeFrac = 0
+    visualAnimState.chargeEnergyAlpha = 0.00
+    visualAnimState.chargeWasFull = false
+    visualAnimState.lastChargeExplosionAt = 0
+    visualAnimState.chargeTier5HoldUntil = 0
     PressureVisualModel.SetGaugeTextureOffset(0, 0)
+    if PressureVisualModel and PressureVisualModel.ResetChargeEffects then
+        PressureVisualModel.ResetChargeEffects()
+    end
     PS.bucketStatsElapsed = 0
     for wi = 1, NUM_WINDOWS do
         PS.pressureBucketAvg[wi] = 0
@@ -2043,6 +2254,7 @@ local function OnPressureTick(_, dt)
     local gatedTier = candidateTier
     PS.tierCapReason = "ok"
     local canPromoteNow = (now - (PS.lastTierChangeAt or 0)) >= PUSH_FEEL_CFG.tierPromotionStepLockSec
+    local isPercentilePOC = (PS.tierModelMode == PRESSURE_TIER_MODE_PERCENTILE_POC)
     visualAnimState.promotionPending = false
     local overdriveTierBoost = 0
     if PressureTierModel and PressureTierModel.ConsumeOverdriveTierBoost then
@@ -2058,35 +2270,75 @@ local function OnPressureTick(_, dt)
                 (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
                 math_max(PS.tierMomentumMax or 0, 0)
             )
-            colorOverlayState.fillFrac = 1
-            PressureVisualModel.StartColorOverlayTransferDrop(1)
+            local transferFrom = math_min(math_max(colorOverlayState.fillFrac or 0, 0), 1)
+            if PUSH_FEEL_CFG.chargeVisualMode == false and PS.currentTier >= 5 then
+                transferFrom = 1
+                colorOverlayState.fillFrac = 1
+            end
+            PressureVisualModel.StartColorOverlayTransferDrop(transferFrom)
             visualAnimState.promotionPending = false
         end
     elseif gatedTier > PS.currentTier then
-        local currentTierFillRaw = PressureTierModel.GetTierFillTarget(PS.tierEvalScore or PS.tierScore or 0, PS.currentTier)
-        local scoreReadyForPromotion = currentTierFillRaw >= FILL_FULL_EPSILON
-        if scoreReadyForPromotion then
-            visualAnimState.promotionPending = true
-        end
-
-        if canPromoteNow and visualAnimState.promotionPending then
-            local previousTier = PS.currentTier
-            PS.currentTier = math_min(gatedTier, PS.currentTier + 1)
-            PS.lastTierChangeAt = now
-            PS.tierMomentumBoost = math_min(
-                (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
-                math_max(PS.tierMomentumMax or 0, 0)
-            )
-            if PS.currentTier > previousTier then
-                PressureVisualModel.StartColorOverlayTransferDrop(1)
+        if isPercentilePOC then
+            if canPromoteNow then
+                local previousTier = PS.currentTier
+                local promoteStep = 1
+                -- Big spikes can still jump faster, but avoid full tier whiplash.
+                if gatedTier >= 5 and (gatedTier - previousTier) >= 2 then
+                    promoteStep = 2
+                end
+                PS.currentTier = math_min(gatedTier, PS.currentTier + promoteStep)
+                PS.lastTierChangeAt = now
+                PS.tierMomentumBoost = math_min(
+                    (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
+                    math_max(PS.tierMomentumMax or 0, 0)
+                )
+                if PS.currentTier > previousTier then
+                    local transferFrom = math_min(math_max(colorOverlayState.fillFrac or 0, 0), 1)
+                    if PUSH_FEEL_CFG.chargeVisualMode == false and PS.currentTier >= 5 then
+                        transferFrom = 1
+                        colorOverlayState.fillFrac = 1
+                    end
+                    PressureVisualModel.StartColorOverlayTransferDrop(transferFrom)
+                end
             end
             visualAnimState.promotionPending = false
+        else
+            local currentTierFillRaw = PressureTierModel.GetTierFillTarget(PS.tierEvalScore or PS.tierScore or 0, PS.currentTier)
+            local scoreReadyForPromotion = currentTierFillRaw >= FILL_FULL_EPSILON
+            if scoreReadyForPromotion then
+                visualAnimState.promotionPending = true
+            end
+
+            if canPromoteNow and visualAnimState.promotionPending then
+                local previousTier = PS.currentTier
+                PS.currentTier = math_min(gatedTier, PS.currentTier + 1)
+                PS.lastTierChangeAt = now
+                PS.tierMomentumBoost = math_min(
+                    (PS.tierMomentumBoost or 0) + (PS.tierMomentumOnPromote or 0),
+                    math_max(PS.tierMomentumMax or 0, 0)
+                )
+                if PS.currentTier > previousTier then
+                    local transferFrom = math_min(math_max(colorOverlayState.fillFrac or 0, 0), 1)
+                    if PUSH_FEEL_CFG.chargeVisualMode == false and PS.currentTier >= 5 then
+                        transferFrom = 1
+                        colorOverlayState.fillFrac = 1
+                    end
+                    PressureVisualModel.StartColorOverlayTransferDrop(transferFrom)
+                end
+                visualAnimState.promotionPending = false
+            end
         end
     elseif gatedTier < PS.currentTier then
         -- If the pure score wants a lower tier, step down after hold time.
         -- This avoids getting stuck at high tiers when hold-assist is active.
+        local holdMinSec = PS.tierHoldMinSec or 0
+        if PS.currentTier >= 5 then
+            -- Keep T5 stable long enough for top-end visuals to read cleanly.
+            holdMinSec = math_max(holdMinSec, PS.tierTopHoldMinSec or 1.00)
+        end
         local holdElapsed = now - PS.lastTierChangeAt
-        if holdElapsed >= PS.tierHoldMinSec then
+        if holdElapsed >= holdMinSec then
             PS.currentTier = math_max(gatedTier, PS.currentTier - 1)
             PS.lastTierChangeAt = now
         end
@@ -2185,6 +2437,7 @@ local function PrintPressureHelp()
     print("  /st pressure on|off|toggle")
     print("  /st pressure reset")
     print("  /st pressure status")
+    print("  /st pressure mode simple|percentile")
     print("  /st pressure taufast N")
     print("  /st pressure tauslow N")
     print("  /st pressure gain N")
@@ -2233,6 +2486,27 @@ local function HandlePressureSlash(msg)
             PS.tauFast, PS.tauSlow, PS.displayGain, PS.burstDamping,
             PS.displayTau
         ))
+        print(ADDON_PREFIX .. " mode=" .. tostring(PS.tierModelMode or PRESSURE_TIER_MODE_SIMPLE))
+        return
+    end
+
+    if cmd == "mode" then
+        local modeArg = (arg or ""):lower():match("^%s*(.-)%s*$")
+        if modeArg == "" or modeArg == "status" or modeArg == "show" then
+            print(ADDON_PREFIX .. " mode=" .. tostring(PS.tierModelMode or PRESSURE_TIER_MODE_SIMPLE))
+            print(ADDON_PREFIX .. " available: simple, percentile")
+            return
+        end
+        if modeArg == "simple"
+            or modeArg == "percentile"
+            or modeArg == "poc"
+            or modeArg == "live"
+            or modeArg == PRESSURE_TIER_MODE_PERCENTILE_POC
+        then
+            SetPressureTierMode(modeArg, false)
+        else
+            print(ADDON_PREFIX .. " unknown mode '" .. tostring(modeArg) .. "'. Available: simple, percentile")
+        end
         return
     end
 

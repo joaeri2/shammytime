@@ -288,6 +288,10 @@ local DEFAULTS = {
             point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
             x = -381.49990844727, y = 0.51829099655151, scale = 1.17, locked = false,
         },
+        pressureFrame = {
+            point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
+            x = 0, y = 0,
+        },
         windfuryIcdFrame = {
             point = "CENTER", relativeTo = "UIParent", relativePoint = "CENTER",
             x = 0, y = -250, scale = 0.8, locked = false,
@@ -677,6 +681,15 @@ function ShammyTime:MigrateOldDB()
                 p.modules.shamanisticFocus.pos.y = v.y or -150
                 p.modules.shamanisticFocus.scale = v.scale or 1.17
             end
+        elseif k == "pressureFrame" then
+            if type(v) == "table" then p.pressureFrame = v end
+            if p.modules.pressureVisual and type(v) == "table" then
+                p.modules.pressureVisual.pos = p.modules.pressureVisual.pos or {}
+                p.modules.pressureVisual.pos.x = v.x or 0
+                p.modules.pressureVisual.pos.y = v.y or 0
+                p.modules.pressureVisual.pos.point = v.point or "CENTER"
+                p.modules.pressureVisual.pos.relPoint = v.relativePoint or "CENTER"
+            end
         elseif type(v) ~= "table" or k == "wfSession" or k == "wfLastPull" or k == "wfRadialPos" then
             p[k] = v
         end
@@ -825,6 +838,14 @@ function ShammyTime:SyncFlatToModules(opts)
         if p.focusFrame.relativePoint then p.modules.shamanisticFocus.pos.relPoint = p.focusFrame.relativePoint end
         if p.focusFrame.scale then p.modules.shamanisticFocus.scale = p.focusFrame.scale end
     end
+    -- Pressure visual: profile pressureFrame → modules
+    if p.modules.pressureVisual and p.pressureFrame then
+        p.modules.pressureVisual.pos = p.modules.pressureVisual.pos or {}
+        if p.pressureFrame.x ~= nil then p.modules.pressureVisual.pos.x = p.pressureFrame.x end
+        if p.pressureFrame.y ~= nil then p.modules.pressureVisual.pos.y = p.pressureFrame.y end
+        if p.pressureFrame.point then p.modules.pressureVisual.pos.point = p.pressureFrame.point end
+        if p.pressureFrame.relativePoint then p.modules.pressureVisual.pos.relPoint = p.pressureFrame.relativePoint end
+    end
 
     -- Global: flat → global
     p.global.locked = (p.locked == true)
@@ -965,6 +986,19 @@ function ShammyTime:ApplyAllConfigs()
             if ff.relativePoint then pos.relPoint = ff.relativePoint end
             -- Scale: modules → focusFrame (options panel writes here)
             p.focusFrame.scale = p.modules.shamanisticFocus.scale or p.focusFrame.scale
+        end
+        -- Sync pressure visual: pressureFrame is authoritative for position (drag
+        -- saves there), modules.pos is kept in sync for the options panel.
+        if p.modules.pressureVisual then
+            p.pressureFrame = p.pressureFrame or {}
+            p.modules.pressureVisual.pos = p.modules.pressureVisual.pos or {}
+            local pos = p.modules.pressureVisual.pos
+            local pf = p.pressureFrame
+            -- Position: pressureFrame → modules.pos
+            if pf.x ~= nil then pos.x = pf.x end
+            if pf.y ~= nil then pos.y = pf.y end
+            if pf.point then pos.point = pf.point end
+            if pf.relativePoint then pos.relPoint = pf.relativePoint end
         end
     end
     if p.global then
@@ -1398,6 +1432,26 @@ function ShammyTime:SaveAllCurrentPositions()
         if p.modules and p.modules.shamanisticFocus then
             p.modules.shamanisticFocus.pos = p.modules.shamanisticFocus.pos or {}
             local pos = p.modules.shamanisticFocus.pos
+            pos.point = point
+            pos.relPoint = relativePoint
+            pos.x = x
+            pos.y = y
+        end
+    end
+    local pressureFrame = self.GetPressureFrame and self:GetPressureFrame()
+    if pressureFrame and self.db and self.db.profile then
+        local p = self.db.profile
+        local point, relTo, relativePoint, x, y = pressureFrame:GetPoint(1)
+        p.pressureFrame = p.pressureFrame or {}
+        local pf = p.pressureFrame
+        pf.point = point
+        pf.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+        pf.relativePoint = relativePoint
+        pf.x = x
+        pf.y = y
+        if p.modules and p.modules.pressureVisual then
+            p.modules.pressureVisual.pos = p.modules.pressureVisual.pos or {}
+            local pos = p.modules.pressureVisual.pos
             pos.point = point
             pos.relPoint = relativePoint
             pos.x = x

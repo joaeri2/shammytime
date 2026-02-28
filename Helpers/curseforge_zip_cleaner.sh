@@ -39,6 +39,7 @@ cd "$ADDON_DIR/.."
   -x "${ADDON_NAME}/Helpers/*" \
   -x "${ADDON_NAME}/Screenshots/*" \
   -x "${ADDON_NAME}/docs/*" \
+  -x "${ADDON_NAME}/tests/*" \
   -x "${ADDON_NAME}/README.md" \
   -x "${ADDON_NAME}/.cursor/*" \
   -x "*/.DS_Store" \
@@ -59,7 +60,7 @@ unzip -l "$OUT_ZIP" | awk 'NR>3 && /\// {print $NF}'
 echo ""
 
 # Final sanity check
-if unzip -l "$OUT_ZIP" | grep -qE "__MACOSX|\._|\.git|\.DS_Store|/Helpers/|/Screenshots/|/docs/"; then
+if unzip -l "$OUT_ZIP" | grep -qE "__MACOSX|\._|\.git|\.DS_Store|/Helpers/|/Screenshots/|/docs/|/tests/"; then
   echo "⚠️  Warning: unwanted files may still be present — check the listing above."
 else
   echo "✅ Clean — no macOS junk, git files, or dev-only folders found."

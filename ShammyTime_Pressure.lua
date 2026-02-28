@@ -273,6 +273,51 @@ local function GetPressurePopupDBNumber(key, defaultValue, minValue, maxValue)
     return ClampNumber(raw, defaultValue, minValue, maxValue)
 end
 
+local PRESSURE_FRAME_DEFAULTS = {
+    point = "CENTER",
+    relativeTo = "UIParent",
+    relativePoint = "CENTER",
+    x = 0,
+    y = 0,
+}
+
+local function ApplyPressureFramePosition(targetFrame)
+    if not targetFrame then return end
+    local db = ShammyTime.GetDB and ShammyTime.GetDB()
+    local saved = db and db.pressureFrame
+    local point = (saved and saved.point) or PRESSURE_FRAME_DEFAULTS.point
+    local relativePoint = (saved and saved.relativePoint) or PRESSURE_FRAME_DEFAULTS.relativePoint
+    local relativeToName = (saved and saved.relativeTo) or PRESSURE_FRAME_DEFAULTS.relativeTo
+    local relativeTo = (relativeToName and _G[relativeToName]) or UIParent
+    local x = (saved and tonumber(saved.x)) or PRESSURE_FRAME_DEFAULTS.x
+    local y = (saved and tonumber(saved.y)) or PRESSURE_FRAME_DEFAULTS.y
+    targetFrame:ClearAllPoints()
+    targetFrame:SetPoint(point, relativeTo, relativePoint, x, y)
+end
+
+local function SavePressureFramePosition(targetFrame)
+    if not targetFrame or not targetFrame.GetPoint then return end
+    local db = ShammyTime.GetDB and ShammyTime.GetDB()
+    if not db then return end
+    local point, relTo, relativePoint, x, y = targetFrame:GetPoint(1)
+    if not point then return end
+    db.pressureFrame = db.pressureFrame or {}
+    local pf = db.pressureFrame
+    pf.point = point
+    pf.relativeTo = (relTo and relTo.GetName and relTo:GetName()) or "UIParent"
+    pf.relativePoint = relativePoint
+    pf.x = x
+    pf.y = y
+    if db.modules and db.modules.pressureVisual then
+        db.modules.pressureVisual.pos = db.modules.pressureVisual.pos or {}
+        local pos = db.modules.pressureVisual.pos
+        pos.point = point
+        pos.relPoint = relativePoint
+        pos.x = x
+        pos.y = y
+    end
+end
+
 local STACK = {
     { key = "backgroundSquares",            file = "Pressure\\v2_pressure_bar_background_squares_1024x1024.tga", layer = "ARTWORK",    sub = 0 },
     { key = "background",                   file = "Pressure\\v2_pressure_bar_background_1024x1024.tga",         layer = "ARTWORK",    sub = 2 },
@@ -287,15 +332,23 @@ local STACK = {
 
 local frame = CreateFrame("Frame", "ShammyTimePressureFrame", UIParent)
 frame:SetSize(DISPLAY_WIDTH, DISPLAY_HEIGHT)
-frame:SetPoint("CENTER", 0, 0)
 frame:SetFrameStrata("LOW")
 frame:SetScale(DEFAULT_SCALE)
 frame:SetClampedToScreen(true)
 frame:SetMovable(true)
-frame:EnableMouse(true)
+local mainDb = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
+frame:EnableMouse(not (mainDb and mainDb.locked))
 frame:RegisterForDrag("LeftButton")
-frame:SetScript("OnDragStart", frame.StartMoving)
-frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+frame:SetScript("OnDragStart", function(self)
+    local db = ShammyTime and ShammyTime.GetDB and ShammyTime.GetDB()
+    if db and db.locked then return end
+    self:StartMoving()
+end)
+frame:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    SavePressureFramePosition(self)
+end)
+ApplyPressureFramePosition(frame)
 frame.textures = {}
 
 for _, info in ipairs(STACK) do
@@ -2408,6 +2461,12 @@ end
 
 ShammyTime.EnsurePressureFrame = function()
     return frame
+end
+
+ShammyTime.ApplyPressureFramePosition = function()
+    if frame then
+        ApplyPressureFramePosition(frame)
+    end
 end
 
 ShammyTime.GetPressureBaseScale = function()

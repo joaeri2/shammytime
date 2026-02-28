@@ -574,10 +574,16 @@ function pressureVisual:ApplyConfig()
     local st = _G.ShammyTime
     local f = self.frame or (st and st.GetPressureFrame and st.GetPressureFrame())
     if not f then return end
+    if st and st.ApplyPressureFramePosition then
+        st.ApplyPressureFramePosition()
+    end
     local moduleScale = (type(cfg.scale) == "number" and cfg.scale >= 0.1 and cfg.scale <= 3) and cfg.scale or 0.8
     local effScale = getEffectiveScaleAlpha(moduleScale, cfg.alpha or 1)
     local baseScale = (st and st.GetPressureBaseScale and st.GetPressureBaseScale()) or 0.5
     f:SetScale(baseScale * effScale)
+    if st and st.ApplyPressureFramePosition then
+        st.ApplyPressureFramePosition()
+    end
     local db = st and st.GetDB and st.GetDB()
     if db then db.pressureScale = moduleScale end
 end
